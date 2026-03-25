@@ -11,7 +11,7 @@ int main() {
     myactua::MYACTUA controller(adapter, 1);
     std::cout << "[1/3] 正在初始化网卡: " << std::endl;
     // 连接与配置模式
-    if (!controller.connect("enp12s0")) {
+    if (!controller.connect("enp8s0")) {
         std::cerr << "[错误] 无法连接到 EtherCAT 网络！" << std::endl;
         return -1;
     }

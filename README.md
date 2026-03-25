@@ -4,15 +4,18 @@
 
 ## 项目简介
 
-MYACTUA_EtherCat 是一个基于 **EtherCAT** 的脉塔多电机控制库，适用于实时控制和科研工程场景。  
+MYACTUA_EtherCat 是一个基于 **EtherCAT_IGH** 的脉塔多电机控制库，适用于实时控制和科研工程场景。  
 主要特点：
 
 - 支持 **IGH EtherCAT Adapter**（不支持SOEM）
 - 多电机管理与控制
 - 支持位置、速度、力矩等控制模式
 - 提供示例程序 `simple_test` 和 `debug_tool` 快速上手
+- 补充：脉塔电机无法使用SOEM,工程中的SOEM文件夹可以删除
 
 ---
+
+
 
 ## 目录结构
 
@@ -53,12 +56,14 @@ make -j$(nproc)
 
 ### 运行示例程序
 
+回到工程根目录
+
 ```
 # 简单测试
-./build/simple_test
+sudo ./build/simple_test
 
-# 调试工具
-./build/debug_tool
+# 调试工具(建议直接用这个)
+sudo ./build/debug_tool
 ```
 
 ### 在自己项目中引用库
