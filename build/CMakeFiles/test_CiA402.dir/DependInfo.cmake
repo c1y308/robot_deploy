@@ -8,12 +8,12 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "/home/cat/Myactua_Ethercat/src/EthercatAdapterIGH.cpp" "CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o" "gcc" "CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o.d"
-  "/home/cat/Myactua_Ethercat/src/motor_control.cpp" "CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.o" "gcc" "CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.o.d"
+  "/home/cat/Myactua_Ethercat/examples/test_CiA402.cpp" "CMakeFiles/test_CiA402.dir/examples/test_CiA402.cpp.o" "gcc" "CMakeFiles/test_CiA402.dir/examples/test_CiA402.cpp.o.d"
   )
 
 # Targets to which this target links.
 set(CMAKE_TARGET_LINKED_INFO_FILES
+  "/home/cat/Myactua_Ethercat/build/CMakeFiles/MYACTUA_EtherCat.dir/DependInfo.cmake"
   )
 
 # Fortran module output directory.

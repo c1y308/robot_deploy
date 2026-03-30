@@ -16,7 +16,6 @@ link_directories(
 # 编译静态/动态库
 add_library(MYACTUA_EtherCat
     src/motor_control.cpp
-    src/CiA402.cpp
     src/EthercatAdapterIGH.cpp
 )
 
@@ -36,7 +35,9 @@ target_link_libraries(MYACTUA_EtherCat
 # 编译可执行文件
 add_executable(simple_test examples/simple_test.cpp)
 add_executable(debug_tool examples/debug_tool.cpp)
+add_executable(test_CiA402 examples/test_CiA402.cpp)
 
 # 链接你自己的库
 target_link_libraries(simple_test MYACTUA_EtherCat)
 target_link_libraries(debug_tool  MYACTUA_EtherCat)
+target_link_libraries(test_CiA402 MYACTUA_EtherCat)

@@ -73,15 +73,15 @@ CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o: CMakeFiles/debug_tool.dir/f
 CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o: /home/cat/Myactua_Ethercat/examples/debug_tool.cpp
 CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o: CMakeFiles/debug_tool.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/cat/Myactua_Ethercat/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o -MF CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o.d -o CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o -c /home/cat/Myactua_Ethercat/examples/debug_tool.cpp
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o -MF CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o.d -o CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o -c /home/cat/Myactua_Ethercat/examples/debug_tool.cpp
 
 CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/examples/debug_tool.cpp > CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.i
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/examples/debug_tool.cpp > CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.i
 
 CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/examples/debug_tool.cpp -o CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.s
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/examples/debug_tool.cpp -o CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.s
 
 # Object files for target debug_tool
 debug_tool_OBJECTS = \

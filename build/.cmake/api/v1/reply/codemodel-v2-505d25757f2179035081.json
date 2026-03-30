@@ -1,0 +1,87 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"jsonFile" : "directory-.-Debug-f5ebdc15457944623624.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.8"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3
+					]
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "MYACTUA_EtherCat",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "MYACTUA_EtherCat::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-MYACTUA_EtherCat-Debug-7c088e3a73fccbd7535a.json",
+					"name" : "MYACTUA_EtherCat",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "debug_tool::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-debug_tool-Debug-ce43ae613f742f457dd9.json",
+					"name" : "debug_tool",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "simple_test::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-simple_test-Debug-238cb783f7a7f4c7e992.json",
+					"name" : "simple_test",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_CiA402::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_CiA402-Debug-42d102bfb5464642a7f3.json",
+					"name" : "test_CiA402",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/home/cat/Myactua_Ethercat/build",
+		"source" : "/home/cat/Myactua_Ethercat"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 4
+	}
+}

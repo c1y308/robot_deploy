@@ -73,59 +73,43 @@ CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.o: CMakeFiles/MYACTUA_Ethe
 CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.o: /home/cat/Myactua_Ethercat/src/motor_control.cpp
 CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.o: CMakeFiles/MYACTUA_EtherCat.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/cat/Myactua_Ethercat/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.o -MF CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.o.d -o CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.o -c /home/cat/Myactua_Ethercat/src/motor_control.cpp
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.o -MF CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.o.d -o CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.o -c /home/cat/Myactua_Ethercat/src/motor_control.cpp
 
 CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/motor_control.cpp > CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.i
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/motor_control.cpp > CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.i
 
 CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/motor_control.cpp -o CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.s
-
-CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.o: CMakeFiles/MYACTUA_EtherCat.dir/flags.make
-CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.o: /home/cat/Myactua_Ethercat/src/CiA402.cpp
-CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.o: CMakeFiles/MYACTUA_EtherCat.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/cat/Myactua_Ethercat/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.o -MF CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.o.d -o CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.o -c /home/cat/Myactua_Ethercat/src/CiA402.cpp
-
-CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.i: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/CiA402.cpp > CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.i
-
-CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.s: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/CiA402.cpp -o CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.s
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/motor_control.cpp -o CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.s
 
 CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o: CMakeFiles/MYACTUA_EtherCat.dir/flags.make
 CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o: /home/cat/Myactua_Ethercat/src/EthercatAdapterIGH.cpp
 CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o: CMakeFiles/MYACTUA_EtherCat.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/cat/Myactua_Ethercat/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o -MF CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o.d -o CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o -c /home/cat/Myactua_Ethercat/src/EthercatAdapterIGH.cpp
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/cat/Myactua_Ethercat/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o"
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o -MF CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o.d -o CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o -c /home/cat/Myactua_Ethercat/src/EthercatAdapterIGH.cpp
 
 CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/EthercatAdapterIGH.cpp > CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.i
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/EthercatAdapterIGH.cpp > CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.i
 
 CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/EthercatAdapterIGH.cpp -o CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.s
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/EthercatAdapterIGH.cpp -o CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.s
 
 # Object files for target MYACTUA_EtherCat
 MYACTUA_EtherCat_OBJECTS = \
 "CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.o" \
-"CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.o" \
 "CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o"
 
 # External object files for target MYACTUA_EtherCat
 MYACTUA_EtherCat_EXTERNAL_OBJECTS =
 
 libMYACTUA_EtherCat.a: CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.o
-libMYACTUA_EtherCat.a: CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.o
 libMYACTUA_EtherCat.a: CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o
 libMYACTUA_EtherCat.a: CMakeFiles/MYACTUA_EtherCat.dir/build.make
 libMYACTUA_EtherCat.a: CMakeFiles/MYACTUA_EtherCat.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/cat/Myactua_Ethercat/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Linking CXX static library libMYACTUA_EtherCat.a"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/cat/Myactua_Ethercat/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Linking CXX static library libMYACTUA_EtherCat.a"
 	$(CMAKE_COMMAND) -P CMakeFiles/MYACTUA_EtherCat.dir/cmake_clean_target.cmake
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/MYACTUA_EtherCat.dir/link.txt --verbose=$(VERBOSE)
 

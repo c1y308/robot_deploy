@@ -1,6 +1,4 @@
 file(REMOVE_RECURSE
-  "CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.o"
-  "CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.o.d"
   "CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o"
   "CMakeFiles/MYACTUA_EtherCat.dir/src/EthercatAdapterIGH.cpp.o.d"
   "CMakeFiles/MYACTUA_EtherCat.dir/src/motor_control.cpp.o"

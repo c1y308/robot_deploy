@@ -155,6 +155,19 @@ debug_tool/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/debug_tool.dir/build.make CMakeFiles/debug_tool.dir/build
 .PHONY : debug_tool/fast
 
+#=============================================================================
+# Target rules for targets named test_CiA402
+
+# Build rule for target.
+test_CiA402: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_CiA402
+.PHONY : test_CiA402
+
+# fast build rule for target.
+test_CiA402/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_CiA402.dir/build.make CMakeFiles/test_CiA402.dir/build
+.PHONY : test_CiA402/fast
+
 examples/debug_tool.o: examples/debug_tool.cpp.o
 .PHONY : examples/debug_tool.o
 
@@ -203,29 +216,29 @@ examples/simple_test.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/simple_test.dir/build.make CMakeFiles/simple_test.dir/examples/simple_test.cpp.s
 .PHONY : examples/simple_test.cpp.s
 
-src/CiA402.o: src/CiA402.cpp.o
-.PHONY : src/CiA402.o
+examples/test_CiA402.o: examples/test_CiA402.cpp.o
+.PHONY : examples/test_CiA402.o
 
 # target to build an object file
-src/CiA402.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MYACTUA_EtherCat.dir/build.make CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.o
-.PHONY : src/CiA402.cpp.o
+examples/test_CiA402.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_CiA402.dir/build.make CMakeFiles/test_CiA402.dir/examples/test_CiA402.cpp.o
+.PHONY : examples/test_CiA402.cpp.o
 
-src/CiA402.i: src/CiA402.cpp.i
-.PHONY : src/CiA402.i
+examples/test_CiA402.i: examples/test_CiA402.cpp.i
+.PHONY : examples/test_CiA402.i
 
 # target to preprocess a source file
-src/CiA402.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MYACTUA_EtherCat.dir/build.make CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.i
-.PHONY : src/CiA402.cpp.i
+examples/test_CiA402.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_CiA402.dir/build.make CMakeFiles/test_CiA402.dir/examples/test_CiA402.cpp.i
+.PHONY : examples/test_CiA402.cpp.i
 
-src/CiA402.s: src/CiA402.cpp.s
-.PHONY : src/CiA402.s
+examples/test_CiA402.s: examples/test_CiA402.cpp.s
+.PHONY : examples/test_CiA402.s
 
 # target to generate assembly for a file
-src/CiA402.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MYACTUA_EtherCat.dir/build.make CMakeFiles/MYACTUA_EtherCat.dir/src/CiA402.cpp.s
-.PHONY : src/CiA402.cpp.s
+examples/test_CiA402.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_CiA402.dir/build.make CMakeFiles/test_CiA402.dir/examples/test_CiA402.cpp.s
+.PHONY : examples/test_CiA402.cpp.s
 
 src/EthercatAdapterIGH.o: src/EthercatAdapterIGH.cpp.o
 .PHONY : src/EthercatAdapterIGH.o
@@ -286,15 +299,16 @@ help:
 	@echo "... MYACTUA_EtherCat"
 	@echo "... debug_tool"
 	@echo "... simple_test"
+	@echo "... test_CiA402"
 	@echo "... examples/debug_tool.o"
 	@echo "... examples/debug_tool.i"
 	@echo "... examples/debug_tool.s"
 	@echo "... examples/simple_test.o"
 	@echo "... examples/simple_test.i"
 	@echo "... examples/simple_test.s"
-	@echo "... src/CiA402.o"
-	@echo "... src/CiA402.i"
-	@echo "... src/CiA402.s"
+	@echo "... examples/test_CiA402.o"
+	@echo "... examples/test_CiA402.i"
+	@echo "... examples/test_CiA402.s"
 	@echo "... src/EthercatAdapterIGH.o"
 	@echo "... src/EthercatAdapterIGH.i"
 	@echo "... src/EthercatAdapterIGH.s"
