@@ -17,8 +17,7 @@
 					[
 						0,
 						1,
-						2,
-						3
+						2
 					]
 				}
 			],
@@ -35,8 +34,7 @@
 					[
 						0,
 						1,
-						2,
-						3
+						2
 					]
 				}
 			],
@@ -52,22 +50,15 @@
 				{
 					"directoryIndex" : 0,
 					"id" : "debug_tool::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-debug_tool-Debug-ce43ae613f742f457dd9.json",
+					"jsonFile" : "target-debug_tool-Debug-d17d67d4fd89c591a84e.json",
 					"name" : "debug_tool",
 					"projectIndex" : 0
 				},
 				{
 					"directoryIndex" : 0,
 					"id" : "simple_test::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-simple_test-Debug-238cb783f7a7f4c7e992.json",
+					"jsonFile" : "target-simple_test-Debug-a922b408bbe03cbbf84a.json",
 					"name" : "simple_test",
-					"projectIndex" : 0
-				},
-				{
-					"directoryIndex" : 0,
-					"id" : "test_CiA402::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-test_CiA402-Debug-42d102bfb5464642a7f3.json",
-					"name" : "test_CiA402",
 					"projectIndex" : 0
 				}
 			]

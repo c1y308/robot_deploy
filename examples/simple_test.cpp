@@ -15,9 +15,9 @@ int main() {
         std::cerr << "[错误] 无法连接到 EtherCAT 网络！" << std::endl;
         return -1;
     }
-    std::cout << "[2/3] 连接成功，正在设置电机1 CSV 模式..." << std::endl;
-    controller.setMode(myactua::ControlMode::CSV, 0);
-    controller.setMode(myactua::ControlMode::CSV, 1);
+    std::cout << "[2/3] 连接成功,正在设置电机1 CSV 模式..." << std::endl;
+    controller.set_mode(myactua::ControlMode::CSV, 0);
+    controller.set_mode(myactua::ControlMode::CSV, 1);
     std::vector<double> setpoints = { 100.0 , -100.0};
 
     std::cout << "[3/3] 进入控制循环" << std::endl;

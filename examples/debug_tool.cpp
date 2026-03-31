@@ -1,5 +1,5 @@
 #include "myactua/motor_control.hpp"
-#include "myactua/EthercatAdapterIGH.hpp" // 或 EthercatAdapterSOEM
+#include "myactua/EthercatAdapterIGH.hpp"
 #include <iostream>  
 #include <string>
 #include <memory>    
@@ -116,7 +116,7 @@ int main()
             // 从全局指令缓冲区读取最新的模式（由键盘线程写入）
             myactua::ControlMode target_mode = g_commands[i]->mode.load();
             // 更新模式
-            controller.setMode(target_mode, i);
+            controller.set_mode(target_mode, i);
             // 读取目标值
             current_setpoints[i] = g_commands[i]->setpoint.load();
         }

@@ -9,6 +9,7 @@
 
 namespace myactua{
 
+
 /* 电机运行状态 */
 enum class MotorStep {
     IDLE,           // 待机
@@ -19,18 +20,20 @@ enum class MotorStep {
 };
 
 
-/* 电机控制类 */
+/* 电机控制器类 */
 class MYACTUA {
 public:
     struct MotorState{
-        int slave_index;
+        int slave_index;  // 电机ID序号
         ControlMode target_mode;
         MotorStep step;
+        ModeSwitchStep mode_switch_step;  // 模式切换子状态
         TxPDO tx;
         RxPDO rx;
 
         MotorState(int index)
-        : slave_index(index), target_mode(ControlMode::NONE), step(MotorStep::IDLE), tx({}), rx({}) {}
+        : slave_index(index), target_mode(ControlMode::NONE), step(MotorStep::IDLE), 
+          mode_switch_step(ModeSwitchStep::IDLE), tx({}), rx({}) {}
     };
 
     /** @param adapter 已经初始化好的 EthercatAdapterIGH 指针
@@ -40,7 +43,7 @@ public:
     /** 周期更新函数 @param setvalues 目标值数组，长度与从站数量相同 **/
     void update(const std::vector<double>& setvalues);
 
-    void setMode(ControlMode mode,int slave_index);
+    void set_mode(ControlMode mode,int slave_index);
 
     /* 连接与初始化网络 */
     bool connect(const char* ifname);
@@ -49,7 +52,13 @@ private:
     std::shared_ptr<EthercatAdapter> _adapter;
     std::vector<MotorState> _motors;
 
-    void processSingleMotor(MotorState& motor, double setvalue);
+    void process_single_motor(MotorState& motor, double setvalue);
+
+    void handle_mode_switching(MotorState& motor);
+
+    ControlWordCommand get_next_control_word(uint16_t status_word);
+
+    void print_motors_info(void);
 };
 
 } // namespace myactua

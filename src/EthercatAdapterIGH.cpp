@@ -6,7 +6,7 @@
 #include <time.h>
 
 #define NSEC_PER_SEC (1000000000L)
-#define CLOCK_TO_USE CLOCK_MONOTONIC
+#define CLOCK_TO_USE CLOCK_MONOTONIC  // 使用单调时钟
 #define VID_PID          0x00202008,0x00000000   /*Vendor ID, product code	厂商ID和产品代码*/
 #define TIMESPEC2NS(T) ((uint64_t) (T).tv_sec * NSEC_PER_SEC + (T).tv_nsec)
 
@@ -29,20 +29,21 @@ struct timespec timespec_add(struct timespec time1, struct timespec time2)
 
 // ---定义静态配置模板---
 ec_pdo_entry_info_t EthercatAdapterIGH::device_pdo_entries[] = {
-    {0x6040, 0x00, 16},
-    {0x607a, 0x00, 32},
-    {0x60ff, 0x00, 32},
-    {0x6071, 0x00, 16},
-    {0x6072, 0x00, 16},
-    {0x6060, 0x00, 8},
-    {0x5ffe, 0x00, 8},  // 填充字节
-    {0x6041, 0x00, 16},
-    {0x6064, 0x00, 32},
-    {0x606c, 0x00, 32},
-    {0x6077, 0x00, 16},
-    {0x603f, 0x00, 16},
-    {0x6061, 0x00, 8},
-    {0x5ffe, 0x00, 8},  // 填充字节
+    {0x6040, 0x00, 16},  // 控制字
+    {0x607a, 0x00, 32},  // 目标位置
+    {0x60ff, 0x00, 32},  // 目标转速
+    {0x6071, 0x00, 16},  // 目标扭矩
+    {0x6072, 0x00, 16},  // 最大扭矩
+    {0x6060, 0x00, 8},   // 设置运行模式
+    {0x5ffe, 0x00, 8},   // 填充字节
+    /* ========== RxPDO (主站从从站接收) ========== */
+    {0x6041, 0x00, 16},   // 状态字
+    {0x6064, 0x00, 32},   // 实际位置
+    {0x606c, 0x00, 32},   // 实际转速
+    {0x6077, 0x00, 16},  // 实际扭矩
+    {0x603f, 0x00, 16},  // 错误码
+    {0x6061, 0x00, 8},   // 运行模式
+    {0x5ffe, 0x00, 8},   // 填充字节
 };
 
 ec_pdo_info_t EthercatAdapterIGH::device_pdos[] = {
@@ -212,7 +213,7 @@ void EthercatAdapterIGH::send(int index, const TxPDO& pdo)
     EC_WRITE_S32(domain1_pd + off.off_target_vel,   pdo.target_vel);
     EC_WRITE_S16(domain1_pd + off.off_target_torque,pdo.target_torque);
     EC_WRITE_U16(domain1_pd + off.off_max_torque,   pdo.max_torque);
-    EC_WRITE_S8 (domain1_pd + off.off_mode_of_op,   pdo.mode_of_op);
+    EC_WRITE_S8 (domain1_pd + off.off_mode_of_op,   pdo.op_mode);
 }
 
 RxPDO EthercatAdapterIGH::receive(int index)
@@ -226,7 +227,7 @@ RxPDO EthercatAdapterIGH::receive(int index)
     pdo.vel         = EC_READ_S32(domain1_pd + off.off_vel);
     pdo.torque      = EC_READ_S16(domain1_pd + off.off_torque);
     pdo.error       = EC_READ_U16(domain1_pd + off.off_error);
-    pdo.mode_disp   = EC_READ_S8 (domain1_pd + off.off_mode_disp);
+    pdo.op_mode     = (ControlMode)EC_READ_S8 (domain1_pd + off.off_mode_disp);
 
     return pdo;
 }

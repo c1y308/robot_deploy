@@ -31,40 +31,10 @@ enum ControlMode : int8_t{
 };
 
 
-/* 定义交换数据结构 */
-#pragma pack(push, 1)
-/* TxPD0主站发送给从站 */
-struct TxPDO
-{
-    ControlWordBits control_word;       // 0x6040:控制字
-    int32_t  target_pos;                // 0x607A:目标位置(周期同步位置模式)
-    int32_t  target_vel;                // 0x60FF:目标转速(周期同步速度模式)
-    int16_t  target_torque;             // 0x6071:目标扭矩(周期同步扭矩模式)
-    uint16_t max_torque;                // 0x6072:
-    ControlMode op_mode;                // 0x6060:设置运行模式
-    uint8_t  reserved;                  // 0x5FFE (1字节填充)
-}__attribute__((packed));
-/* RxPD0主站接受从站数据 */   
-struct RxPDO
-{
-    StatusWordBits status_word;     // 0x6041:反馈状态字
-    int32_t pos;                    // 0x6064:电机实际位置
-    int32_t vel;                    // 0x606C:电机实际转速
-    int16_t torque;                 // 0x6077:电机实际扭矩
-    uint16_t error;                 // 0x603F
-    ControlMode op_mode;            // 0x6061:显示运行模式
-    uint8_t reserved;               // 0x5FFE (1字节填充)
-}__attribute__((packed));
-#pragma pack(pop)
-
-static_assert(sizeof(TxPDO) == myactua::TX_PDO_SIZE);
-static_assert(sizeof(RxPDO) == myactua::RX_PDO_SIZE);
-
-
 /* 定义状态字位 */
 enum StatusWordBits : uint16_t {
     BIT_READY_TO_SWITCH_ON = 0x0001,
-    BIT_SWITCHED_ON = 0x0002,
+    BIT_SWITCHED_ON = 0x0002,        // 伺服使能
     BIT_OPERATION_ENABLED = 0x0004,  // 伺服运行
     BIT_FAULT = 0x0008,              // 故障
     BIT_VOLTAGE_ENABLED = 0x0010,    // 接通电路
@@ -81,18 +51,17 @@ enum StatusWordBits : uint16_t {
     BIT_MANUFACTURER_15 = 0x8000,
 };
 
-inline bool isReadyToSwitchOn(uint16_t sw){return (sw & BIT_READY_TO_SWITCH_ON) != 0;}
-inline bool isSwitchedOn(uint16_t sw){return (sw & BIT_SWITCHED_ON) != 0;} 
-inline bool isOperationEnabled(uint16_t sw){return (sw & BIT_OPERATION_ENABLED) != 0;} 
-inline bool isFault(uint16_t sw){return (sw & BIT_FAULT) != 0;}               
-inline bool isVoltageEnabled(uint16_t sw){return (sw & BIT_VOLTAGE_ENABLED) != 0;}
-inline bool isQuickStopBit(uint16_t sw){return (sw & BIT_QUICK_STOP) != 0;}
-inline bool isNotFault(uint16_t sw){return (sw & BIT_NOT_FAULT) != 0;}
-inline bool isWarningBit(uint16_t sw){return (sw & BIT_WARNING) != 0;}
-inline bool isRemoteBit(uint16_t sw){return (sw & BIT_REMOTE) != 0;}
-inline bool isTargetReachedBit(uint16_t sw){return (sw & BIT_TARGET_REACHED) != 0;}
-inline bool isInternalLimitActiveBit(uint16_t sw){return (sw & BIT_INTERNAL_LIMIT_ACTIVE) != 0;}
-
+inline bool is_ready_to_switch_on(uint16_t sw){return (sw & BIT_READY_TO_SWITCH_ON) != 0;}
+inline bool is_switched_on(uint16_t sw){return (sw & BIT_SWITCHED_ON) != 0;} 
+inline bool is_operation_enabled(uint16_t sw){return (sw & BIT_OPERATION_ENABLED) != 0;} 
+inline bool is_fault(uint16_t sw){return (sw & BIT_FAULT) != 0;}               
+inline bool is_voltage_enabled(uint16_t sw){return (sw & BIT_VOLTAGE_ENABLED) != 0;}
+inline bool is_quick_stop_bit(uint16_t sw){return (sw & BIT_QUICK_STOP) != 0;}
+inline bool is_not_fault(uint16_t sw){return (sw & BIT_NOT_FAULT) != 0;}
+inline bool is_warning_bit(uint16_t sw){return (sw & BIT_WARNING) != 0;}
+inline bool is_remote_bit(uint16_t sw){return (sw & BIT_REMOTE) != 0;}
+inline bool is_target_reached_bit(uint16_t sw){return (sw & BIT_TARGET_REACHED) != 0;}
+inline bool is_internal_limit_active_bit(uint16_t sw){return (sw & BIT_INTERNAL_LIMIT_ACTIVE) != 0;}
 
 
 /* 定义控制字位 (0x6040) */
@@ -104,22 +73,56 @@ enum ControlWordBits : uint16_t {
     CW_BIT_MODE_SPECIFIC_0 = 0x0010,      // Bit 4: 特定运行模式
     CW_BIT_MODE_SPECIFIC_1 = 0x0020,      // Bit 5: 特定运行模式
     CW_BIT_MODE_SPECIFIC_2 = 0x0040,      // Bit 6: 特定运行模式
-    CW_BIT_FAULT_RESET = 0x0080,          // Bit 7: 故障复位 (0→1 上升沿复位)
-    CW_BIT_HALT = 0x0100,                 // Bit 8: 暂停 (1-暂停, 0-继续)
 };
 
-/* 控制字命令组合 */
+/* 常用控制字命令组合 */
 enum ControlWordCommand : uint16_t {
-    CMD_SHUTDOWN = 0x0006,                  // 关机
-    CMD_SWITCH_ON = 0x0007,                 // 接通
-    CMD_SWITCH_ON_ENABLE = 0x000F,          // 接通并使能
-    CMD_DISABLE_VOLTAGE = 0x0000,           // 禁用电压
-    CMD_QUICK_STOP = 0x0002,                // 快速停止
-    CMD_DISABLE_OPERATION = 0x0007,         // 禁用操作
-    CMD_ENABLE_OPERATION = 0x000F,           // 使能操作
-    CMD_FAULT_RESET = 0x0080,                // 故障复位
-    CMD_HALT = 0x010F,                       // 暂停
+    CMD_SHUTDOWN = 0x0006,  // 0110：失能，不触发快速停机
+    CMD_QUICK_STOP = 0x0002,  // 0010：失能并急停
+    CMD_DISABLE_VOLTAGE = 0x0000,  // 0000：停电
+
+    CMD_SWITCH_ON = 0x0007,
+    CMD_DISABLE_OPERATION = 0x0007,  // 0111：使能，停止运行
+    CMD_ENABLE_OPERATION = 0x000F,  //  1111：使能，正常运行
+};
+
+/* 模式切换子状态 */
+enum class ModeSwitchStep {
+    IDLE,               // 空闲
+    SET_MODE_CLEAR_DISABLE, // 设置新模式并清除目标值
+    ENABLE,             // 使能
+    OPERATING,          // 开始运行
+    DONE                // 完成
 };
 
 
+/* 定义交换数据结构 */
+#pragma pack(push, 1)
+/* TxPD0主站发送给从站 */
+struct TxPDO
+{
+    uint16_t control_word;       // 0x6040:控制字
+    int32_t  target_pos;                // 0x607A:目标位置(周期同步位置模式)
+    int32_t  target_vel;                // 0x60FF:目标转速(周期同步速度模式)
+    int16_t  target_torque;             // 0x6071:目标扭矩(周期同步扭矩模式)
+    uint16_t max_torque;                // 0x6072:
+    ControlMode op_mode;                // 0x6060:设置运行模式
+    uint8_t  reserved;                  // 0x5FFE (1字节填充)
+}__attribute__((packed));
+/* RxPD0主站接受从站数据 */   
+struct RxPDO
+{
+    uint16_t status_word;     // 0x6041:反馈状态字
+    int32_t pos;                    // 0x6064:电机实际位置
+    int32_t vel;                    // 0x606C:电机实际转速
+    int16_t torque;                 // 0x6077:电机实际扭矩
+    uint16_t error;                 // 0x603F
+    ControlMode op_mode;            // 0x6061:显示运行模式
+    uint8_t reserved;               // 0x5FFE (1字节填充)
+}__attribute__((packed));
+#pragma pack(pop)
+
+
+static_assert(sizeof(TxPDO) == myactua::TX_PDO_SIZE);
+static_assert(sizeof(RxPDO) == myactua::RX_PDO_SIZE);
 }

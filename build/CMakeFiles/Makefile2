@@ -66,7 +66,6 @@ CMAKE_BINARY_DIR = /home/cat/Myactua_Ethercat/build
 all: CMakeFiles/MYACTUA_EtherCat.dir/all
 all: CMakeFiles/simple_test.dir/all
 all: CMakeFiles/debug_tool.dir/all
-all: CMakeFiles/test_CiA402.dir/all
 .PHONY : all
 
 # The main recursive "preinstall" target.
@@ -77,7 +76,6 @@ preinstall:
 clean: CMakeFiles/MYACTUA_EtherCat.dir/clean
 clean: CMakeFiles/simple_test.dir/clean
 clean: CMakeFiles/debug_tool.dir/clean
-clean: CMakeFiles/test_CiA402.dir/clean
 .PHONY : clean
 
 #=============================================================================
@@ -157,32 +155,6 @@ debug_tool: CMakeFiles/debug_tool.dir/rule
 CMakeFiles/debug_tool.dir/clean:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/debug_tool.dir/build.make CMakeFiles/debug_tool.dir/clean
 .PHONY : CMakeFiles/debug_tool.dir/clean
-
-#=============================================================================
-# Target rules for target CMakeFiles/test_CiA402.dir
-
-# All Build rule for target.
-CMakeFiles/test_CiA402.dir/all: CMakeFiles/MYACTUA_EtherCat.dir/all
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_CiA402.dir/build.make CMakeFiles/test_CiA402.dir/depend
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_CiA402.dir/build.make CMakeFiles/test_CiA402.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/cat/Myactua_Ethercat/build/CMakeFiles --progress-num=8,9 "Built target test_CiA402"
-.PHONY : CMakeFiles/test_CiA402.dir/all
-
-# Build rule for subdir invocation for target.
-CMakeFiles/test_CiA402.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/cat/Myactua_Ethercat/build/CMakeFiles 5
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/test_CiA402.dir/all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/cat/Myactua_Ethercat/build/CMakeFiles 0
-.PHONY : CMakeFiles/test_CiA402.dir/rule
-
-# Convenience name for target.
-test_CiA402: CMakeFiles/test_CiA402.dir/rule
-.PHONY : test_CiA402
-
-# clean rule for target.
-CMakeFiles/test_CiA402.dir/clean:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_CiA402.dir/build.make CMakeFiles/test_CiA402.dir/clean
-.PHONY : CMakeFiles/test_CiA402.dir/clean
 
 #=============================================================================
 # Special targets to cleanup operation of make.

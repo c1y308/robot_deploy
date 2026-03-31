@@ -6,7 +6,7 @@ namespace myactua{
 MYACTUA::MYACTUA(std::shared_ptr<EthercatAdapter> adapter, int num_motors) : _adapter(adapter)
 {
     for (int i = 0; i < num_motors; i++) {
-        _motors.emplace_back(i); // 从站索引从0开始
+        _motors.emplace_back(i); // 从站电机索引从0开始
     }
 }
 
@@ -20,7 +20,7 @@ bool MYACTUA::connect(const char* ifname)
 }
 
 
-/* 定义周期更新函数 */
+/* 一帧的处理与发送函数 */
 void MYACTUA::update(const std::vector<double> &setvalues)
 {
     static int print_count = 0; // 静态计数器
@@ -30,7 +30,7 @@ void MYACTUA::update(const std::vector<double> &setvalues)
         _motors[i].rx = _adapter->receive(_motors[i].slave_index);
 
         double val = (i < setvalues.size()) ? setvalues[i] : 0.0;
-        processSingleMotor(_motors[i], val);
+        process_single_motor(_motors[i], val);
 
         _adapter->send(_motors[i].slave_index, _motors[i].tx);
     }
@@ -39,8 +39,144 @@ void MYACTUA::update(const std::vector<double> &setvalues)
     // 每 100 个周期（约 100ms）执行一次界面刷新
     if (++print_count >= 100) {
         print_count = 0; // 重置计数器
+        print_motors_info();
+    }
+}
 
-        // 保存光标并回到左上角
+/* 设置控制字，目标速度或目标位置或目标力矩 */
+void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
+{
+    uint16_t sw = motor.rx.status_word;
+
+    /* 运行模式不一致或正在切换中 */
+    if (motor.rx.op_mode != motor.target_mode || motor.step == MotorStep::MODE_SWITCHING) 
+    {   
+        motor.step = MotorStep::MODE_SWITCHING;
+        handle_mode_switching(motor);
+        return;
+    }
+
+    if (is_fault(sw)) 
+    {
+        motor.step = MotorStep::FAULT;
+        motor.tx.control_word = CMD_SHUTDOWN;
+        return;
+    }
+
+    motor.tx.control_word = get_next_control_word(sw);
+
+    /* 伺服正在运行，设置新的目标值 */
+    if (is_operation_enabled(sw))  
+    {   
+        motor.step = MotorStep::RUNNING;
+        motor.tx.max_torque = 5000;
+        switch (motor.target_mode) 
+        {
+            case ControlMode::CSV:
+                motor.tx.target_vel = static_cast<int32_t>((setvalue * 131072.0) / 60.0);
+                break;
+            case ControlMode::CSP:
+                motor.tx.target_pos = static_cast<int32_t>(setvalue * (65535.0 / 180.0));
+                break;
+            case ControlMode::CST:
+                motor.tx.target_torque = static_cast<int16_t>(setvalue);
+                break;
+            default:
+                break;
+        }
+    } 
+    else 
+    {
+        motor.step = MotorStep::ENABLING;
+        motor.tx.target_pos = motor.rx.pos;
+        motor.tx.target_vel = 0;
+        motor.tx.target_torque = 0;
+    }
+}
+
+
+void MYACTUA::handle_mode_switching(MotorState& motor)
+{
+    uint16_t sw = motor.rx.status_word;
+
+    switch (motor.mode_switch_step)
+    {
+        case ModeSwitchStep::IDLE:
+            motor.mode_switch_step = ModeSwitchStep::SET_MODE_CLEAR_DISABLE;
+            break;
+
+        case ModeSwitchStep::SET_MODE_CLEAR_DISABLE:
+            motor.tx.op_mode = motor.target_mode;
+            motor.tx.target_pos = motor.rx.pos;
+            motor.tx.target_vel = 0;
+            motor.tx.target_torque = 0;
+            motor.tx.control_word = CMD_SHUTDOWN;  // 失能并停止运行
+            motor.mode_switch_step = ModeSwitchStep::ENABLE;
+            break;
+
+        case ModeSwitchStep::ENABLE:
+            if (!is_switched_on(sw) && !is_operation_enabled(sw)) {
+                if (is_ready_to_switch_on(sw)) {
+                    motor.tx.control_word = CMD_SWITCH_ON;  // 使能，但不运行
+                    motor.mode_switch_step = ModeSwitchStep::OPERATING;
+                } else {
+                    motor.tx.control_word = CMD_SHUTDOWN;  // 还未准备好，继续等待
+                }
+            } else
+                motor.tx.control_word = CMD_SHUTDOWN;  // 控制字=6，继续等待失能
+            break;
+
+        case ModeSwitchStep::OPERATING:
+            if(is_switched_on(sw)){  // 使能成功
+                if (is_operation_enabled(sw)) {
+                    motor.mode_switch_step = ModeSwitchStep::DONE;
+                } else {
+                    motor.tx.control_word = CMD_ENABLE_OPERATION;  // 控制字=15，等待使能完成
+                }
+            }else
+                motor.tx.control_word = CMD_SWITCH_ON;  // 还未使能，继续使能
+            break;
+
+            case ModeSwitchStep::DONE:
+                if (motor.rx.op_mode == motor.target_mode) {
+                    motor.mode_switch_step = ModeSwitchStep::IDLE;
+                    motor.step = MotorStep::RUNNING;
+                }
+                break;
+    }
+}
+
+
+ControlWordCommand MYACTUA::get_next_control_word(uint16_t status_word)
+{
+    /* 当前未使能，电机不可以使能 */
+    if (!is_switched_on(status_word) && !is_ready_to_switch_on(status_word)) {
+        return CMD_SHUTDOWN;
+    }
+    /* 当前未使能，电机可以使能 */
+    if (!is_switched_on(status_word) &&  is_ready_to_switch_on(status_word)) {
+        return CMD_SWITCH_ON;  // 使能但不运行
+    }
+    /* 电机已使能，当前并未运行 */
+    if (is_switched_on(status_word) && !is_operation_enabled(status_word)) {
+        return CMD_ENABLE_OPERATION;
+    }
+    
+    return CMD_ENABLE_OPERATION;
+}
+
+
+void MYACTUA::set_mode(ControlMode mode, int slave_index)
+{
+    if(slave_index >= 0 && slave_index < _motors.size())
+    {
+        _motors[slave_index].target_mode = mode;
+    }
+}
+
+
+void MYACTUA::print_motors_info(void){
+    // 保存光标并回到左上角
         printf("\033[s\033[H");
 
         // 绘制表头
@@ -77,73 +213,6 @@ void MYACTUA::update(const std::vector<double> &setvalues)
         // 恢复光标到输入行
         printf("\033[u");
         fflush(stdout); 
-    }
-}
-
-
-void MYACTUA::processSingleMotor(MotorState& motor, double setvalue)
-{
-    uint16_t sw = motor.rx.status_word;
-
-    // 检查用户设定的目标模式是否与驱动器当前的模式(6061h)不一致
-    if (motor.rx.op_mode != motor.target_mode) 
-    {   
-        motor.step = MotorStep::MODE_SWITCHING; // 标记状态为切换中
-        motor.tx.control_word = 0x0006; // 强行拉回 Ready to Switch On
-        motor.tx.op_mode = motor.target_mode;
-        motor.tx.target_pos = motor.rx.pos;     // 将当前实际位置设为目标位置
-        motor.tx.target_vel = 0;                // 速度清零
-        motor.tx.target_torque = 0;             // 力矩清零
-        return;
-    }
-
-    // 故障处理
-    if (isFault(sw)) 
-    {
-        motor.step = MotorStep::FAULT;
-        // motor.tx.control_word = getNextControlWord(sw);
-        return;
-    }
-
-    // 状态机推进
-    // motor.tx.control_word = getNextControlWord(sw);
-
-    // 目标值计算
-    if (isOperationEnabled(sw)) 
-    {   
-        motor.step = MotorStep::RUNNING;
-        motor.tx.max_torque = 5000; // 设置最大力矩为1000 (根据实际需求调整)
-        switch (motor.target_mode) 
-        {
-            case ControlMode::CSV:
-                motor.tx.target_vel = static_cast<int32_t>((setvalue * 131072.0) / 60.0);
-                break;
-            case ControlMode::CSP:
-                motor.tx.target_pos = static_cast<int32_t>(setvalue * (65535.0 / 180.0));
-                break;
-            case ControlMode::CST:
-                motor.tx.target_torque = static_cast<int16_t>(setvalue);
-                break;
-            default:
-                break;
-        }
-    } 
-    else 
-    {
-        motor.step = MotorStep::ENABLING;
-        motor.tx.target_pos = motor.rx.pos;
-        motor.tx.target_vel = 0;
-        motor.tx.target_torque = 0;
-    }
-}
-
-
-void MYACTUA::setMode(ControlMode mode, int slave_index)
-{
-    if(slave_index >= 0 && slave_index < _motors.size())
-    {
-        _motors[slave_index].target_mode = mode;
-    }
 }
 
 }
