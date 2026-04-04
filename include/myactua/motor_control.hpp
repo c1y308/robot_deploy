@@ -13,8 +13,9 @@ namespace myactua{
 /* 电机运行状态 */
 enum class MotorStep {
     IDLE,           // 待机
-    ENABLING,       // 使能中
+    ENABLING,       // 使能中，会等待电机进入 Operation Enabled 状态后自动进入RUNNING状态
     RUNNING,        // 已进入 Operation Enabled，可接收运动指令
+    STOPPED,        // 停止状态(保持使能但不运行)
     FAULT,          // 故障
     MODE_SWITCHING  // 模式切换中
 };
@@ -44,6 +45,12 @@ public:
     void update(const std::vector<double>& setvalues);
 
     void set_mode(ControlMode mode,int slave_index);
+
+    /* 停止电机(保持使能状态但不运行) */
+    void stop(int slave_index = -1);
+
+    /* 重启电机(从停止状态恢复运行) */
+    void restart(int slave_index = -1);
 
     /* 连接与初始化网络 */
     bool connect(const char* ifname);

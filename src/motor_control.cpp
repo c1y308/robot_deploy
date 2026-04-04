@@ -25,13 +25,22 @@ void MYACTUA::update(const std::vector<double> &setvalues)
 {
     static int print_count = 0; // 静态计数器
 
+    // 1. 接收所有电机数据
     for (size_t i = 0; i < _motors.size(); i++)
     {
         _motors[i].rx = _adapter->receive(_motors[i].slave_index);
+    }
 
+    // 2. 处理所有电机逻辑
+    for (size_t i = 0; i < _motors.size(); i++)
+    {
         double val = (i < setvalues.size()) ? setvalues[i] : 0.0;
         process_single_motor(_motors[i], val);
+    }
 
+    // 3. 发送所有电机数据
+    for (size_t i = 0; i < _motors.size(); i++)
+    {
         _adapter->send(_motors[i].slave_index, _motors[i].tx);
     }
 
@@ -48,23 +57,30 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
 {
     uint16_t sw = motor.rx.status_word;
 
-    /* 运行模式不一致或正在切换中 */
+    /* 电机处于停止状态 - 优先检查 */
+    if(motor.step == MotorStep::STOPPED) {
+        motor.tx.control_word = CMD_DISABLE_OPERATION;
+        motor.tx.target_vel = 0;
+        motor.tx.target_pos = motor.rx.pos;
+        motor.tx.target_torque = 0;
+        return;
+    }
+    /* 需要切换运行模式或正在切换中 */
     if (motor.rx.op_mode != motor.target_mode || motor.step == MotorStep::MODE_SWITCHING) 
     {   
         motor.step = MotorStep::MODE_SWITCHING;
         handle_mode_switching(motor);
         return;
     }
-
+    /* 故障状态 */
     if (is_fault(sw)) 
     {
         motor.step = MotorStep::FAULT;
         motor.tx.control_word = CMD_SHUTDOWN;
         return;
     }
-
+    /* 电机处于IDLE、ENABLING、RUNNING状态 */
     motor.tx.control_word = get_next_control_word(sw);
-
     /* 伺服正在运行，设置新的目标值 */
     if (is_operation_enabled(sw))  
     {   
@@ -149,19 +165,19 @@ void MYACTUA::handle_mode_switching(MotorState& motor)
 
 ControlWordCommand MYACTUA::get_next_control_word(uint16_t status_word)
 {
-    /* 当前未使能，电机不可以使能 */
+    /* 当前未使能且电机不可以使能 */
     if (!is_switched_on(status_word) && !is_ready_to_switch_on(status_word)) {
         return CMD_SHUTDOWN;
     }
-    /* 当前未使能，电机可以使能 */
+    /* 当前未使能但电机可以使能 */
     if (!is_switched_on(status_word) &&  is_ready_to_switch_on(status_word)) {
         return CMD_SWITCH_ON;  // 使能但不运行
     }
-    /* 电机已使能，当前并未运行 */
+    /* 电机已使能但当前并未运行 */
     if (is_switched_on(status_word) && !is_operation_enabled(status_word)) {
         return CMD_ENABLE_OPERATION;
     }
-    
+
     return CMD_ENABLE_OPERATION;
 }
 
@@ -171,6 +187,30 @@ void MYACTUA::set_mode(ControlMode mode, int slave_index)
     if(slave_index >= 0 && slave_index < _motors.size())
     {
         _motors[slave_index].target_mode = mode;
+    }
+}
+
+
+void MYACTUA::stop(int slave_index)
+{
+    if(slave_index < 0) {
+        for(auto& motor : _motors) {
+            motor.step = MotorStep::STOPPED;
+        }
+    } else if(slave_index < _motors.size()) {
+        _motors[slave_index].step = MotorStep::STOPPED;
+    }
+}
+
+
+void MYACTUA::restart(int slave_index)
+{
+    if(slave_index < 0) {
+        for(auto& motor : _motors) {
+            motor.step = MotorStep::ENABLING;
+        }
+    } else if(slave_index < _motors.size()) {
+        _motors[slave_index].step = MotorStep::ENABLING;
     }
 }
 
@@ -190,6 +230,7 @@ void MYACTUA::print_motors_info(void){
             // 1. 确定颜色字符串 (char*)
             const char* color_code = "\033[32m"; // 绿色
             if (m.step == MotorStep::FAULT) color_code = "\033[31m"; // 红色
+            if (m.step == MotorStep::STOPPED) color_code = "\033[35m"; // 紫色
             if (m.step == MotorStep::MODE_SWITCHING) color_code = "\033[33m"; // 黄色
 
             // 2. 根据模式确定当前要观察的发送值

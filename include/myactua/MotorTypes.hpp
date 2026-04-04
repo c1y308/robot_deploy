@@ -82,8 +82,8 @@ enum ControlWordCommand : uint16_t {
     CMD_DISABLE_VOLTAGE = 0x0000,  // 0000：停电
 
     CMD_SWITCH_ON = 0x0007,
-    CMD_DISABLE_OPERATION = 0x0007,  // 0111：使能，停止运行
-    CMD_ENABLE_OPERATION = 0x000F,  //  1111：使能，正常运行
+    CMD_DISABLE_OPERATION = 0x0007,  // 0111：保持使能，停止运行
+    CMD_ENABLE_OPERATION = 0x000F,  //  1111：保持使能，正常运行
 };
 
 /* 模式切换子状态 */
