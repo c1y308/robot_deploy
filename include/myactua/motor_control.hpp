@@ -2,62 +2,80 @@
 #include <vector>
 #include <memory>
 #include <cstdio>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <functional>
 #include "myactua/MotorTypes.hpp"
 #include "myactua/EthercatAdapter.hpp"
+#include "myactua/ThreadSafeQueue.hpp"
+#include "myactua/ControlTypes.hpp"
 
 #define LIMIT(VAL, MIN, MAX) ((VAL)<(MIN)?(MIN):((VAL)>(MAX)?(MAX):(VAL)))
 
 namespace myactua{
 
 
-/* 电机运行状态 */
 enum class MotorStep {
-    IDLE,           // 待机
-    ENABLING,       // 使能中，会等待电机进入 Operation Enabled 状态后自动进入RUNNING状态
-    RUNNING,        // 已进入 Operation Enabled，可接收运动指令
-    STOPPED,        // 停止状态(保持使能但不运行)
-    FAULT,          // 故障
-    MODE_SWITCHING  // 模式切换中
+    IDLE,
+    ENABLING,
+    RUNNING,
+    STOPPED,
+    FAULT,
+    MODE_SWITCHING
 };
 
 
-/* 电机控制器类 */
 class MYACTUA {
 public:
     struct MotorState{
-        int slave_index;  // 电机ID序号
+        int slave_index;
         ControlMode target_mode;
         MotorStep step;
-        ModeSwitchStep mode_switch_step;  // 模式切换子状态
+        ModeSwitchStep mode_switch_step;
         TxPDO tx;
         RxPDO rx;
+        double setpoint;
 
         MotorState(int index)
         : slave_index(index), target_mode(ControlMode::NONE), step(MotorStep::IDLE), 
-          mode_switch_step(ModeSwitchStep::IDLE), tx({}), rx({}) {}
+          mode_switch_step(ModeSwitchStep::IDLE), tx({}), rx({}), setpoint(0.0) {}
     };
 
-    /** @param adapter 已经初始化好的 EthercatAdapterIGH 指针
-      * @param num_motors 从站数量 **/
     MYACTUA(std::shared_ptr<EthercatAdapter> adapter,int num_motors);
 
-    /** 周期更新函数 @param setvalues 目标值数组，长度与从站数量相同 **/
+    ~MYACTUA();
+
     void update(const std::vector<double>& setvalues);
-
     void set_mode(ControlMode mode,int slave_index);
-
-    /* 停止电机(保持使能状态但不运行) */
-    void stop(int slave_index = -1);
-
-    /* 重启电机(从停止状态恢复运行) */
+    void stop_motor(int slave_index = -1);
     void restart(int slave_index = -1);
-
-    /* 连接与初始化网络 */
     bool connect(const char* ifname);
+
+    void start();  // 启动实时线程
+    void shutdown();  // 关闭实时线程
+    void send_command(const ControlCommand& cmd);   // 异步发送控制命令
+    std::vector<MotorStatusSnapshot> get_status();  // 获取电机状态快照
+    using StatusCallback = std::function<void(const std::vector<MotorStatusSnapshot>&)>;  // 电机状态快照回调函数
+    void set_status_callback(StatusCallback cb);  // 设置电机状态快照回调函数
+    bool is_running() const { return running_; }  // 是否正在运行实时线程
 
 private:
     std::shared_ptr<EthercatAdapter> _adapter;
     std::vector<MotorState> _motors;
+
+    std::thread rt_thread_;
+    std::atomic<bool> running_{false};  // 实时线程运行标志
+    
+    ThreadSafeQueue<ControlCommand> cmd_queue_;
+    std::mutex status_mutex_;
+    std::vector<MotorStatusSnapshot> status_snapshot_;
+    
+    StatusCallback status_callback_;
+
+    void rt_thread_func();
+    void process_commands();
+    void update_status_snapshot();
 
     void process_single_motor(MotorState& motor, double setvalue);
 

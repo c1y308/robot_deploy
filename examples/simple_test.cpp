@@ -1,71 +1,52 @@
 #include "myactua/motor_control.hpp"
-#include "myactua/EthercatAdapterIGH.hpp" // 或 EthercatAdapterSOEM
+#include "myactua/EthercatAdapterIGH.hpp"
+#include "myactua/ControlTypes.hpp"
 #include <iostream>  
 #include <memory>    
-#include <vector>
-#include <unistd.h>
+#include <thread>
+#include <chrono>
 
 int main() {
-    // 实例化
     auto adapter = std::make_shared<myactua::EthercatAdapterIGH>();
-    myactua::MYACTUA controller(adapter, 12);
-    std::cout << "[1/3] 正在初始化网卡: " << std::endl;
-    // 连接与配置模式
+    myactua::MYACTUA controller(adapter, 2);
+
+    std::cout << "[1/3] 正在初始化网卡..." << std::endl;
     if (!controller.connect("enp8s0")) {
         std::cerr << "[错误] 无法连接到 EtherCAT 网络！" << std::endl;
         return -1;
     }
-    std::cout << "[2/3] 连接成功,正在设置电机1 CSV 模式..." << std::endl;
+
+    std::cout << "[2/3] 连接成功，正在设置电机 CSV 模式..." << std::endl;
     controller.set_mode(myactua::ControlMode::CSV, 0);
     controller.set_mode(myactua::ControlMode::CSV, 1);
-    std::vector<double> setpoints = { -20.0 , 20.0};
 
-    std::cout << "[3/3] 进入控制循环" << std::endl;
-    std::cout << "电机将停止3秒->运行3秒,重复5次" << std::endl;
-    
-    const int duration_ms = 3000;
-    const int total_cycles = 5;
-    int counter = 0;
-    int cycle_count = 0;
-    int phase = 0;
-    bool first = true;
-    
-    controller.stop(-1);
-    std::cout << "\n[停止] 停止电机..." << std::endl;
-    
-    while (cycle_count < total_cycles) {
-        int current_phase = (counter / duration_ms) % 2;
-        
-        if (current_phase != phase) {
-            phase = current_phase;
-            switch (phase) {
-                case 0:
-                    std::cout << "\n[停止] 停止电机..." << std::endl;
-                    //controller.stop(-1);
-                    cycle_count++;
-                    break;
-                case 1:
-                    std::cout << "\n[运行] 启动电机..." << std::endl;
-                    //controller.restart(-1);
-                    break;
-            }
-        }
-        
-        controller.update(setpoints);
-        usleep(1000);
-        counter++;
-    }
+    std::cout << "[3/3] 启动实时控制线程..." << std::endl;
+    controller.start();
 
-    static int once = 1;
-    if(once == 1){
-        controller.stop(-1);
-        once = 0;
-    }
-    while(true){
-        controller.update(setpoints);
-        usleep(1000);
-    }
-    //std::cout << "\n[完成] 已完成5次循环，程序结束。" << std::endl;
-    //return 0;
+    std::cout << "\n========== 控制流程开始 ==========" << std::endl;
+    
+    // 1. 停止 3 秒
+    std::cout << "[阶段1] 停止电机，等待 3 秒..." << std::endl;
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+
+    // 2. 以速度 50 运行 5 秒
+    std::cout << "[阶段2] 电机以速度 50 运行，等待 5 秒..." << std::endl;
+    controller.send_command(myactua::ControlCommand(
+        myactua::CommandType::SET_SETPOINTS, -1, {50.0, 50.0}
+    ));
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::RESTART, -1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+
+    // 3. 停止
+    std::cout << "[阶段3] 停止电机..." << std::endl;
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    std::cout << "\n========== 控制流程结束 ==========" << std::endl;
+
+    controller.shutdown();
+    std::cout << "[完成] 程序结束。" << std::endl;
+    
+    return 0;
 }
-

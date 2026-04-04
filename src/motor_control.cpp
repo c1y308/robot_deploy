@@ -1,17 +1,40 @@
 #include "myactua/motor_control.hpp"
+#include <iostream>
+#include <time.h>
+#include <pthread.h>
+#include <sched.h>
 
 namespace myactua{
 
-/* 定义构造函数 */
+#define NSEC_PER_SEC (1000000000L)
+#define CLOCK_TO_USE CLOCK_MONOTONIC
+
+static struct timespec timespec_add(struct timespec time1, struct timespec time2)
+{
+    struct timespec result;
+    if ((time1.tv_nsec + time2.tv_nsec) >= NSEC_PER_SEC) {
+        result.tv_sec = time1.tv_sec + time2.tv_sec + 1;
+        result.tv_nsec = time1.tv_nsec + time2.tv_nsec - NSEC_PER_SEC;
+    } else {
+        result.tv_sec = time1.tv_sec + time2.tv_sec;
+        result.tv_nsec = time1.tv_nsec + time2.tv_nsec;
+    }
+    return result;
+}
+
 MYACTUA::MYACTUA(std::shared_ptr<EthercatAdapter> adapter, int num_motors) : _adapter(adapter)
 {
     for (int i = 0; i < num_motors; i++) {
-        _motors.emplace_back(i); // 从站电机索引从0开始
+        _motors.emplace_back(i);
     }
+    status_snapshot_.resize(num_motors);
 }
 
+MYACTUA::~MYACTUA()
+{
+    shutdown();
+}
 
-/* 定义连接与初始化网络函数 */
 bool MYACTUA::connect(const char* ifname)
 {
     if(_adapter->init(ifname))
@@ -19,45 +42,36 @@ bool MYACTUA::connect(const char* ifname)
     return false;
 }
 
-
-/* 一帧的处理与发送函数 */
 void MYACTUA::update(const std::vector<double> &setvalues)
 {
-    static int print_count = 0; // 静态计数器
+    static int print_count = 0;
 
-    // 1. 接收所有电机数据
     for (size_t i = 0; i < _motors.size(); i++)
     {
         _motors[i].rx = _adapter->receive(_motors[i].slave_index);
     }
 
-    // 2. 处理所有电机逻辑
     for (size_t i = 0; i < _motors.size(); i++)
     {
-        double val = (i < setvalues.size()) ? setvalues[i] : 0.0;
+        double val = (i < setvalues.size()) ? setvalues[i] : _motors[i].setpoint;
         process_single_motor(_motors[i], val);
     }
 
-    // 3. 发送所有电机数据
     for (size_t i = 0; i < _motors.size(); i++)
     {
         _adapter->send(_motors[i].slave_index, _motors[i].tx);
     }
 
-    // 打印
-    // 每 100 个周期（约 100ms）执行一次界面刷新
     if (++print_count >= 100) {
-        print_count = 0; // 重置计数器
+        print_count = 0;
         print_motors_info();
     }
 }
 
-/* 设置控制字，目标速度或目标位置或目标力矩 */
 void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
 {
     uint16_t sw = motor.rx.status_word;
 
-    /* 电机处于停止状态 - 优先检查 */
     if(motor.step == MotorStep::STOPPED) {
         motor.tx.control_word = CMD_DISABLE_OPERATION;
         motor.tx.target_vel = 0;
@@ -65,23 +79,19 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
         motor.tx.target_torque = 0;
         return;
     }
-    /* 需要切换运行模式或正在切换中 */
     if (motor.rx.op_mode != motor.target_mode || motor.step == MotorStep::MODE_SWITCHING) 
     {   
         motor.step = MotorStep::MODE_SWITCHING;
         handle_mode_switching(motor);
         return;
     }
-    /* 故障状态 */
     if (is_fault(sw)) 
     {
         motor.step = MotorStep::FAULT;
         motor.tx.control_word = CMD_SHUTDOWN;
         return;
     }
-    /* 电机处于IDLE、ENABLING、RUNNING状态 */
     motor.tx.control_word = get_next_control_word(sw);
-    /* 伺服正在运行，设置新的目标值 */
     if (is_operation_enabled(sw))  
     {   
         motor.step = MotorStep::RUNNING;
@@ -111,6 +121,7 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
 }
 
 
+/* 状态机切换电机控制模式 */
 void MYACTUA::handle_mode_switching(MotorState& motor)
 {
     uint16_t sw = motor.rx.status_word;
@@ -126,31 +137,31 @@ void MYACTUA::handle_mode_switching(MotorState& motor)
             motor.tx.target_pos = motor.rx.pos;
             motor.tx.target_vel = 0;
             motor.tx.target_torque = 0;
-            motor.tx.control_word = CMD_SHUTDOWN;  // 失能并停止运行
+            motor.tx.control_word = CMD_SHUTDOWN;
             motor.mode_switch_step = ModeSwitchStep::ENABLE;
             break;
 
         case ModeSwitchStep::ENABLE:
             if (!is_switched_on(sw) && !is_operation_enabled(sw)) {
                 if (is_ready_to_switch_on(sw)) {
-                    motor.tx.control_word = CMD_SWITCH_ON;  // 使能，但不运行
+                    motor.tx.control_word = CMD_SWITCH_ON;
                     motor.mode_switch_step = ModeSwitchStep::OPERATING;
                 } else {
-                    motor.tx.control_word = CMD_SHUTDOWN;  // 还未准备好，继续等待
+                    motor.tx.control_word = CMD_SHUTDOWN;
                 }
             } else
-                motor.tx.control_word = CMD_SHUTDOWN;  // 控制字=6，继续等待失能
+                motor.tx.control_word = CMD_SHUTDOWN;
             break;
 
         case ModeSwitchStep::OPERATING:
-            if(is_switched_on(sw)){  // 使能成功
+            if(is_switched_on(sw)){
                 if (is_operation_enabled(sw)) {
                     motor.mode_switch_step = ModeSwitchStep::DONE;
                 } else {
-                    motor.tx.control_word = CMD_ENABLE_OPERATION;  // 控制字=15，等待使能完成
+                    motor.tx.control_word = CMD_ENABLE_OPERATION;
                 }
             }else
-                motor.tx.control_word = CMD_SWITCH_ON;  // 还未使能，继续使能
+                motor.tx.control_word = CMD_SWITCH_ON;
             break;
 
             case ModeSwitchStep::DONE:
@@ -162,18 +173,15 @@ void MYACTUA::handle_mode_switching(MotorState& motor)
     }
 }
 
-
+/* 依据当前状态获取下一个控制命令 */
 ControlWordCommand MYACTUA::get_next_control_word(uint16_t status_word)
 {
-    /* 当前未使能且电机不可以使能 */
     if (!is_switched_on(status_word) && !is_ready_to_switch_on(status_word)) {
         return CMD_SHUTDOWN;
     }
-    /* 当前未使能但电机可以使能 */
     if (!is_switched_on(status_word) &&  is_ready_to_switch_on(status_word)) {
-        return CMD_SWITCH_ON;  // 使能但不运行
+        return CMD_SWITCH_ON;
     }
-    /* 电机已使能但当前并未运行 */
     if (is_switched_on(status_word) && !is_operation_enabled(status_word)) {
         return CMD_ENABLE_OPERATION;
     }
@@ -191,7 +199,7 @@ void MYACTUA::set_mode(ControlMode mode, int slave_index)
 }
 
 
-void MYACTUA::stop(int slave_index)
+void MYACTUA::stop_motor(int slave_index)
 {
     if(slave_index < 0) {
         for(auto& motor : _motors) {
@@ -215,45 +223,158 @@ void MYACTUA::restart(int slave_index)
 }
 
 
-void MYACTUA::print_motors_info(void){
-    // 保存光标并回到左上角
-        printf("\033[s\033[H");
+void MYACTUA::start()
+{
+    if (running_) return;
+    
+    running_ = true;
+    rt_thread_ = std::thread(&MYACTUA::rt_thread_func, this);
+    
+    struct sched_param param;
+    param.sched_priority = 80;
+    pthread_setschedparam(rt_thread_.native_handle(), SCHED_FIFO, &param);
+    
+    std::cout << "[MYACTUA] 实时控制线程已启动" << std::endl;
+}
 
-        // 绘制表头
-        printf("\n\033[1;36m============================ MOTOR REAL-TIME MONITOR ============================\033[0m\n");
-        // ID(6) | STEP(12) | POS(10) | VEL(10) | TORQUE(10) | TARGET(12) | MODE(6)
-        printf("%-6s | %-12s | %-10s | %-10s | %-10s | %-12s | %-6s\n", 
-            "ID", "STEP", "POS", "VEL", "TORQUE", "TARGET(TX)", "MODE");
-        printf("---------------------------------------------------------------------------------\n");
 
-        for (const auto& m : _motors) {
-            // 1. 确定颜色字符串 (char*)
-            const char* color_code = "\033[32m"; // 绿色
-            if (m.step == MotorStep::FAULT) color_code = "\033[31m"; // 红色
-            if (m.step == MotorStep::STOPPED) color_code = "\033[35m"; // 紫色
-            if (m.step == MotorStep::MODE_SWITCHING) color_code = "\033[33m"; // 黄色
+void MYACTUA::shutdown()
+{
+    if (!running_) return;
+    
+    running_ = false;
+    if (rt_thread_.joinable()) {
+        rt_thread_.join();
+    }
+    
+    std::cout << "[MYACTUA] 实时控制线程已停止" << std::endl;
+}
 
-            // 2. 根据模式确定当前要观察的发送值
-            int32_t current_target = 0;
-            if (m.rx.op_mode == 8)      current_target = m.tx.target_pos;
-            else if (m.rx.op_mode == 9) current_target = m.tx.target_vel;
-            else if (m.rx.op_mode == 10) current_target = (int32_t)m.tx.target_torque;
 
-            printf("M %-4d | %s%-12d\033[0m | %-10d | %-10d | %-10d | %-12d | %-6d\n", 
-                m.slave_index,     // 对应 M %-4d
-                color_code,        // 对应 %s
-                m.step,            // 对应 %-12d
-                m.rx.pos,          // 对应 %-10d
-                m.rx.vel,          // 对应 %-10d
-                m.rx.torque,       // 对应 %-10d
-                current_target,    // 对应 %-12d
-                m.rx.op_mode); // 对应 %-6d
+void MYACTUA::rt_thread_func()
+{
+    struct timespec next_period;
+    clock_gettime(CLOCK_TO_USE, &next_period);
+    const long period_ns = 1000000;
+
+    while (running_) {
+        // 1.处理控制命令
+        process_commands();
+        // 2.执行控制周期
+        update({});
+        // 3.更新电机状态快照
+        update_status_snapshot();
+        // 4.调用回调函数
+        if (status_callback_) {
+            status_callback_(status_snapshot_);
         }
-        printf("\033[1;36m=================================================================================\033[0m\n");
-        
-        // 恢复光标到输入行
-        printf("\033[u");
-        fflush(stdout); 
+        // 5.等待下一个周期
+        next_period.tv_nsec += period_ns;
+        if (next_period.tv_nsec >= NSEC_PER_SEC) {
+            next_period.tv_nsec -= NSEC_PER_SEC;
+            next_period.tv_sec++;
+        }
+        clock_nanosleep(CLOCK_TO_USE, TIMER_ABSTIME, &next_period, nullptr);
+    }
+}
+
+
+void MYACTUA::process_commands()
+{
+    ControlCommand cmd;
+    while (cmd_queue_.pop(cmd, 0)) {
+        switch (cmd.type) {
+            case CommandType::SET_SETPOINTS:
+                for (size_t i = 0; i < cmd.values.size() && i < _motors.size(); i++) {
+                    _motors[i].setpoint = cmd.values[i];
+                }
+                break;
+                
+            case CommandType::STOP:
+                stop_motor(cmd.slave_index);
+                break;
+                
+            case CommandType::RESTART:
+                restart(cmd.slave_index);
+                break;
+                
+            case CommandType::SET_MODE:
+                set_mode(cmd.mode, cmd.slave_index);
+                break;
+        }
+    }
+}
+
+
+void MYACTUA::update_status_snapshot()
+{
+    std::lock_guard<std::mutex> lock(status_mutex_);
+    for (size_t i = 0; i < _motors.size(); i++) {
+        const auto& m = _motors[i];
+        status_snapshot_[i].slave_index = m.slave_index;
+        status_snapshot_[i].position = static_cast<double>(m.rx.pos);
+        status_snapshot_[i].velocity = static_cast<double>(m.rx.vel);
+        status_snapshot_[i].torque = static_cast<double>(m.rx.torque);
+        status_snapshot_[i].status_word = m.rx.status_word;
+        status_snapshot_[i].error_code = m.rx.error;
+        status_snapshot_[i].op_mode = m.rx.op_mode;
+        status_snapshot_[i].target_mode = m.target_mode;
+    }
+}
+
+
+void MYACTUA::send_command(const ControlCommand& cmd)
+{
+    cmd_queue_.push(cmd);
+}
+
+
+std::vector<MotorStatusSnapshot> MYACTUA::get_status()
+{
+    std::lock_guard<std::mutex> lock(status_mutex_);
+    return status_snapshot_;
+}
+
+
+void MYACTUA::set_status_callback(StatusCallback cb)
+{
+    status_callback_ = std::move(cb);
+}
+
+
+void MYACTUA::print_motors_info(void){
+    printf("\033[s\033[H");
+
+    printf("\n\033[1;36m============================ MOTOR REAL-TIME MONITOR ============================\033[0m\n");
+    printf("%-6s | %-12s | %-10s | %-10s | %-10s | %-12s | %-6s\n", 
+        "ID", "STEP", "POS", "VEL", "TORQUE", "TARGET(TX)", "MODE");
+    printf("---------------------------------------------------------------------------------\n");
+
+    for (const auto& m : _motors) {
+        const char* color_code = "\033[32m";
+        if (m.step == MotorStep::FAULT) color_code = "\033[31m";
+        if (m.step == MotorStep::STOPPED) color_code = "\033[35m";
+        if (m.step == MotorStep::MODE_SWITCHING) color_code = "\033[33m";
+
+        int32_t current_target = 0;
+        if (m.rx.op_mode == 8)      current_target = m.tx.target_pos;
+        else if (m.rx.op_mode == 9) current_target = m.tx.target_vel;
+        else if (m.rx.op_mode == 10) current_target = (int32_t)m.tx.target_torque;
+
+        printf("M %-4d | %s%-12d\033[0m | %-10d | %-10d | %-10d | %-12d | %-6d\n", 
+            m.slave_index,
+            color_code,
+            static_cast<int>(m.step),
+            m.rx.pos,
+            m.rx.vel,
+            m.rx.torque,
+            current_target,
+            static_cast<int>(m.rx.op_mode));
+    }
+    printf("\033[1;36m=================================================================================\033[0m\n");
+    
+    printf("\033[u");
+    fflush(stdout); 
 }
 
 }
