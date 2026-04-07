@@ -35,9 +35,11 @@ target_link_libraries(MYACTUA_EtherCat
 # 编译可执行文件
 add_executable(simple_test examples/simple_test.cpp)
 add_executable(debug_tool examples/debug_tool.cpp)
+add_executable(ID_test examples/ID_test.cpp)
 
 # 链接你自己的库
 target_link_libraries(simple_test MYACTUA_EtherCat)
 target_link_libraries(debug_tool  MYACTUA_EtherCat)
+target_link_libraries(ID_test MYACTUA_EtherCat)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

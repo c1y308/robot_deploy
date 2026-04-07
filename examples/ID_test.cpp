@@ -8,6 +8,7 @@
 
 int main() {
     auto adapter = std::make_shared<myactua::EthercatAdapterIGH>();
+    // 实例化控制类
     myactua::MYACTUA controller(adapter, 12);
 
     std::cout << "[1/3] 正在初始化网卡..." << std::endl;
@@ -32,28 +33,13 @@ int main() {
 
     std::cout << "[3/3] 启动实时控制线程..." << std::endl;
     controller.start();
-
     std::cout << "\n========== 控制流程开始 ==========" << std::endl;
     
-    // 1. 停止 3 秒
     std::cout << "[阶段1] 停止电机，等待 3 秒..." << std::endl;
     controller.send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
     std::this_thread::sleep_for(std::chrono::seconds(3));
 
-    // 2. 以速度 50 运行 5 秒
-    std::cout << "[阶段2] 电机以速度 50 运行，等待 5 秒..." << std::endl;
-    controller.send_command(myactua::ControlCommand(
-    myactua::CommandType::SET_SETPOINTS, -1, {0.0, 0.0}
-     ));
-     controller.send_command(myactua::ControlCommand(myactua::CommandType::RESTART, -1));
-     std::this_thread::sleep_for(std::chrono::seconds(5));
-
-    // 3. 停止
-    std::cout << "[阶段3] 停止电机..." << std::endl;
-    controller.send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    
-    std::cout << "\n========== 控制流程结束 ==========" << std::endl;
+    while(true);
     // controller.shutdown();
     std::cout << "[完成] 程序结束。" << std::endl;
     return 0;

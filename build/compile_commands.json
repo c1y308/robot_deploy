@@ -18,5 +18,10 @@
   "directory": "/home/cat/Myactua_Ethercat/build",
   "command": "/usr/bin/aarch64-linux-gnu-g++  -I/home/cat/Myactua_Ethercat/include -I/home/cat/ethercat/include -I/opt/etherlab/include -g -std=gnu++17 -o CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o -c /home/cat/Myactua_Ethercat/examples/debug_tool.cpp",
   "file": "/home/cat/Myactua_Ethercat/examples/debug_tool.cpp"
+},
+{
+  "directory": "/home/cat/Myactua_Ethercat/build",
+  "command": "/usr/bin/aarch64-linux-gnu-g++  -I/home/cat/Myactua_Ethercat/include -I/home/cat/ethercat/include -I/opt/etherlab/include -g -std=gnu++17 -o CMakeFiles/ID_test.dir/examples/ID_test.cpp.o -c /home/cat/Myactua_Ethercat/examples/ID_test.cpp",
+  "file": "/home/cat/Myactua_Ethercat/examples/ID_test.cpp"
 }
 ]

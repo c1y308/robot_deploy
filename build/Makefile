@@ -155,6 +155,43 @@ debug_tool/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/debug_tool.dir/build.make CMakeFiles/debug_tool.dir/build
 .PHONY : debug_tool/fast
 
+#=============================================================================
+# Target rules for targets named ID_test
+
+# Build rule for target.
+ID_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 ID_test
+.PHONY : ID_test
+
+# fast build rule for target.
+ID_test/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ID_test.dir/build.make CMakeFiles/ID_test.dir/build
+.PHONY : ID_test/fast
+
+examples/ID_test.o: examples/ID_test.cpp.o
+.PHONY : examples/ID_test.o
+
+# target to build an object file
+examples/ID_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ID_test.dir/build.make CMakeFiles/ID_test.dir/examples/ID_test.cpp.o
+.PHONY : examples/ID_test.cpp.o
+
+examples/ID_test.i: examples/ID_test.cpp.i
+.PHONY : examples/ID_test.i
+
+# target to preprocess a source file
+examples/ID_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ID_test.dir/build.make CMakeFiles/ID_test.dir/examples/ID_test.cpp.i
+.PHONY : examples/ID_test.cpp.i
+
+examples/ID_test.s: examples/ID_test.cpp.s
+.PHONY : examples/ID_test.s
+
+# target to generate assembly for a file
+examples/ID_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ID_test.dir/build.make CMakeFiles/ID_test.dir/examples/ID_test.cpp.s
+.PHONY : examples/ID_test.cpp.s
+
 examples/debug_tool.o: examples/debug_tool.cpp.o
 .PHONY : examples/debug_tool.o
 
@@ -259,9 +296,13 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
+	@echo "... ID_test"
 	@echo "... MYACTUA_EtherCat"
 	@echo "... debug_tool"
 	@echo "... simple_test"
+	@echo "... examples/ID_test.o"
+	@echo "... examples/ID_test.i"
+	@echo "... examples/ID_test.s"
 	@echo "... examples/debug_tool.o"
 	@echo "... examples/debug_tool.i"
 	@echo "... examples/debug_tool.s"

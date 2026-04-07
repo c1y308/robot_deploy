@@ -45,12 +45,12 @@ bool MYACTUA::connect(const char* ifname)
 void MYACTUA::update(const std::vector<double> &setvalues)
 {
     static int print_count = 0;
-
+    /* 接受电机回传数据 */
     for (size_t i = 0; i < _motors.size(); i++)
     {
         _motors[i].rx = _adapter->receive(_motors[i].slave_index);
     }
-
+    /* 设置电机目标值 */
     for (size_t i = 0; i < _motors.size(); i++)
     {
         double val = (i < setvalues.size()) ? setvalues[i] : _motors[i].setpoint;
@@ -62,7 +62,7 @@ void MYACTUA::update(const std::vector<double> &setvalues)
         _adapter->send(_motors[i].slave_index, _motors[i].tx);
     }
 
-    if (++print_count >= 100) {
+    if (++print_count >= 500) {
         print_count = 0;
         print_motors_info();
     }
