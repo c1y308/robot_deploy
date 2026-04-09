@@ -1,0 +1,6 @@
+/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles/MYACTUA_EtherCat.dir
+/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles/simple_test.dir
+/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles/debug_tool.dir
+/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles/ID_test.dir
+/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles/edit_cache.dir
+/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles/rebuild_cache.dir

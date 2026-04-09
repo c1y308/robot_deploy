@@ -1,1 +1,0 @@
-/usr/bin/aarch64-linux-gnu-g++ -g CMakeFiles/test_CiA402.dir/examples/test_CiA402.cpp.o -o test_CiA402   -L/home/cat/ethercat/lib  -L/opt/etherlab/lib  -Wl,-rpath,/home/cat/ethercat/lib:/opt/etherlab/lib libMYACTUA_EtherCat.a -lethercat -lpthread -lrt 
