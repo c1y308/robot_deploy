@@ -85,21 +85,21 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
         return;
     }
 
-    if (motor.rx.op_mode != motor.target_mode) 
-    {   
-        motor.step = MotorStep::MODE_SWITCHING;
-    }
-    if(motor.step == MotorStep::MODE_SWITCHING){
-        handle_mode_switching(motor);
-        return;
-    }
-
     if (is_fault(sw)) 
     {
         motor.step = MotorStep::FAULT;
         motor.tx.control_word = CMD_SHUTDOWN;
         return;
     }
+    if (motor.rx.op_mode != motor.target_mode && motor.step == MotorStep::RUNNING)
+    {
+        motor.step = MotorStep::MODE_SWITCHING;
+    }
+    if(motor.step == MotorStep::MODE_SWITCHING){
+        handle_mode_switching(motor);
+        return;
+    }
+    
     motor.tx.control_word = get_next_control_word(sw);
     if (is_operation_enabled(sw))  
     {   
@@ -177,6 +177,8 @@ void MYACTUA::handle_mode_switching(MotorState& motor)
             if (motor.rx.op_mode == motor.target_mode) {
                 motor.mode_switch_step = ModeSwitchStep::IDLE;
                 motor.step = MotorStep::RUNNING;
+            } else {
+                motor.mode_switch_step = ModeSwitchStep::SET_MODE_CLEAR_DISABLE;
             }
             break;
     }
@@ -214,9 +216,11 @@ void MYACTUA::stop_motor(int slave_index)
     if(slave_index < 0) {
         for(auto& motor : _motors) {
             motor.step = MotorStep::STOPPED;
+            motor.mode_switch_step = ModeSwitchStep::IDLE;
         }
     } else if(slave_index < _motors.size()) {
         _motors[slave_index].step = MotorStep::STOPPED;
+        _motors[slave_index].mode_switch_step = ModeSwitchStep::IDLE;
     }
 }
 
@@ -226,9 +230,11 @@ void MYACTUA::restart(int slave_index)
     if(slave_index < 0) {
         for(auto& motor : _motors) {
             motor.step = MotorStep::ENABLING;
+            motor.mode_switch_step = ModeSwitchStep::IDLE;
         }
     } else if(slave_index < _motors.size()) {
         _motors[slave_index].step = MotorStep::ENABLING;
+        _motors[slave_index].mode_switch_step = ModeSwitchStep::IDLE;
     }
 }
 
@@ -355,10 +361,10 @@ void MYACTUA::set_status_callback(StatusCallback cb)
 void MYACTUA::print_motors_info(void){
     printf("\033[2J\033[H");
 
-    printf("\n\033[1;36m============================ MOTOR REAL-TIME MONITOR ============================\033[0m\n");
-    printf("%-6s | %-12s | %-10s | %-10s | %-10s | %-12s | %-6s\n", 
-        "ID", "STEP", "POS", "VEL", "TORQUE", "TARGET(TX)", "MODE");
-    printf("---------------------------------------------------------------------------------\n");
+    printf("\033[1;36m============================ MOTOR REAL-TIME MONITOR ============================\033[0m\n");
+    printf("%-6s | %-16s | %-22s | %-10s | %-10s | %-10s | %-12s | %-6s\n",
+        "ID", "STEP", "MODE_SWITCH_STEP", "POS", "VEL", "TORQUE", "TARGET(TX)", "MODE");
+    printf("---------------------------------------------------------------------------------------------------------------------------------\n");
 
     for (const auto& m : _motors) {
         const char* color_code = "\033[32m";
@@ -371,10 +377,31 @@ void MYACTUA::print_motors_info(void){
         else if (m.rx.op_mode == 9) current_target = m.tx.target_vel;
         else if (m.rx.op_mode == 10) current_target = (int32_t)m.tx.target_torque;
 
-        printf("M %-4d | %s%-12d\033[0m | %-10d | %-10d | %-10d | %-12d | %-6d\n", 
+        const char* step_name = "UNKNOWN";
+        switch (m.step) {
+            case MotorStep::IDLE: step_name = "IDLE"; break;
+            case MotorStep::ENABLING: step_name = "ENABLING"; break;
+            case MotorStep::RUNNING: step_name = "RUNNING"; break;
+            case MotorStep::STOPPED: step_name = "STOPPED"; break;
+            case MotorStep::FAULT: step_name = "FAULT"; break;
+            case MotorStep::MODE_SWITCHING: step_name = "MODE_SWITCHING"; break;
+        }
+
+        const char* mode_switch_step_name = "N/A";
+        switch (m.mode_switch_step) {
+            case ModeSwitchStep::IDLE: mode_switch_step_name = "IDLE"; break;
+            case ModeSwitchStep::SET_MODE_CLEAR_DISABLE: mode_switch_step_name = "SET_MODE_CLEAR_DISABLE"; break;
+            case ModeSwitchStep::ENABLE: mode_switch_step_name = "ENABLE"; break;
+            case ModeSwitchStep::OPERATING: mode_switch_step_name = "OPERATING"; break;
+            case ModeSwitchStep::DONE: mode_switch_step_name = "DONE"; break;
+        }
+
+        printf("M %-4d | %s%-16s\033[0m | %s%-22s\033[0m | %-10d | %-10d | %-10d | %-12d | %-6d\n",
             m.slave_index,
             color_code,
-            static_cast<int>(m.step),
+            step_name,
+            color_code,
+            mode_switch_step_name,
             m.rx.pos,
             m.rx.vel,
             m.rx.torque,

@@ -1,27 +1,27 @@
 [
 {
   "directory": "/home/cat/Myactua_Ethercat/src/motors/build",
-  "command": "/usr/bin/c++  -I/home/cat/Myactua_Ethercat/src/motors/include -I/home/cat/Myactua_Ethercat/src/motors/src/drivers/myact -I/home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat -I/home/cat/ethercat/include -I/opt/etherlab/include -std=gnu++17 -o CMakeFiles/MYACTUA_EtherCat.dir/src/drivers/myact/motor_control.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/src/drivers/myact/motor_control.cpp",
+  "command": "/usr/bin/aarch64-linux-gnu-g++  -I/home/cat/Myactua_Ethercat/src/motors/include -I/home/cat/Myactua_Ethercat/src/motors/src/drivers/myact -I/home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat -I/home/cat/ethercat/include -I/opt/etherlab/include -g -std=gnu++17 -o CMakeFiles/MYACTUA_EtherCat.dir/src/drivers/myact/motor_control.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/src/drivers/myact/motor_control.cpp",
   "file": "/home/cat/Myactua_Ethercat/src/motors/src/drivers/myact/motor_control.cpp"
 },
 {
   "directory": "/home/cat/Myactua_Ethercat/src/motors/build",
-  "command": "/usr/bin/c++  -I/home/cat/Myactua_Ethercat/src/motors/include -I/home/cat/Myactua_Ethercat/src/motors/src/drivers/myact -I/home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat -I/home/cat/ethercat/include -I/opt/etherlab/include -std=gnu++17 -o CMakeFiles/MYACTUA_EtherCat.dir/src/protocol/ethercat/EthercatAdapterIGH.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat/EthercatAdapterIGH.cpp",
+  "command": "/usr/bin/aarch64-linux-gnu-g++  -I/home/cat/Myactua_Ethercat/src/motors/include -I/home/cat/Myactua_Ethercat/src/motors/src/drivers/myact -I/home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat -I/home/cat/ethercat/include -I/opt/etherlab/include -g -std=gnu++17 -o CMakeFiles/MYACTUA_EtherCat.dir/src/protocol/ethercat/EthercatAdapterIGH.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat/EthercatAdapterIGH.cpp",
   "file": "/home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat/EthercatAdapterIGH.cpp"
 },
 {
   "directory": "/home/cat/Myactua_Ethercat/src/motors/build",
-  "command": "/usr/bin/c++  -I/home/cat/Myactua_Ethercat/src/motors/include -I/home/cat/Myactua_Ethercat/src/motors/src/drivers/myact -I/home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat -I/home/cat/ethercat/include -I/opt/etherlab/include -std=gnu++17 -o CMakeFiles/simple_test.dir/examples/simple_test.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp",
+  "command": "/usr/bin/aarch64-linux-gnu-g++  -I/home/cat/Myactua_Ethercat/src/motors/include -I/home/cat/Myactua_Ethercat/src/motors/src/drivers/myact -I/home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat -I/home/cat/ethercat/include -I/opt/etherlab/include -g -std=gnu++17 -o CMakeFiles/simple_test.dir/examples/simple_test.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp",
   "file": "/home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp"
 },
 {
   "directory": "/home/cat/Myactua_Ethercat/src/motors/build",
-  "command": "/usr/bin/c++  -I/home/cat/Myactua_Ethercat/src/motors/include -I/home/cat/Myactua_Ethercat/src/motors/src/drivers/myact -I/home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat -I/home/cat/ethercat/include -I/opt/etherlab/include -std=gnu++17 -o CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/examples/debug_tool.cpp",
+  "command": "/usr/bin/aarch64-linux-gnu-g++  -I/home/cat/Myactua_Ethercat/src/motors/include -I/home/cat/Myactua_Ethercat/src/motors/src/drivers/myact -I/home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat -I/home/cat/ethercat/include -I/opt/etherlab/include -g -std=gnu++17 -o CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/examples/debug_tool.cpp",
   "file": "/home/cat/Myactua_Ethercat/src/motors/examples/debug_tool.cpp"
 },
 {
   "directory": "/home/cat/Myactua_Ethercat/src/motors/build",
-  "command": "/usr/bin/c++  -I/home/cat/Myactua_Ethercat/src/motors/include -I/home/cat/Myactua_Ethercat/src/motors/src/drivers/myact -I/home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat -I/home/cat/ethercat/include -I/opt/etherlab/include -std=gnu++17 -o CMakeFiles/ID_test.dir/examples/ID_test.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp",
+  "command": "/usr/bin/aarch64-linux-gnu-g++  -I/home/cat/Myactua_Ethercat/src/motors/include -I/home/cat/Myactua_Ethercat/src/motors/src/drivers/myact -I/home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat -I/home/cat/ethercat/include -I/opt/etherlab/include -g -std=gnu++17 -o CMakeFiles/ID_test.dir/examples/ID_test.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp",
   "file": "/home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp"
 }
 ]

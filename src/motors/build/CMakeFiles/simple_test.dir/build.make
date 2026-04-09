@@ -73,15 +73,15 @@ CMakeFiles/simple_test.dir/examples/simple_test.cpp.o: CMakeFiles/simple_test.di
 CMakeFiles/simple_test.dir/examples/simple_test.cpp.o: /home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp
 CMakeFiles/simple_test.dir/examples/simple_test.cpp.o: CMakeFiles/simple_test.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/simple_test.dir/examples/simple_test.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/simple_test.dir/examples/simple_test.cpp.o -MF CMakeFiles/simple_test.dir/examples/simple_test.cpp.o.d -o CMakeFiles/simple_test.dir/examples/simple_test.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/simple_test.dir/examples/simple_test.cpp.o -MF CMakeFiles/simple_test.dir/examples/simple_test.cpp.o.d -o CMakeFiles/simple_test.dir/examples/simple_test.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp
 
 CMakeFiles/simple_test.dir/examples/simple_test.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/simple_test.dir/examples/simple_test.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp > CMakeFiles/simple_test.dir/examples/simple_test.cpp.i
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp > CMakeFiles/simple_test.dir/examples/simple_test.cpp.i
 
 CMakeFiles/simple_test.dir/examples/simple_test.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/simple_test.dir/examples/simple_test.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp -o CMakeFiles/simple_test.dir/examples/simple_test.cpp.s
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp -o CMakeFiles/simple_test.dir/examples/simple_test.cpp.s
 
 # Object files for target simple_test
 simple_test_OBJECTS = \
