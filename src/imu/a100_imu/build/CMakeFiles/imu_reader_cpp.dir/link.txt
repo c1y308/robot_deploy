@@ -1,0 +1,1 @@
+/usr/bin/aarch64-linux-gnu-g++  -Wall -Wextra -O2 -g -DDEBUG CMakeFiles/imu_reader_cpp.dir/src/main.cpp.o CMakeFiles/imu_reader_cpp.dir/src/serial_port.cpp.o CMakeFiles/imu_reader_cpp.dir/src/imu_parser.cpp.o CMakeFiles/imu_reader_cpp.dir/src/imu_reader.cpp.o -o imu_reader_cpp  -lm -lpthread 
