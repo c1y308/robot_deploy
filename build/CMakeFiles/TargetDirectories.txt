@@ -1,0 +1,7 @@
+/home/cat/rk3588_imu_reader/build/CMakeFiles/imu_reader_cpp.dir
+/home/cat/rk3588_imu_reader/build/CMakeFiles/edit_cache.dir
+/home/cat/rk3588_imu_reader/build/CMakeFiles/rebuild_cache.dir
+/home/cat/rk3588_imu_reader/build/CMakeFiles/list_install_components.dir
+/home/cat/rk3588_imu_reader/build/CMakeFiles/install.dir
+/home/cat/rk3588_imu_reader/build/CMakeFiles/install/local.dir
+/home/cat/rk3588_imu_reader/build/CMakeFiles/install/strip.dir
