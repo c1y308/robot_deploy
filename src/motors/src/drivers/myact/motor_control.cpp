@@ -52,17 +52,26 @@ void MYACTUA::update(const std::vector<double> &setvalues)
     /* 接受电机回传数据 */
     for (size_t i = 0; i < _motors.size(); i++)
     {
-        _motors[i].rx = _adapter->receive(_motors[i].slave_index);
+        if (_adapter->isConfigured(_motors[i].slave_index)) {
+            _motors[i].rx = _adapter->receive(_motors[i].slave_index);
+        } else {
+            _motors[i].rx = {};
+        }
     }
     /* 设置电机目标值 */
     for (size_t i = 0; i < _motors.size(); i++)
     {
+        if (!_adapter->isConfigured(_motors[i].slave_index)) {
+            _motors[i].step = MotorStep::IDLE;
+            continue;
+        }
         double val = (i < setvalues.size()) ? setvalues[i] : _motors[i].setpoint;
         process_single_motor(_motors[i], val);
     }
 
     for (size_t i = 0; i < _motors.size(); i++)
     {
+        if (!_adapter->isConfigured(_motors[i].slave_index)) continue;
         _adapter->send(_motors[i].slave_index, _motors[i].tx);
     }
 

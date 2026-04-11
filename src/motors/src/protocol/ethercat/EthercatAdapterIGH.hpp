@@ -1,13 +1,18 @@
 #pragma once
 #include "EthercatAdapter.hpp"
 #include <ecrt.h>
+#include <array>
+#include <cstddef>
 #include <vector>
 #include <thread>
 #include <atomic>
 
-#define NUM_SLAVES 6
-
 namespace myactua {
+
+inline constexpr std::array<uint16_t, 12> kSlavePositions = {
+    1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13
+};
+inline constexpr std::size_t kNumSlaves = kSlavePositions.size();
 
 class EthercatAdapterIGH : public EthercatAdapter {
 private:
@@ -42,8 +47,9 @@ private:
 
     uint8_t *domain1_pd = nullptr; 
 
-    ec_slave_config_t *sc[NUM_SLAVES] = {0}; 
-    ec_slave_config_state_t sc_state[NUM_SLAVES] = {};
+    std::array<ec_slave_config_t *, kNumSlaves> sc = {};
+    std::array<ec_slave_config_state_t, kNumSlaves> sc_state = {};
+    std::array<std::atomic<bool>, kNumSlaves> slave_configured = {};
 
     unsigned int sync_ref_counter = 0;
     bool is_initialized = false;

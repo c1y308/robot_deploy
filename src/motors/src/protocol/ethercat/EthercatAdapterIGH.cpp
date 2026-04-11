@@ -63,7 +63,10 @@ ec_sync_info_t EthercatAdapterIGH::device_syncs[] = {
 
 
 EthercatAdapterIGH::EthercatAdapterIGH() {
-    slave_offsets.resize(NUM_SLAVES);
+    slave_offsets.resize(kNumSlaves);
+    for (std::size_t i = 0; i < kNumSlaves; ++i) {
+        slave_configured[i].store(false, std::memory_order_relaxed);
+    }
     is_initialized = false;
     keep_running = false;
 }    
@@ -91,18 +94,21 @@ bool EthercatAdapterIGH::init(const char* ifname)
     }
 
     // 配置从站实体
-    for (uint16_t i = 0; i < NUM_SLAVES; i++) 
+    for (std::size_t i = 0; i < kNumSlaves; i++) 
     {
-        sc[i] = ecrt_master_slave_config(master, 0, i, VID_PID);
+        const uint16_t position = kSlavePositions[i];
+        sc[i] = ecrt_master_slave_config(master, 0, position, VID_PID);
         if(!sc[i]) 
         {
-            std::cerr << "配置从站 " << i << " 失败\n";
+            std::cerr << "配置从站失败，逻辑索引 " << i
+                      << "，物理位置 " << position << "\n";
             return false;
         }
         
         if (ecrt_slave_config_pdos(sc[i], EC_END, device_syncs)) 
         {
-            std::cerr << "配置从站 " << i << " PDO 失败\n";
+            std::cerr << "配置从站 PDO 失败，逻辑索引 " << i
+                      << "，物理位置 " << position << "\n";
             return false;
         }
 
@@ -121,25 +127,26 @@ bool EthercatAdapterIGH::init(const char* ifname)
         unsigned int *bit_pos;位偏移指针 (Pointer to bit position)
         */
         ec_pdo_entry_reg_t reg[] ={
-            {0, i, VID_PID, 0x6040, 0, &slave_offsets[i].off_ctrl_word},
-            {0, i, VID_PID, 0x607A, 0, &slave_offsets[i].off_target_pos},
-            {0, i, VID_PID, 0x60FF, 0, &slave_offsets[i].off_target_vel},
-            {0, i, VID_PID, 0x6071, 0, &slave_offsets[i].off_target_torque},
-            {0, i, VID_PID, 0x6072, 0, &slave_offsets[i].off_max_torque},
-            {0, i, VID_PID, 0x6060, 0, &slave_offsets[i].off_mode_of_op},
+            {0, position, VID_PID, 0x6040, 0, &slave_offsets[i].off_ctrl_word},
+            {0, position, VID_PID, 0x607A, 0, &slave_offsets[i].off_target_pos},
+            {0, position, VID_PID, 0x60FF, 0, &slave_offsets[i].off_target_vel},
+            {0, position, VID_PID, 0x6071, 0, &slave_offsets[i].off_target_torque},
+            {0, position, VID_PID, 0x6072, 0, &slave_offsets[i].off_max_torque},
+            {0, position, VID_PID, 0x6060, 0, &slave_offsets[i].off_mode_of_op},
 
-            {0, i, VID_PID, 0x6041, 0, &slave_offsets[i].off_status_word},
-            {0, i, VID_PID, 0x6064, 0, &slave_offsets[i].off_pos},
-            {0, i, VID_PID, 0x606C, 0, &slave_offsets[i].off_vel},
-            {0, i, VID_PID, 0x6077, 0, &slave_offsets[i].off_torque},
-            {0, i, VID_PID, 0x603F, 0, &slave_offsets[i].off_error},
-            {0, i, VID_PID, 0x6061, 0, &slave_offsets[i].off_mode_disp},
+            {0, position, VID_PID, 0x6041, 0, &slave_offsets[i].off_status_word},
+            {0, position, VID_PID, 0x6064, 0, &slave_offsets[i].off_pos},
+            {0, position, VID_PID, 0x606C, 0, &slave_offsets[i].off_vel},
+            {0, position, VID_PID, 0x6077, 0, &slave_offsets[i].off_torque},
+            {0, position, VID_PID, 0x603F, 0, &slave_offsets[i].off_error},
+            {0, position, VID_PID, 0x6061, 0, &slave_offsets[i].off_mode_disp},
             {} // 结束标志
         };
 
         if (ecrt_domain_reg_pdo_entry_list(domain1, reg)) 
         {
-            std::cerr << "注册从站 " << i << " PDO 条目失败\n";
+            std::cerr << "注册从站 PDO 条目失败，逻辑索引 " << i
+                      << "，物理位置 " << position << "\n";
             return false;
         }
     }
@@ -184,6 +191,12 @@ void EthercatAdapterIGH::rt_loop()
         
         ecrt_master_receive(master); // 接收从站 PDO 数据
         ecrt_domain_process(domain1); // 处理域数据
+
+        for (std::size_t i = 0; i < kNumSlaves; ++i) {
+            ecrt_slave_config_state(sc[i], &sc_state[i]);
+            const bool ok = sc_state[i].online && sc_state[i].operational;
+            slave_configured[i].store(ok, std::memory_order_relaxed);
+        }
 
         /*下面是数据处理*/
 
@@ -241,7 +254,10 @@ void EthercatAdapterIGH::sendPhysical() {
 
 // 检查特定从站的配置状态
 bool EthercatAdapterIGH::isConfigured(int index) {
-    return true;
+    if (index < 0 || index >= static_cast<int>(kNumSlaves)) {
+        return false;
+    }
+    return slave_configured[index].load(std::memory_order_relaxed);
 }
 
 

@@ -89,6 +89,7 @@ cd src/motors/build
    - 请按实际 EtherCAT 主站网卡修改。
 2. **从站数量**
    - 由示例中的 `MYACTUA controller(adapter, N)` 决定。
+   - 当前 `EthercatAdapterIGH` 默认按 12 个从站配置，逻辑索引 `0-11` 对应 EtherCAT 物理位置 `1-6, 8-13`。
 3. **PDO/对象字典一致性**
    - `include/MotorTypes.hpp` 中 PDO 偏移需与从站 ESI/固件一致。
 4. **模式切换与使能流程**
@@ -102,4 +103,3 @@ cd src/motors/build
    - 检查模式是否切换成功、目标值单位是否匹配、使能流程是否完成。
 3. **周期抖动或丢帧**
    - 检查 CPU 占用、线程优先级、系统实时配置与网卡负载。
-

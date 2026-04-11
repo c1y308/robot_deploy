@@ -9,29 +9,51 @@
 int main() {
     auto adapter = std::make_shared<myactua::EthercatAdapterIGH>();
     // 实例化控制类
-    myactua::MYACTUA controller(adapter, 6);
+    myactua::MYACTUA controller(adapter, 12);
 
-    std::cout << "[1/3] 正在初始化网卡..." << std::endl;
+    std::cout << "[1/4] 正在初始化网卡..." << std::endl;
     if (!controller.connect("enp8s0")) {
         std::cerr << "[错误] 无法连接到 EtherCAT 网络！" << std::endl;
         return -1;
     }
 
-    std::cout << "[2/3] 连接成功，正在设置电机 CSV 模式..." << std::endl;
+    std::cout << "[2/4] 等待 12 个从站进入 OP..." << std::endl;
+    constexpr int kWaitCycles = 200; // 10s timeout (100 * 100ms)
+    bool all_ready = false;
+    for (int t = 0; t < kWaitCycles; ++t) {
+        int ready_count = 0;
+        for (int i = 0; i < 12; ++i) {
+            if (adapter->isConfigured(i)) {
+                ++ready_count;
+            }
+        }
+        if (ready_count == 12) {
+            all_ready = true;
+            break;
+        }
+        std::cout << "  已就绪: " << ready_count << "/12" << std::endl;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    if (!all_ready) {
+        std::cerr << "[错误] 从站未在 10s 内全部就绪，请检查接线/供电/物理位置映射。" << std::endl;
+        return -1;
+    }
+
+    std::cout << "[3/4] 连接成功，正在设置电机 CSV 模式..." << std::endl;
     controller.set_mode(myactua::ControlMode::CSV, 0);
     controller.set_mode(myactua::ControlMode::CSV, 1);
     controller.set_mode(myactua::ControlMode::CSV, 2);
     controller.set_mode(myactua::ControlMode::CSV, 3);
     controller.set_mode(myactua::ControlMode::CSV, 4);
     controller.set_mode(myactua::ControlMode::CSV, 5);
-    // controller.set_mode(myactua::ControlMode::CSV, 6);
-    // controller.set_mode(myactua::ControlMode::CSV, 7);
-    // controller.set_mode(myactua::ControlMode::CSV, 8);
-    // controller.set_mode(myactua::ControlMode::CSV, 9);
-    // controller.set_mode(myactua::ControlMode::CSV, 10);
-    // controller.set_mode(myactua::ControlMode::CSV, 11);
+    controller.set_mode(myactua::ControlMode::CSV, 6);
+    controller.set_mode(myactua::ControlMode::CSV, 7);
+    controller.set_mode(myactua::ControlMode::CSV, 8);
+    controller.set_mode(myactua::ControlMode::CSV, 9);
+    controller.set_mode(myactua::ControlMode::CSV, 10);
+    controller.set_mode(myactua::ControlMode::CSV, 11);
 
-    std::cout << "[3/3] 启动实时控制线程..." << std::endl;
+    std::cout << "[4/4] 启动实时控制线程..." << std::endl;
     controller.start();
     std::cout << "\n========== 控制流程开始 ==========" << std::endl;
     
