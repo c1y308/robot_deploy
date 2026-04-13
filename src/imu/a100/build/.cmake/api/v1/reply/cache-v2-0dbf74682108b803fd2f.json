@@ -1194,6 +1194,18 @@
 			"value" : "TRUE"
 		},
 		{
+			"name" : "imu_a100_core_LIB_DEPENDS",
+			"properties" : 
+			[
+				{
+					"name" : "HELPSTRING",
+					"value" : "Dependencies for the target"
+				}
+			],
+			"type" : "STATIC",
+			"value" : "general;MYACTUA_EtherCat;general;m;general;pthread;"
+		},
+		{
 			"name" : "rk3588_imu_reader_cpp_BINARY_DIR",
 			"properties" : 
 			[

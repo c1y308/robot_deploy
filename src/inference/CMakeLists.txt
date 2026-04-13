@@ -42,3 +42,12 @@ add_executable(basic_stand_test
 )
 target_link_libraries(basic_stand_test PRIVATE robot_interface)
 
+add_executable(imu_only_test
+    examples/imu_test.cpp
+)
+target_link_libraries(imu_only_test PRIVATE robot_interface)
+
+add_executable(motors_test
+    examples/motors_test.cpp
+)
+target_link_libraries(motors_test PRIVATE robot_interface)

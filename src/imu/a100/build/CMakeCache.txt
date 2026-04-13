@@ -224,6 +224,9 @@ MYACTUA_EtherCat_LIB_DEPENDS:STATIC=general;ethercat;general;pthread;general;rt;
 //Value Computed by CMake
 MYACTUA_EtherCat_SOURCE_DIR:STATIC=/home/cat/Myactua_Ethercat/src/motors
 
+//Dependencies for the target
+imu_a100_core_LIB_DEPENDS:STATIC=general;MYACTUA_EtherCat;general;m;general;pthread;
+
 //Value Computed by CMake
 rk3588_imu_reader_cpp_BINARY_DIR:STATIC=/home/cat/Myactua_Ethercat/src/imu/a100/build
 

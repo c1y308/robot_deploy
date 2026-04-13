@@ -10,8 +10,7 @@
 					[
 						1
 					],
-					"hasInstallRule" : true,
-					"jsonFile" : "directory-.-Release-c52baacddc2d32a8362a.json",
+					"jsonFile" : "directory-.-Release-f5ebdc15457944623624.json",
 					"minimumCMakeVersion" : 
 					{
 						"string" : "3.10"
@@ -101,9 +100,9 @@
 				},
 				{
 					"directoryIndex" : 0,
-					"id" : "imu_reader_cpp::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-imu_reader_cpp-Release-3f73ad969dd42ebf3a20.json",
-					"name" : "imu_reader_cpp",
+					"id" : "imu_a100_core::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-imu_a100_core-Release-dd5e57592d28fd172fbb.json",
+					"name" : "imu_a100_core",
 					"projectIndex" : 0
 				},
 				{

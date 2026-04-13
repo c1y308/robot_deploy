@@ -45,7 +45,7 @@ set(CMAKE_MAKEFILE_PRODUCTS
 
 # Dependency information for all targets:
 set(CMAKE_DEPEND_INFO_FILES
-  "CMakeFiles/imu_reader_cpp.dir/DependInfo.cmake"
+  "CMakeFiles/imu_a100_core.dir/DependInfo.cmake"
   "motors_build/CMakeFiles/MYACTUA_EtherCat.dir/DependInfo.cmake"
   "motors_build/CMakeFiles/simple_test.dir/DependInfo.cmake"
   "motors_build/CMakeFiles/debug_tool.dir/DependInfo.cmake"

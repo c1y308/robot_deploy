@@ -24,6 +24,7 @@ class IMUReader;
 namespace inference {
 
 struct RobotInterfaceConfig {
+
     /* 电机 配置*/
     int num_motors = 12;
     std::string ethercat_ifname = "enp8s0";
@@ -31,9 +32,13 @@ struct RobotInterfaceConfig {
     int wait_all_slaves_timeout_ms = 10000;
     int wait_all_slaves_poll_ms = 100;
 
+    
     /* IMU 配置 */
     std::string imu_device = "/dev/ttyUSB0";
-    int imu_baudrate = 921600;
+    int imu_baudrate       = 921600;
+    bool imu_print_imu     = false;
+    bool imu_print_ahrs    = true;
+    bool imu_print_stats   = false;
 
 
     // Optional limits in radians, size == num_motors.
@@ -52,8 +57,10 @@ public:
     ~RobotInterface();
 
 
-    bool initial_start_motors();
+    bool initial_and_start_motors();
     void deinit_motors();
+    bool initial_and_start_imu();
+    void deinit_imu();
 
 
     bool apply_action(const std::vector<double>& target_q_rad);
@@ -78,7 +85,7 @@ public:
 private:
     static double raw_pos_to_rad(double raw_pos);
     static double raw_vel_to_rad_s(double raw_vel);
-    static double rad_to_csp_deg(double rad);
+    static double rad_to_deg(double rad);
 
     bool wait_all_slaves_ready() const;
     

@@ -12,10 +12,12 @@ namespace inference {
 namespace {
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kPosPlusPerRev = 131072.0;
-constexpr double kRawPosToRad = (2.0 * kPi) / kPosPlusPerRev;
-constexpr double kRawVelToRpm = 60.0 / 131072.0;
-constexpr double kRpmToRadPerSec = (2.0 * kPi) / 60.0;
+
+constexpr double kRawPosToRad = (2.0 * kPi) / kPosPlusPerRev;  // 编码器脉冲转换为弧度
 constexpr double kRadToDeg = 180.0 / kPi;
+
+constexpr double kRawVelToRpm    =  60.0  / kPosPlusPerRev;   // 编码器速度转换为转速（RPM）
+constexpr double kRpmToRadPerSec = (2.0 * kPi) / 60.0;
 }  // namespace
 
 
@@ -39,13 +41,23 @@ double RobotInterface::raw_vel_to_rad_s(double raw_vel) {
 }
 
 
-double RobotInterface::rad_to_csp_deg(double rad) {
+double RobotInterface::rad_to_deg(double rad) {
     return rad * kRadToDeg;
 }
 
 
 
 
+
+
+bool RobotInterface::initial_and_start_imu() {
+    return initial_start_imu_reader();
+}
+
+
+void RobotInterface::deinit_imu() {
+    stop_imu_reader();
+}
 
 
 /* 初始化并启动 IMU 读取器 */
@@ -55,10 +67,11 @@ bool RobotInterface::initial_start_imu_reader() {
     }
 
     imu::Config_t imu_cfg;
-    imu_cfg.device = config_.imu_device;
-    imu_cfg.baudrate = config_.imu_baudrate;
-    imu_cfg.print_imu = false;
-    imu_cfg.print_stats = false;
+    imu_cfg.device      = config_.imu_device;
+    imu_cfg.baudrate    = config_.imu_baudrate;
+    imu_cfg.print_imu   = config_.imu_print_imu;
+    imu_cfg.print_ahrs  = config_.imu_print_ahrs;
+    imu_cfg.print_stats = config_.imu_print_stats;
 
     imu_reader_ = std::make_unique<imu::IMUReader>();
     imu_reader_->set_imu_callback([this](const imu::IMUData_t& data) {
@@ -67,6 +80,16 @@ bool RobotInterface::initial_start_imu_reader() {
         ang_vel_[1] = static_cast<double>(data.gyroscope_y);
         ang_vel_[2] = static_cast<double>(data.gyroscope_z);
         // 当前 parser 仅提供 IMU 帧，不含四元数。先保持单位四元数占位。
+    });
+    imu_reader_->set_ahrs_callback([this](const imu::AHRSData_t& data) {
+        std::lock_guard<std::mutex> lock(imu_mutex_);
+        ang_vel_[0] = static_cast<double>(data.roll_speed);
+        ang_vel_[1] = static_cast<double>(data.pitch_speed);
+        ang_vel_[2] = static_cast<double>(data.heading_speed);
+        quat_[0] = static_cast<double>(data.qw);
+        quat_[1] = static_cast<double>(data.qx);
+        quat_[2] = static_cast<double>(data.qy);
+        quat_[3] = static_cast<double>(data.qz);
     });
 
     /* 调用 imu class的初始化函数 */
@@ -103,13 +126,8 @@ void RobotInterface::stop_imu_reader() {
 
 
 /* 初始化并启动电机 */
-bool RobotInterface::initial_start_motors() {
+bool RobotInterface::initial_and_start_motors() {
     if (motors_initialized_.load()) {
-        if (!imu_initialized_.load()) {
-            if (!initial_start_imu_reader()) {
-                std::cerr << "[RobotInterface] IMU startup failed, motors remain active.\n";
-            }
-        }
         return true;
     }
 
@@ -139,12 +157,9 @@ bool RobotInterface::initial_start_motors() {
 
     /* 启动实时线程 */
     controller_->start();
+
     controller_->send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
     motors_initialized_.store(true);
-
-    if (!initial_start_imu_reader()) {
-        std::cerr << "[RobotInterface] IMU startup failed, motors remain active.\n";
-    }
 
     return true;
 }
@@ -276,7 +291,7 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_rad) {
         if (config_.joint_max_rad.size() == static_cast<size_t>(config_.num_motors)) {
             q = std::min(q, config_.joint_max_rad[i]);
         }
-        target_deg[i] = rad_to_csp_deg(q);
+        target_deg[i] = rad_to_deg(q);
     }
 
     controller_->send_command(myactua::ControlCommand(myactua::CommandType::SET_SETPOINTS,

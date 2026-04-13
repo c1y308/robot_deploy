@@ -41,9 +41,9 @@ int main() {
 
     inference::RobotInterface robot(cfg);
 
-    std::cout << "[TEST] 1/4 initial_start_motors()\n";
-    if (!robot.initial_start_motors()) {
-        std::cerr << "[TEST] initial_start_motors failed.\n";
+    std::cout << "[TEST] 1/4 initial_and_start_motors()\n";
+    if (!robot.initial_and_start_motors()) {
+        std::cerr << "[TEST] initial_and_start_motors failed.\n";
         return -1;
     }
 

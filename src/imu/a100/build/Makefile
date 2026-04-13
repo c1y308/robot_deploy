@@ -85,51 +85,6 @@ rebuild_cache:
 rebuild_cache/fast: rebuild_cache
 .PHONY : rebuild_cache/fast
 
-# Special rule for the target list_install_components
-list_install_components:
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "Available install components are: \"Unspecified\""
-.PHONY : list_install_components
-
-# Special rule for the target list_install_components
-list_install_components/fast: list_install_components
-.PHONY : list_install_components/fast
-
-# Special rule for the target install
-install: preinstall
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "Install the project..."
-	/usr/bin/cmake -P cmake_install.cmake
-.PHONY : install
-
-# Special rule for the target install
-install/fast: preinstall/fast
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "Install the project..."
-	/usr/bin/cmake -P cmake_install.cmake
-.PHONY : install/fast
-
-# Special rule for the target install/local
-install/local: preinstall
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "Installing only the local directory..."
-	/usr/bin/cmake -DCMAKE_INSTALL_LOCAL_ONLY=1 -P cmake_install.cmake
-.PHONY : install/local
-
-# Special rule for the target install/local
-install/local/fast: preinstall/fast
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "Installing only the local directory..."
-	/usr/bin/cmake -DCMAKE_INSTALL_LOCAL_ONLY=1 -P cmake_install.cmake
-.PHONY : install/local/fast
-
-# Special rule for the target install/strip
-install/strip: preinstall
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "Installing the project stripped..."
-	/usr/bin/cmake -DCMAKE_INSTALL_DO_STRIP=1 -P cmake_install.cmake
-.PHONY : install/strip
-
-# Special rule for the target install/strip
-install/strip/fast: preinstall/fast
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --cyan "Installing the project stripped..."
-	/usr/bin/cmake -DCMAKE_INSTALL_DO_STRIP=1 -P cmake_install.cmake
-.PHONY : install/strip/fast
-
 # The main all target
 all: cmake_check_build_system
 	$(CMAKE_COMMAND) -E cmake_progress_start /home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles /home/cat/Myactua_Ethercat/src/imu/a100/build//CMakeFiles/progress.marks
@@ -162,17 +117,17 @@ depend:
 .PHONY : depend
 
 #=============================================================================
-# Target rules for targets named imu_reader_cpp
+# Target rules for targets named imu_a100_core
 
 # Build rule for target.
-imu_reader_cpp: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 imu_reader_cpp
-.PHONY : imu_reader_cpp
+imu_a100_core: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 imu_a100_core
+.PHONY : imu_a100_core
 
 # fast build rule for target.
-imu_reader_cpp/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/build
-.PHONY : imu_reader_cpp/fast
+imu_a100_core/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_a100_core.dir/build.make CMakeFiles/imu_a100_core.dir/build
+.PHONY : imu_a100_core/fast
 
 #=============================================================================
 # Target rules for targets named MYACTUA_EtherCat
@@ -226,36 +181,12 @@ ID_test/fast:
 	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/ID_test.dir/build.make motors_build/CMakeFiles/ID_test.dir/build
 .PHONY : ID_test/fast
 
-examples/main.o: examples/main.cpp.o
-.PHONY : examples/main.o
-
-# target to build an object file
-examples/main.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.o
-.PHONY : examples/main.cpp.o
-
-examples/main.i: examples/main.cpp.i
-.PHONY : examples/main.i
-
-# target to preprocess a source file
-examples/main.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.i
-.PHONY : examples/main.cpp.i
-
-examples/main.s: examples/main.cpp.s
-.PHONY : examples/main.s
-
-# target to generate assembly for a file
-examples/main.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.s
-.PHONY : examples/main.cpp.s
-
 src/drivers/imu_reader.o: src/drivers/imu_reader.cpp.o
 .PHONY : src/drivers/imu_reader.o
 
 # target to build an object file
 src/drivers/imu_reader.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_a100_core.dir/build.make CMakeFiles/imu_a100_core.dir/src/drivers/imu_reader.cpp.o
 .PHONY : src/drivers/imu_reader.cpp.o
 
 src/drivers/imu_reader.i: src/drivers/imu_reader.cpp.i
@@ -263,7 +194,7 @@ src/drivers/imu_reader.i: src/drivers/imu_reader.cpp.i
 
 # target to preprocess a source file
 src/drivers/imu_reader.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_a100_core.dir/build.make CMakeFiles/imu_a100_core.dir/src/drivers/imu_reader.cpp.i
 .PHONY : src/drivers/imu_reader.cpp.i
 
 src/drivers/imu_reader.s: src/drivers/imu_reader.cpp.s
@@ -271,7 +202,7 @@ src/drivers/imu_reader.s: src/drivers/imu_reader.cpp.s
 
 # target to generate assembly for a file
 src/drivers/imu_reader.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_a100_core.dir/build.make CMakeFiles/imu_a100_core.dir/src/drivers/imu_reader.cpp.s
 .PHONY : src/drivers/imu_reader.cpp.s
 
 src/drivers/serial_port.o: src/drivers/serial_port.cpp.o
@@ -279,7 +210,7 @@ src/drivers/serial_port.o: src/drivers/serial_port.cpp.o
 
 # target to build an object file
 src/drivers/serial_port.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_a100_core.dir/build.make CMakeFiles/imu_a100_core.dir/src/drivers/serial_port.cpp.o
 .PHONY : src/drivers/serial_port.cpp.o
 
 src/drivers/serial_port.i: src/drivers/serial_port.cpp.i
@@ -287,7 +218,7 @@ src/drivers/serial_port.i: src/drivers/serial_port.cpp.i
 
 # target to preprocess a source file
 src/drivers/serial_port.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_a100_core.dir/build.make CMakeFiles/imu_a100_core.dir/src/drivers/serial_port.cpp.i
 .PHONY : src/drivers/serial_port.cpp.i
 
 src/drivers/serial_port.s: src/drivers/serial_port.cpp.s
@@ -295,7 +226,7 @@ src/drivers/serial_port.s: src/drivers/serial_port.cpp.s
 
 # target to generate assembly for a file
 src/drivers/serial_port.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_a100_core.dir/build.make CMakeFiles/imu_a100_core.dir/src/drivers/serial_port.cpp.s
 .PHONY : src/drivers/serial_port.cpp.s
 
 src/protocol/frame/imu_parser.o: src/protocol/frame/imu_parser.cpp.o
@@ -303,7 +234,7 @@ src/protocol/frame/imu_parser.o: src/protocol/frame/imu_parser.cpp.o
 
 # target to build an object file
 src/protocol/frame/imu_parser.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_a100_core.dir/build.make CMakeFiles/imu_a100_core.dir/src/protocol/frame/imu_parser.cpp.o
 .PHONY : src/protocol/frame/imu_parser.cpp.o
 
 src/protocol/frame/imu_parser.i: src/protocol/frame/imu_parser.cpp.i
@@ -311,7 +242,7 @@ src/protocol/frame/imu_parser.i: src/protocol/frame/imu_parser.cpp.i
 
 # target to preprocess a source file
 src/protocol/frame/imu_parser.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_a100_core.dir/build.make CMakeFiles/imu_a100_core.dir/src/protocol/frame/imu_parser.cpp.i
 .PHONY : src/protocol/frame/imu_parser.cpp.i
 
 src/protocol/frame/imu_parser.s: src/protocol/frame/imu_parser.cpp.s
@@ -319,7 +250,7 @@ src/protocol/frame/imu_parser.s: src/protocol/frame/imu_parser.cpp.s
 
 # target to generate assembly for a file
 src/protocol/frame/imu_parser.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_a100_core.dir/build.make CMakeFiles/imu_a100_core.dir/src/protocol/frame/imu_parser.cpp.s
 .PHONY : src/protocol/frame/imu_parser.cpp.s
 
 # Help Target
@@ -329,19 +260,12 @@ help:
 	@echo "... clean"
 	@echo "... depend"
 	@echo "... edit_cache"
-	@echo "... install"
-	@echo "... install/local"
-	@echo "... install/strip"
-	@echo "... list_install_components"
 	@echo "... rebuild_cache"
 	@echo "... ID_test"
 	@echo "... MYACTUA_EtherCat"
 	@echo "... debug_tool"
-	@echo "... imu_reader_cpp"
+	@echo "... imu_a100_core"
 	@echo "... simple_test"
-	@echo "... examples/main.o"
-	@echo "... examples/main.i"
-	@echo "... examples/main.s"
 	@echo "... src/drivers/imu_reader.o"
 	@echo "... src/drivers/imu_reader.i"
 	@echo "... src/drivers/imu_reader.s"

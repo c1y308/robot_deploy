@@ -52,9 +52,13 @@ void IMUReader::run() {
             parser_->feed(read_buffer, bytes_read);
             
             IMUData_t imu_data;
+            AHRSData_t ahrs_data;
             
             if (config_.print_imu && parser_->get_imu_data(imu_data)) {
                 IMUParser::print_imu_data(imu_data);
+            }
+            if (config_.print_ahrs && parser_->get_ahrs_data(ahrs_data)) {
+                IMUParser::print_ahrs_data(ahrs_data);
             }
         }
         
@@ -94,6 +98,11 @@ void IMUReader::set_imu_callback(IMUParser::IMUCallback_t callback) {
 }
 
 
+void IMUReader::set_ahrs_callback(IMUParser::AHRSCallback_t callback) {
+    parser_->set_ahrs_callback(callback);
+}
+
+
 void IMUReader::print_configuration() const {
     std::cout << "========================================" << std::endl;
     std::cout << "  RK3588 IMU Reader (C++ Version)" << std::endl;
@@ -101,6 +110,7 @@ void IMUReader::print_configuration() const {
     std::cout << "Serial Device: " << config_.device << std::endl;
     std::cout << "Baud Rate: " << config_.baudrate << std::endl;
     std::cout << "Print IMU: " << (config_.print_imu ? "Yes" : "No") << std::endl;
+    std::cout << "Print AHRS: " << (config_.print_ahrs ? "Yes" : "No") << std::endl;
     std::cout << "Print Stats: " << (config_.print_stats ? "Yes" : "No") << std::endl;
     std::cout << "========================================" << std::endl << std::endl;
 }
@@ -112,6 +122,7 @@ void IMUReader::print_statistics() const {
     std::cout << "Total bytes: " << stats.total_bytes << std::endl;
     std::cout << "Total frames: " << stats.total_frames << std::endl;
     std::cout << "IMU frames: " << stats.imu_frames << std::endl;
+    std::cout << "AHRS frames: " << stats.ahrs_frames << std::endl;
     std::cout << "Error frames: " << stats.error_frames << std::endl;
     std::cout << "------------------" << std::endl << std::endl;
 }

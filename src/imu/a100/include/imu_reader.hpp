@@ -14,11 +14,13 @@ struct Config_t {
     std::string device;
     int baudrate;
     bool print_imu;
+    bool print_ahrs;
     bool print_stats;
     
     Config_t() : device("/dev/ttyUSB0"), 
                  baudrate(921600),
                  print_imu(false),
+                 print_ahrs(false),
                  print_stats(false) {}
 };
 
@@ -38,6 +40,7 @@ public:
     const ParserInfo_t& get_info() const;
     
     void set_imu_callback(IMUParser::IMUCallback_t callback);
+    void set_ahrs_callback(IMUParser::AHRSCallback_t callback);
 
 private:
     void print_configuration() const;

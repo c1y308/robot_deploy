@@ -12,7 +12,8 @@ IMUParser::IMUParser()
       last_byte_(0),
       parsing_state_(false),
       frame_buffer_(MAX_BUFFER_SIZE, 0),
-      imu_ready_(false) {
+      imu_ready_(false),
+      ahrs_ready_(false) {
 }
 
 
@@ -99,6 +100,9 @@ void IMUParser::feed(const uint8_t* data, int len) {
                     case TYPE_IMU:  // IMU帧
                         frame_length_ = IMU_FRAME_SIZE;
                         break;
+                    case TYPE_AHRS:  // AHRS帧
+                        frame_length_ = AHRS_FRAME_SIZE;
+                        break;
                     default:  // 错误的类型
                         parsing_state_ = false;
                         rx_index_ = 0;
@@ -116,6 +120,9 @@ void IMUParser::feed(const uint8_t* data, int len) {
                     switch (frame_buffer_[1]) {
                         case TYPE_IMU:
                             parse_imu_frame(frame_buffer_.data());
+                            break;
+                        case TYPE_AHRS:
+                            parse_ahrs_frame(frame_buffer_.data());
                             break;
                     }
                     
@@ -171,11 +178,54 @@ bool IMUParser::parse_imu_frame(const uint8_t *data) {
 }
 
 
+bool IMUParser::parse_ahrs_frame(const uint8_t* data) {
+    if (data[1] != TYPE_AHRS) {
+        return false;
+    }
+
+    ahrs_data_.roll_speed = data_to_float(data[7], data[8], data[9], data[10]);
+    ahrs_data_.pitch_speed = data_to_float(data[11], data[12], data[13], data[14]);
+    ahrs_data_.heading_speed = data_to_float(data[15], data[16], data[17], data[18]);
+
+    ahrs_data_.roll = data_to_float(data[19], data[20], data[21], data[22]);
+    ahrs_data_.pitch = data_to_float(data[23], data[24], data[25], data[26]);
+    ahrs_data_.heading = data_to_float(data[27], data[28], data[29], data[30]);
+
+    ahrs_data_.qw = data_to_float(data[31], data[32], data[33], data[34]);
+    ahrs_data_.qx = data_to_float(data[35], data[36], data[37], data[38]);
+    ahrs_data_.qy = data_to_float(data[39], data[40], data[41], data[42]);
+    ahrs_data_.qz = data_to_float(data[43], data[44], data[45], data[46]);
+
+    ahrs_data_.timestamp =
+        data_to_u64(data[47], data[48], data[49], data[50],
+                    data[51], data[52], data[53], data[54]);
+
+    ahrs_ready_ = true;
+    stats_.ahrs_frames++;
+
+    if (ahrs_callback_) {
+        ahrs_callback_(ahrs_data_);
+    }
+
+    return true;
+}
+
+
 /* 暴露给外部获取解析好数据的接口 */
 bool IMUParser::get_imu_data(IMUData_t& imu) {
     if (imu_ready_) {
         imu = imu_data_;
         imu_ready_ = false;
+        return true;
+    }
+    return false;
+}
+
+
+bool IMUParser::get_ahrs_data(AHRSData_t& ahrs) {
+    if (ahrs_ready_) {
+        ahrs = ahrs_data_;
+        ahrs_ready_ = false;
         return true;
     }
     return false;
@@ -199,6 +249,27 @@ void IMUParser::print_imu_data(const IMUData_t& imu) {
     std::cout << "Pressure Temperature (°C): " << imu.pressure_temperature << std::endl;
     std::cout << "Timestamp: " << imu.timestamp << " us" << std::endl;
     std::cout << "==============================" << std::endl << std::endl;
+}
+
+
+void IMUParser::print_ahrs_data(const AHRSData_t& ahrs) {
+    std::cout << "========= AHRS Data =========" << std::endl;
+    std::cout << std::fixed << std::setprecision(4);
+    std::cout << "Roll/Pitch/Heading Speed (rad/s): ["
+              << ahrs.roll_speed << ", "
+              << ahrs.pitch_speed << ", "
+              << ahrs.heading_speed << "]" << std::endl;
+    std::cout << "Roll/Pitch/Heading (rad): ["
+              << ahrs.roll << ", "
+              << ahrs.pitch << ", "
+              << ahrs.heading << "]" << std::endl;
+    std::cout << "Quaternion [wxyz]: ["
+              << ahrs.qw << ", "
+              << ahrs.qx << ", "
+              << ahrs.qy << ", "
+              << ahrs.qz << "]" << std::endl;
+    std::cout << "Timestamp: " << ahrs.timestamp << " us" << std::endl;
+    std::cout << "=============================" << std::endl << std::endl;
 }
 
 }

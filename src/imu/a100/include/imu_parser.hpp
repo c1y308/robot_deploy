@@ -12,6 +12,7 @@ constexpr size_t MAX_BUFFER_SIZE = 256;
 class IMUParser {
 public:
     using IMUCallback_t = std::function<void(const IMUData_t&)>;
+    using AHRSCallback_t = std::function<void(const AHRSData_t&)>;
     
     IMUParser();
     ~IMUParser() = default;
@@ -19,14 +20,17 @@ public:
     void feed(const uint8_t* data, int len);
     
     bool get_imu_data(IMUData_t& imu);
+    bool get_ahrs_data(AHRSData_t& ahrs);
     
     /* 设置回调函数 */
     void set_imu_callback(IMUCallback_t callback) { imu_callback_ = callback; }
+    void set_ahrs_callback(AHRSCallback_t callback) { ahrs_callback_ = callback; }
     
     const ParserInfo_t& get_info() const { return stats_; }
     void reset_info();
     
     static void print_imu_data(const IMUData_t& imu);
+    static void print_ahrs_data(const AHRSData_t& ahrs);
 
 private:
     float  data_to_float(uint8_t d1, uint8_t d2, uint8_t d3, uint8_t d4);
@@ -36,6 +40,7 @@ private:
     uint64_t data_to_u64(uint8_t d1, uint8_t d2, uint8_t d3, uint8_t d4,
                          uint8_t d5, uint8_t d6, uint8_t d7, uint8_t d8);
     bool parse_imu_frame(const uint8_t* data);
+    bool parse_ahrs_frame(const uint8_t* data);
     
     /* 接受一帧数据的缓冲区 */
     size_t rx_index_;
@@ -49,11 +54,14 @@ private:
     
     /* 存储解析好的数据 */
     IMUData_t imu_data_;
+    AHRSData_t ahrs_data_;
     bool imu_ready_;
+    bool ahrs_ready_;
     
     ParserInfo_t stats_;
     
     IMUCallback_t imu_callback_;
+    AHRSCallback_t ahrs_callback_;
 };
 
 }
