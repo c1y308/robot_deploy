@@ -25,6 +25,11 @@
   "file": "/home/cat/Myactua_Ethercat/src/inference/examples/basic_stand_test.cpp"
 },
 {
+  "directory": "/home/cat/Myactua_Ethercat/src/inference/build",
+  "command": "/usr/bin/c++  -I/home/cat/Myactua_Ethercat/src/inference/include -I/home/cat/Myactua_Ethercat/src/inference/../motors/include -I/home/cat/Myactua_Ethercat/src/inference/../motors/src/drivers/myact -I/home/cat/Myactua_Ethercat/src/inference/../motors/src/protocol/ethercat -I/home/cat/Myactua_Ethercat/src/inference/../imu/a100/include -I/home/cat/Myactua_Ethercat/src/motors/include -I/home/cat/Myactua_Ethercat/src/motors/src/drivers/myact -I/home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat -I/home/cat/ethercat/include -I/opt/etherlab/include -I/home/cat/Myactua_Ethercat/src/inference/../imu/a100/src/drivers -I/home/cat/Myactua_Ethercat/src/inference/../imu/a100/src/protocol/frame -std=gnu++17 -o CMakeFiles/imu_only_test.dir/examples/imu_test.cpp.o -c /home/cat/Myactua_Ethercat/src/inference/examples/imu_test.cpp",
+  "file": "/home/cat/Myactua_Ethercat/src/inference/examples/imu_test.cpp"
+},
+{
   "directory": "/home/cat/Myactua_Ethercat/src/inference/build/motors_build",
   "command": "/usr/bin/c++  -I/home/cat/Myactua_Ethercat/src/motors/include -I/home/cat/Myactua_Ethercat/src/motors/src/drivers/myact -I/home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat -I/home/cat/ethercat/include -I/opt/etherlab/include -std=gnu++17 -o CMakeFiles/MYACTUA_EtherCat.dir/src/drivers/myact/motor_control.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/src/drivers/myact/motor_control.cpp",
   "file": "/home/cat/Myactua_Ethercat/src/motors/src/drivers/myact/motor_control.cpp"

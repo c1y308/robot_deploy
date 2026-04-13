@@ -156,6 +156,19 @@ basic_stand_test/fast:
 .PHONY : basic_stand_test/fast
 
 #=============================================================================
+# Target rules for targets named imu_only_test
+
+# Build rule for target.
+imu_only_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 imu_only_test
+.PHONY : imu_only_test
+
+# fast build rule for target.
+imu_only_test/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_only_test.dir/build.make CMakeFiles/imu_only_test.dir/build
+.PHONY : imu_only_test/fast
+
+#=============================================================================
 # Target rules for targets named MYACTUA_EtherCat
 
 # Build rule for target.
@@ -230,6 +243,30 @@ examples/basic_stand_test.s: examples/basic_stand_test.cpp.s
 examples/basic_stand_test.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/basic_stand_test.dir/build.make CMakeFiles/basic_stand_test.dir/examples/basic_stand_test.cpp.s
 .PHONY : examples/basic_stand_test.cpp.s
+
+examples/imu_test.o: examples/imu_test.cpp.o
+.PHONY : examples/imu_test.o
+
+# target to build an object file
+examples/imu_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_only_test.dir/build.make CMakeFiles/imu_only_test.dir/examples/imu_test.cpp.o
+.PHONY : examples/imu_test.cpp.o
+
+examples/imu_test.i: examples/imu_test.cpp.i
+.PHONY : examples/imu_test.i
+
+# target to preprocess a source file
+examples/imu_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_only_test.dir/build.make CMakeFiles/imu_only_test.dir/examples/imu_test.cpp.i
+.PHONY : examples/imu_test.cpp.i
+
+examples/imu_test.s: examples/imu_test.cpp.s
+.PHONY : examples/imu_test.s
+
+# target to generate assembly for a file
+examples/imu_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_only_test.dir/build.make CMakeFiles/imu_only_test.dir/examples/imu_test.cpp.s
+.PHONY : examples/imu_test.cpp.s
 
 home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/imu_reader.o: home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/imu_reader.cpp.o
 .PHONY : home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/imu_reader.o
@@ -340,11 +377,15 @@ help:
 	@echo "... basic_stand_test"
 	@echo "... debug_tool"
 	@echo "... imu_a100_core"
+	@echo "... imu_only_test"
 	@echo "... robot_interface"
 	@echo "... simple_test"
 	@echo "... examples/basic_stand_test.o"
 	@echo "... examples/basic_stand_test.i"
 	@echo "... examples/basic_stand_test.s"
+	@echo "... examples/imu_test.o"
+	@echo "... examples/imu_test.i"
+	@echo "... examples/imu_test.s"
 	@echo "... home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/imu_reader.o"
 	@echo "... home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/imu_reader.i"
 	@echo "... home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/imu_reader.s"

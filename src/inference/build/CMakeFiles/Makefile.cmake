@@ -48,6 +48,7 @@ set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/imu_a100_core.dir/DependInfo.cmake"
   "CMakeFiles/robot_interface.dir/DependInfo.cmake"
   "CMakeFiles/basic_stand_test.dir/DependInfo.cmake"
+  "CMakeFiles/imu_only_test.dir/DependInfo.cmake"
   "motors_build/CMakeFiles/MYACTUA_EtherCat.dir/DependInfo.cmake"
   "motors_build/CMakeFiles/simple_test.dir/DependInfo.cmake"
   "motors_build/CMakeFiles/debug_tool.dir/DependInfo.cmake"
