@@ -8,7 +8,7 @@
 
 int main() {
     auto adapter = std::make_shared<myactua::EthercatAdapterIGH>();
-    // 实例化控制类
+    // 实例化控制类，与适配器关联
     myactua::MYACTUA controller(adapter, 12);
 
     std::cout << "[1/4] 正在初始化网卡..." << std::endl;

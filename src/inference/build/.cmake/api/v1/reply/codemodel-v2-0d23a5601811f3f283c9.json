@@ -1,0 +1,147 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1
+					],
+					"jsonFile" : "directory-.-f5ebdc15457944623624.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						2,
+						4,
+						5
+					]
+				},
+				{
+					"build" : "motors_build",
+					"jsonFile" : "directory-motors_build-019989be1ef08dec1db2.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.8"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 1,
+					"source" : "/home/cat/Myactua_Ethercat/src/motors",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						3,
+						6
+					]
+				}
+			],
+			"name" : "",
+			"projects" : 
+			[
+				{
+					"childIndexes" : 
+					[
+						1
+					],
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "robot_inference_hw_interface",
+					"targetIndexes" : 
+					[
+						2,
+						4,
+						5
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						1
+					],
+					"name" : "MYACTUA_EtherCat",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						3,
+						6
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 1,
+					"id" : "ID_test::@800ccebf966c31d5df0e",
+					"jsonFile" : "target-ID_test-eacde0b323abddbb095f.json",
+					"name" : "ID_test",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "MYACTUA_EtherCat::@800ccebf966c31d5df0e",
+					"jsonFile" : "target-MYACTUA_EtherCat-540ef7520e6b16799d93.json",
+					"name" : "MYACTUA_EtherCat",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "basic_stand_test::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-basic_stand_test-45f084ccc410172b6922.json",
+					"name" : "basic_stand_test",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "debug_tool::@800ccebf966c31d5df0e",
+					"jsonFile" : "target-debug_tool-953e652a8ba9516a40e2.json",
+					"name" : "debug_tool",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "imu_a100_core::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-imu_a100_core-1342d20256b5de0bc019.json",
+					"name" : "imu_a100_core",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "robot_interface::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-robot_interface-0ec6f1739cb1e9d4dc18.json",
+					"name" : "robot_interface",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "simple_test::@800ccebf966c31d5df0e",
+					"jsonFile" : "target-simple_test-b1245d3a554f8ff7f485.json",
+					"name" : "simple_test",
+					"projectIndex" : 1
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/home/cat/Myactua_Ethercat/src/inference/build",
+		"source" : "/home/cat/Myactua_Ethercat/src/inference"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 4
+	}
+}

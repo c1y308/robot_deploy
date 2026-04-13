@@ -1,0 +1,11 @@
+/home/cat/Myactua_Ethercat/src/inference/build/CMakeFiles/imu_a100_core.dir
+/home/cat/Myactua_Ethercat/src/inference/build/CMakeFiles/robot_interface.dir
+/home/cat/Myactua_Ethercat/src/inference/build/CMakeFiles/basic_stand_test.dir
+/home/cat/Myactua_Ethercat/src/inference/build/CMakeFiles/edit_cache.dir
+/home/cat/Myactua_Ethercat/src/inference/build/CMakeFiles/rebuild_cache.dir
+/home/cat/Myactua_Ethercat/src/inference/build/motors_build/CMakeFiles/MYACTUA_EtherCat.dir
+/home/cat/Myactua_Ethercat/src/inference/build/motors_build/CMakeFiles/simple_test.dir
+/home/cat/Myactua_Ethercat/src/inference/build/motors_build/CMakeFiles/debug_tool.dir
+/home/cat/Myactua_Ethercat/src/inference/build/motors_build/CMakeFiles/ID_test.dir
+/home/cat/Myactua_Ethercat/src/inference/build/motors_build/CMakeFiles/edit_cache.dir
+/home/cat/Myactua_Ethercat/src/inference/build/motors_build/CMakeFiles/rebuild_cache.dir

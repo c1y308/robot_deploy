@@ -1,8 +1,8 @@
 {
-    "cmake.sourceDirectory": "/home/cat/Myactua_Ethercat/src/motors",
-    "cmake.buildDirectory": "/home/cat/Myactua_Ethercat/src/motors/build",
-    "C_Cpp.default.compileCommands": "/home/cat/Myactua_Ethercat/src/motors/build/compile_commands.json",
+    "cmake.sourceDirectory": "/home/cat/Myactua_Ethercat/src/inference",
+    "cmake.buildDirectory": "/home/cat/Myactua_Ethercat/src/inference/build",
+    "C_Cpp.default.compileCommands": "/home/cat/Myactua_Ethercat/src/inference/build/compile_commands.json",
     "clangd.arguments": [
-        "--compile-commands-dir=/home/cat/Myactua_Ethercat/src/motors/build"
+        "--compile-commands-dir=/home/cat/Myactua_Ethercat/src/inference/build"
     ]
 }

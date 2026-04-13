@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/basic_stand_test.dir/examples/basic_stand_test.cpp.o -o basic_stand_test  librobot_interface.a motors_build/libMYACTUA_EtherCat.a -lethercat -lrt libimu_a100_core.a -lm -lpthread 
