@@ -1134,6 +1134,18 @@
 			"value" : "FALSE"
 		},
 		{
+			"name" : "MYACTUA_ECAT_NO_FORWARDERS",
+			"properties" : 
+			[
+				{
+					"name" : "HELPSTRING",
+					"value" : "Use EtherCAT topology without forwarder stations."
+				}
+			],
+			"type" : "BOOL",
+			"value" : "OFF"
+		},
+		{
 			"name" : "MYACTUA_EtherCat_BINARY_DIR",
 			"properties" : 
 			[

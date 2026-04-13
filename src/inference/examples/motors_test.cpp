@@ -41,15 +41,15 @@ int main() {
 
     std::cout << "[MOTORS_TEST] 3/3 monitoring, press Ctrl+C to stop" << std::endl;
     while (g_running.load()) {
-        const auto q    = robot.get_joint_q();
-        const auto dq   = robot.get_joint_vel();
-        const auto tau  = robot.get_joint_tau();
+        // const auto q    = robot.get_joint_q();
+        // const auto dq   = robot.get_joint_vel();
+        // const auto tau  = robot.get_joint_tau();
 
-        if (!q.empty() && !dq.empty() && !tau.empty()) {
-            std::cout << "motor0: q(rad)="  << q[0]
-                      << ", dq(rad/s)="     << dq[0]
-                      << ", tau(raw)="      << tau[0] << std::endl;
-        }
+        // if (!q.empty() && !dq.empty() && !tau.empty()) {
+        //     std::cout << "motor0: q(rad)="  << q[0]
+        //               << ", dq(rad/s)="     << dq[0]
+        //               << ", tau(raw)="      << tau[0] << std::endl;
+        // }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }

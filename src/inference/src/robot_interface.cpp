@@ -2,24 +2,11 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <iostream>
 #include <thread>
 
 
 namespace inference {
-
-namespace {
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kPosPlusPerRev = 131072.0;
-
-constexpr double kRawPosToRad = (2.0 * kPi) / kPosPlusPerRev;  // 编码器脉冲转换为弧度
-constexpr double kRadToDeg = 180.0 / kPi;
-
-constexpr double kRawVelToRpm    =  60.0  / kPosPlusPerRev;   // 编码器速度转换为转速（RPM）
-constexpr double kRpmToRadPerSec = (2.0 * kPi) / 60.0;
-}  // namespace
-
 
 RobotInterface::RobotInterface(RobotInterfaceConfig config)
     : config_(std::move(config)) {}
@@ -27,25 +14,6 @@ RobotInterface::RobotInterface(RobotInterfaceConfig config)
 RobotInterface::~RobotInterface() {
     deinit_motors();
 }
-
-
-
-
-double RobotInterface::raw_pos_to_rad(double raw_pos) {
-    return raw_pos * kRawPosToRad;
-}
-
-
-double RobotInterface::raw_vel_to_rad_s(double raw_vel) {
-    return raw_vel * kRawVelToRpm * kRpmToRadPerSec;
-}
-
-
-double RobotInterface::rad_to_deg(double rad) {
-    return rad * kRadToDeg;
-}
-
-
 
 
 
@@ -220,12 +188,7 @@ std::vector<double> RobotInterface::get_joint_q() const {
     if (!controller_) {
         return q;
     }
-
-    const auto status = controller_->get_status();
-    const int n = std::min<int>(config_.num_motors, static_cast<int>(status.size()));
-    for (int i = 0; i < n; ++i) {
-        q[i] = raw_pos_to_rad(status[i].position);
-    }
+    q = controller_->get_joint_q_rad();
     return q;
 }
 
@@ -235,12 +198,7 @@ std::vector<double> RobotInterface::get_joint_vel() const {
     if (!controller_) {
         return dq;
     }
-
-    const auto status = controller_->get_status();
-    const int n = std::min<int>(config_.num_motors, static_cast<int>(status.size()));
-    for (int i = 0; i < n; ++i) {
-        dq[i] = raw_vel_to_rad_s(status[i].velocity);
-    }
+    dq = controller_->get_joint_vel_rad_s();
     return dq;
 }
 
@@ -250,12 +208,7 @@ std::vector<double> RobotInterface::get_joint_tau() const {
     if (!controller_) {
         return tau;
     }
-
-    const auto status = controller_->get_status();
-    const int n = std::min<int>(config_.num_motors, static_cast<int>(status.size()));
-    for (int i = 0; i < n; ++i) {
-        tau[i] = status[i].torque;
-    }
+    tau = controller_->get_joint_tau_raw();
     return tau;
 }
 
@@ -291,7 +244,7 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_rad) {
         if (config_.joint_max_rad.size() == static_cast<size_t>(config_.num_motors)) {
             q = std::min(q, config_.joint_max_rad[i]);
         }
-        target_deg[i] = rad_to_deg(q);
+        target_deg[i] = myactua::MYACTUA::rad_to_deg(q);
     }
 
     controller_->send_command(myactua::ControlCommand(myactua::CommandType::SET_SETPOINTS,

@@ -9,9 +9,31 @@
 
 namespace myactua {
 
+/*
+ * 0: 有转发站版本（默认）
+ * 1: 无转发站版本（仅电机从站）
+ */
+#ifndef MYACTUA_ECAT_NO_FORWARDERS
+#define MYACTUA_ECAT_NO_FORWARDERS 1
+#endif
+
+/*
+ * 从站物理位置映射（逻辑索引 -> EtherCAT position）
+ *
+ * 默认: 使用当前现场拓扑（包含转发站时的历史映射）
+ * 当 MYACTUA_ECAT_NO_FORWARDERS == 1:
+ * 使用“无转发站，仅电机从站”的连续映射
+ */
+#if MYACTUA_ECAT_NO_FORWARDERS
+inline constexpr std::array<uint16_t, 12> kSlavePositions = {
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
+};
+#else
 inline constexpr std::array<uint16_t, 12> kSlavePositions = {
     1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13
 };
+#endif
+
 inline constexpr std::size_t kNumSlaves = kSlavePositions.size();
 
 class EthercatAdapterIGH : public EthercatAdapter {

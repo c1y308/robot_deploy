@@ -268,30 +268,6 @@ CMakeFiles/robot_interface.dir/src/robot_interface.cpp.o: /home/cat/Myactua_Ethe
   /usr/include/c++/12/chrono \
   /usr/include/c++/12/algorithm \
   /usr/include/c++/12/pstl/glue_algorithm_defs.h \
-  /usr/include/c++/12/cmath \
-  /usr/include/math.h \
-  /usr/include/aarch64-linux-gnu/bits/math-vector.h \
-  /usr/include/aarch64-linux-gnu/bits/libm-simd-decl-stubs.h \
-  /usr/include/aarch64-linux-gnu/bits/flt-eval-method.h \
-  /usr/include/aarch64-linux-gnu/bits/fp-logb.h \
-  /usr/include/aarch64-linux-gnu/bits/fp-fast.h \
-  /usr/include/aarch64-linux-gnu/bits/mathcalls-helper-functions.h \
-  /usr/include/aarch64-linux-gnu/bits/mathcalls.h \
-  /usr/include/aarch64-linux-gnu/bits/mathcalls-narrow.h \
-  /usr/include/aarch64-linux-gnu/bits/iscanonical.h \
-  /usr/include/c++/12/bits/specfun.h \
-  /usr/include/c++/12/tr1/gamma.tcc \
-  /usr/include/c++/12/tr1/special_function_util.h \
-  /usr/include/c++/12/tr1/bessel_function.tcc \
-  /usr/include/c++/12/tr1/beta_function.tcc \
-  /usr/include/c++/12/tr1/ell_integral.tcc \
-  /usr/include/c++/12/tr1/exp_integral.tcc \
-  /usr/include/c++/12/tr1/hypergeometric.tcc \
-  /usr/include/c++/12/tr1/legendre_function.tcc \
-  /usr/include/c++/12/tr1/modified_bessel_func.tcc \
-  /usr/include/c++/12/tr1/poly_hermite.tcc \
-  /usr/include/c++/12/tr1/poly_laguerre.tcc \
-  /usr/include/c++/12/tr1/riemann_zeta.tcc \
   /usr/include/c++/12/iostream \
   /usr/include/c++/12/ostream \
   /usr/include/c++/12/ios \
@@ -319,6 +295,8 @@ CMakeFiles/robot_interface.dir/src/robot_interface.cpp.o: /home/cat/Myactua_Ethe
 
 /usr/include/c++/12/bits/ostream.tcc:
 
+/usr/include/c++/12/bits/basic_ios.tcc:
+
 /usr/include/c++/12/bits/locale_facets.tcc:
 
 /usr/include/aarch64-linux-gnu/c++/12/bits/ctype_inline.h:
@@ -326,6 +304,8 @@ CMakeFiles/robot_interface.dir/src/robot_interface.cpp.o: /home/cat/Myactua_Ethe
 /usr/include/c++/12/bits/streambuf_iterator.h:
 
 /usr/include/aarch64-linux-gnu/c++/12/bits/ctype_base.h:
+
+/usr/include/c++/12/cwctype:
 
 /usr/include/c++/12/bits/basic_ios.h:
 
@@ -344,40 +324,6 @@ CMakeFiles/robot_interface.dir/src/robot_interface.cpp.o: /home/cat/Myactua_Ethe
 /usr/include/c++/12/ostream:
 
 /usr/include/c++/12/iostream:
-
-/usr/include/c++/12/bits/basic_ios.tcc:
-
-/usr/include/c++/12/tr1/riemann_zeta.tcc:
-
-/usr/include/c++/12/tr1/poly_laguerre.tcc:
-
-/usr/include/c++/12/cwctype:
-
-/usr/include/c++/12/tr1/hypergeometric.tcc:
-
-/usr/include/c++/12/tr1/exp_integral.tcc:
-
-/usr/include/c++/12/tr1/ell_integral.tcc:
-
-/usr/include/c++/12/tr1/beta_function.tcc:
-
-/usr/include/c++/12/tr1/special_function_util.h:
-
-/usr/include/c++/12/tr1/gamma.tcc:
-
-/usr/include/c++/12/bits/specfun.h:
-
-/usr/include/aarch64-linux-gnu/bits/iscanonical.h:
-
-/usr/include/aarch64-linux-gnu/bits/mathcalls-narrow.h:
-
-/usr/include/aarch64-linux-gnu/bits/mathcalls-helper-functions.h:
-
-/usr/include/aarch64-linux-gnu/bits/libm-simd-decl-stubs.h:
-
-/usr/include/math.h:
-
-/usr/include/c++/12/cmath:
 
 /usr/include/c++/12/algorithm:
 
@@ -408,8 +354,6 @@ CMakeFiles/robot_interface.dir/src/robot_interface.cpp.o: /home/cat/Myactua_Ethe
 /usr/include/c++/12/string:
 
 /usr/include/aarch64-linux-gnu/bits/socket.h:
-
-/usr/include/c++/12/tr1/poly_hermite.tcc:
 
 /usr/include/aarch64-linux-gnu/bits/endian.h:
 
@@ -481,8 +425,6 @@ CMakeFiles/robot_interface.dir/src/robot_interface.cpp.o: /home/cat/Myactua_Ethe
 
 /usr/include/c++/12/cerrno:
 
-/usr/include/c++/12/tr1/modified_bessel_func.tcc:
-
 /usr/include/stdlib.h:
 
 /usr/include/c++/12/cstdlib:
@@ -503,11 +445,7 @@ CMakeFiles/robot_interface.dir/src/robot_interface.cpp.o: /home/cat/Myactua_Ethe
 
 /usr/include/asm-generic/socket.h:
 
-/usr/include/aarch64-linux-gnu/bits/math-vector.h:
-
 /usr/include/aarch64-linux-gnu/gnu/stubs.h:
-
-/usr/include/aarch64-linux-gnu/bits/fp-logb.h:
 
 /usr/include/aarch64-linux-gnu/bits/stdint-intn.h:
 
@@ -546,8 +484,6 @@ CMakeFiles/robot_interface.dir/src/robot_interface.cpp.o: /home/cat/Myactua_Ethe
 /usr/include/aarch64-linux-gnu/gnu/stubs-lp64.h:
 
 /usr/include/aarch64-linux-gnu/sys/select.h:
-
-/usr/include/aarch64-linux-gnu/bits/mathcalls.h:
 
 /usr/include/aarch64-linux-gnu/asm/bitsperlong.h:
 
@@ -733,8 +669,6 @@ CMakeFiles/robot_interface.dir/src/robot_interface.cpp.o: /home/cat/Myactua_Ethe
 
 /usr/include/c++/12/bits/postypes.h:
 
-/usr/include/c++/12/tr1/bessel_function.tcc:
-
 /usr/include/c++/12/cwchar:
 
 /usr/include/wchar.h:
@@ -831,8 +765,6 @@ CMakeFiles/robot_interface.dir/src/robot_interface.cpp.o: /home/cat/Myactua_Ethe
 
 /usr/include/c++/12/clocale:
 
-/usr/include/aarch64-linux-gnu/bits/flt-eval-method.h:
-
 /usr/include/aarch64-linux-gnu/bits/types/wint_t.h:
 
 /usr/include/locale.h:
@@ -867,15 +799,11 @@ CMakeFiles/robot_interface.dir/src/robot_interface.cpp.o: /home/cat/Myactua_Ethe
 
 /usr/include/aarch64-linux-gnu/bits/termios-struct.h:
 
-/usr/include/aarch64-linux-gnu/bits/fp-fast.h:
-
 /usr/include/aarch64-linux-gnu/bits/types/FILE.h:
 
 /usr/include/aarch64-linux-gnu/bits/termios-c_iflag.h:
 
 /usr/include/aarch64-linux-gnu/bits/termios-c_cflag.h:
-
-/usr/include/c++/12/tr1/legendre_function.tcc:
 
 /home/cat/Myactua_Ethercat/src/imu/a100/include/imu_parser.hpp:
 

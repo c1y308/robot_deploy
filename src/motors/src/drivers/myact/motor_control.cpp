@@ -9,6 +9,15 @@ namespace myactua{
 #define NSEC_PER_SEC (1000000000L)
 #define CLOCK_TO_USE CLOCK_MONOTONIC
 
+namespace {
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kPosPlusPerRev = 131072.0;
+constexpr double kRawPosToRad = (2.0 * kPi) / kPosPlusPerRev;
+constexpr double kRawVelToRpm = 60.0 / kPosPlusPerRev;
+constexpr double kRpmToRadPerSec = (2.0 * kPi) / 60.0;
+constexpr double kRadToDeg = 180.0 / kPi;
+}
+
 static struct timespec timespec_add(struct timespec time1, struct timespec time2)
 {
     struct timespec result;
@@ -348,6 +357,24 @@ void MYACTUA::update_status_snapshot()
 }
 
 
+double MYACTUA::raw_pos_to_rad(double raw_pos)
+{
+    return raw_pos * kRawPosToRad;
+}
+
+
+double MYACTUA::rad_to_deg(double rad)
+{
+    return rad * kRadToDeg;
+}
+
+
+double MYACTUA::raw_vel_to_rad_s(double raw_vel)
+{
+    return raw_vel * kRawVelToRpm * kRpmToRadPerSec;
+}
+
+
 void MYACTUA::send_command(const ControlCommand& cmd)
 {
     cmd_queue_.push(cmd);
@@ -361,6 +388,39 @@ std::vector<MotorStatusSnapshot> MYACTUA::get_status()
 }
 
 
+std::vector<double> MYACTUA::get_joint_q_rad()
+{
+    const auto status = get_status();
+    std::vector<double> q(status.size(), 0.0);
+    for (std::size_t i = 0; i < status.size(); ++i) {
+        q[i] = raw_pos_to_rad(status[i].position);
+    }
+    return q;
+}
+
+
+std::vector<double> MYACTUA::get_joint_vel_rad_s()
+{
+    const auto status = get_status();
+    std::vector<double> dq(status.size(), 0.0);
+    for (std::size_t i = 0; i < status.size(); ++i) {
+        dq[i] = raw_vel_to_rad_s(status[i].velocity);
+    }
+    return dq;
+}
+
+
+std::vector<double> MYACTUA::get_joint_tau_raw()
+{
+    const auto status = get_status();
+    std::vector<double> tau(status.size(), 0.0);
+    for (std::size_t i = 0; i < status.size(); ++i) {
+        tau[i] = status[i].torque;
+    }
+    return tau;
+}
+
+
 void MYACTUA::set_status_callback(StatusCallback cb)
 {
     status_callback_ = std::move(cb);
@@ -371,8 +431,8 @@ void MYACTUA::print_motors_info(void){
     printf("\033[2J\033[H");
 
     printf("\033[1;36m============================ MOTOR REAL-TIME MONITOR ============================\033[0m\n");
-    printf("%-6s | %-16s | %-22s | %-10s | %-10s | %-10s | %-12s | %-6s\n",
-        "ID", "STEP", "MODE_SWITCH_STEP", "POS", "VEL", "TORQUE", "TARGET(TX)", "MODE");
+    printf("%-6s | %-16s | %-22s | %-12s | %-12s | %-10s | %-14s | %-6s\n",
+        "ID", "STEP", "MODE_SWITCH_STEP", "POS(rad)", "VEL(rad/s)", "TORQUE", "TARGET(conv)", "MODE");
     printf("---------------------------------------------------------------------------------------------------------------------------------\n");
 
     for (const auto& m : _motors) {
@@ -381,10 +441,17 @@ void MYACTUA::print_motors_info(void){
         if (m.step == MotorStep::STOPPED) color_code = "\033[35m";
         if (m.step == MotorStep::MODE_SWITCHING) color_code = "\033[33m";
 
-        int32_t current_target = 0;
-        if (m.rx.op_mode == 8)       current_target = m.tx.target_pos;
-        else if (m.rx.op_mode == 9)  current_target = m.tx.target_vel;
-        else if (m.rx.op_mode == 10) current_target = (int32_t)m.tx.target_torque;
+        double current_target = 0.0;
+        if (m.rx.op_mode == ControlMode::CSP) {
+            current_target = raw_pos_to_rad(static_cast<double>(m.tx.target_pos));
+        } else if (m.rx.op_mode == ControlMode::CSV) {
+            current_target = raw_vel_to_rad_s(static_cast<double>(m.tx.target_vel));
+        } else if (m.rx.op_mode == ControlMode::CST) {
+            current_target = static_cast<double>(m.tx.target_torque);
+        }
+
+        const double pos_rad    = raw_pos_to_rad(static_cast<double>(m.rx.pos));
+        const double vel_rad_s  = raw_vel_to_rad_s(static_cast<double>(m.rx.vel));
 
         const char* step_name = "UNKNOWN";
         switch (m.step) {
@@ -405,14 +472,14 @@ void MYACTUA::print_motors_info(void){
             case ModeSwitchStep::DONE: mode_switch_step_name = "DONE"; break;
         }
 
-        printf("M %-4d | %s%-16s\033[0m | %s%-22s\033[0m | %-10d | %-10d | %-10d | %-12d | %-6d\n",
+        printf("M %-4d | %s%-16s\033[0m | %s%-22s\033[0m | %-12.4f | %-12.4f | %-10d | %-14.4f | %-6d\n",
             m.slave_index,
             color_code,
             step_name,
             color_code,
             mode_switch_step_name,
-            m.rx.pos,
-            m.rx.vel,
+            pos_rad,
+            vel_rad_s,
             m.rx.torque,
             current_target,
             static_cast<int>(m.rx.op_mode));

@@ -83,10 +83,6 @@ public:
 
 
 private:
-    static double raw_pos_to_rad(double raw_pos);
-    static double raw_vel_to_rad_s(double raw_vel);
-    static double rad_to_deg(double rad);
-
     bool wait_all_slaves_ready() const;
     
     bool initial_start_imu_reader();

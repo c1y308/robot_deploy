@@ -2,7 +2,7 @@
 	"artifacts" : 
 	[
 		{
-			"path" : "motors_build/simple_test"
+			"path" : "motors_build/debug_tool"
 		}
 	],
 	"backtrace" : 1,
@@ -32,7 +32,7 @@
 			{
 				"command" : 1,
 				"file" : 0,
-				"line" : 11,
+				"line" : 10,
 				"parent" : 0
 			},
 			{
@@ -44,7 +44,7 @@
 			{
 				"command" : 2,
 				"file" : 0,
-				"line" : 31,
+				"line" : 30,
 				"parent" : 0
 			}
 		]
@@ -103,7 +103,7 @@
 			"id" : "MYACTUA_EtherCat::@800ccebf966c31d5df0e"
 		}
 	],
-	"id" : "simple_test::@800ccebf966c31d5df0e",
+	"id" : "debug_tool::@800ccebf966c31d5df0e",
 	"link" : 
 	{
 		"commandFragments" : 
@@ -149,8 +149,8 @@
 		],
 		"language" : "CXX"
 	},
-	"name" : "simple_test",
-	"nameOnDisk" : "simple_test",
+	"name" : "debug_tool",
+	"nameOnDisk" : "debug_tool",
 	"paths" : 
 	{
 		"build" : "motors_build",
@@ -171,7 +171,7 @@
 		{
 			"backtrace" : 1,
 			"compileGroupIndex" : 0,
-			"path" : "/home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp",
+			"path" : "/home/cat/Myactua_Ethercat/src/motors/examples/debug_tool.cpp",
 			"sourceGroupIndex" : 0
 		}
 	],
