@@ -32,7 +32,6 @@ struct RobotInterfaceConfig {
     int wait_all_slaves_poll_ms = 100;
 
     /* IMU 配置 */
-    bool enable_imu = true;
     std::string imu_device = "/dev/ttyUSB0";
     int imu_baudrate = 921600;
 
@@ -52,8 +51,21 @@ public:
     explicit RobotInterface(RobotInterfaceConfig config = {});
     ~RobotInterface();
 
-    bool init_motors();
+
+    bool initial_start_motors();
     void deinit_motors();
+
+
+    bool apply_action(const std::vector<double>& target_q_rad);
+    bool reset_joints();
+
+
+    bool is_initialized() const {
+        return motors_initialized_.load() && imu_initialized_.load();
+    }
+    bool is_motors_initialized() const { return motors_initialized_.load(); }
+    bool is_imu_initialized() const { return imu_initialized_.load(); }
+
 
     std::vector<double> get_joint_q() const;    // rad
     std::vector<double> get_joint_vel() const;  // rad/s
@@ -62,10 +74,6 @@ public:
     std::array<double, 4> get_quat() const;     // [w, x, y, z]
     std::array<double, 3> get_ang_vel() const;  // [wx, wy, wz], rad/s
 
-    bool apply_action(const std::vector<double>& target_q_rad);
-    bool reset_joints();
-
-    bool is_initialized() const { return initialized_.load(); }
 
 private:
     static double raw_pos_to_rad(double raw_pos);
@@ -73,7 +81,8 @@ private:
     static double rad_to_csp_deg(double rad);
 
     bool wait_all_slaves_ready() const;
-    bool start_imu_reader();
+    
+    bool initial_start_imu_reader();
     void stop_imu_reader();
 
     /* 机器人接口配置 */
@@ -81,9 +90,9 @@ private:
 
     /* 以太网适配器 */
     std::shared_ptr<myactua::EthercatAdapterIGH> adapter_;
-    /* 电机控制器 */
+    /* 电机控制器 智能指针 */
     std::unique_ptr<myactua::MYACTUA> controller_;
-    /* IMU 读取器 */
+    /* IMU 读取器 智能指针 */
     std::unique_ptr<imu::IMUReader> imu_reader_;
     std::thread imu_thread_;
 
@@ -91,7 +100,8 @@ private:
     std::array<double, 4> quat_{1.0, 0.0, 0.0, 0.0};
     std::array<double, 3> ang_vel_{0.0, 0.0, 0.0};
 
-    std::atomic<bool> initialized_{false};
+    std::atomic<bool> motors_initialized_{false};
+    std::atomic<bool> imu_initialized_{false};
 };
 
 }  // namespace inference

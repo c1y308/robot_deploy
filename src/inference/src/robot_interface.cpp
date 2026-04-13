@@ -11,7 +11,8 @@ namespace inference {
 
 namespace {
 constexpr double kPi = 3.14159265358979323846;
-constexpr double kRawPosToRad = kPi / 65535.0;
+constexpr double kPosPlusPerRev = 131072.0;
+constexpr double kRawPosToRad = (2.0 * kPi) / kPosPlusPerRev;
 constexpr double kRawVelToRpm = 60.0 / 131072.0;
 constexpr double kRpmToRadPerSec = (2.0 * kPi) / 60.0;
 constexpr double kRadToDeg = 180.0 / kPi;
@@ -24,6 +25,8 @@ RobotInterface::RobotInterface(RobotInterfaceConfig config)
 RobotInterface::~RobotInterface() {
     deinit_motors();
 }
+
+
 
 
 double RobotInterface::raw_pos_to_rad(double raw_pos) {
@@ -41,9 +44,13 @@ double RobotInterface::rad_to_csp_deg(double rad) {
 }
 
 
-/* 启动 IMU 读取器 */
-bool RobotInterface::start_imu_reader() {
-    if (!config_.enable_imu) {
+
+
+
+
+/* 初始化并启动 IMU 读取器 */
+bool RobotInterface::initial_start_imu_reader() {
+    if (imu_initialized_.load()) {
         return true;
     }
 
@@ -62,9 +69,11 @@ bool RobotInterface::start_imu_reader() {
         // 当前 parser 仅提供 IMU 帧，不含四元数。先保持单位四元数占位。
     });
 
+    /* 调用 imu class的初始化函数 */
     if (!imu_reader_->initialize(imu_cfg)) {
         std::cerr << "[RobotInterface] IMU initialize failed.\n";
         imu_reader_.reset();
+        imu_initialized_.store(false);
         return false;
     }
 
@@ -73,6 +82,7 @@ bool RobotInterface::start_imu_reader() {
             imu_reader_->run();
         }
     });
+    imu_initialized_.store(true);
     return true;
 }
 
@@ -85,7 +95,60 @@ void RobotInterface::stop_imu_reader() {
         imu_thread_.join();
     }
     imu_reader_.reset();
+    imu_initialized_.store(false);
 }
+
+
+
+
+
+/* 初始化并启动电机 */
+bool RobotInterface::initial_start_motors() {
+    if (motors_initialized_.load()) {
+        if (!imu_initialized_.load()) {
+            if (!initial_start_imu_reader()) {
+                std::cerr << "[RobotInterface] IMU startup failed, motors remain active.\n";
+            }
+        }
+        return true;
+    }
+
+    adapter_    = std::make_shared<myactua::EthercatAdapterIGH>();
+    controller_ = std::make_unique<myactua::MYACTUA>(adapter_, config_.num_motors);
+
+    std::cout << "[RobotInterface] Connecting EtherCAT on "
+              << config_.ethercat_ifname << "...\n";
+    if (!controller_->connect(config_.ethercat_ifname.c_str())) {
+        std::cerr << "[RobotInterface] EtherCAT connect failed.\n";
+        controller_.reset();
+        adapter_.reset();
+        return false;
+    }
+
+    if (!wait_all_slaves_ready()) {
+        std::cerr << "[RobotInterface] Not all slaves became ready in timeout.\n";
+        controller_.reset();
+        adapter_.reset();
+        return false;
+    }
+
+    /* 设置电机控制模式 */
+    for (int i = 0; i < config_.num_motors; ++i) {
+        controller_->set_mode(myactua::ControlMode::CSV, i);
+    }
+
+    /* 启动实时线程 */
+    controller_->start();
+    controller_->send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
+    motors_initialized_.store(true);
+
+    if (!initial_start_imu_reader()) {
+        std::cerr << "[RobotInterface] IMU startup failed, motors remain active.\n";
+    }
+
+    return true;
+}
+
 
 /* 等待所有电机从站就绪 */
 bool RobotInterface::wait_all_slaves_ready() const {
@@ -116,62 +179,11 @@ bool RobotInterface::wait_all_slaves_ready() const {
     return false;
 }
 
-/* 初始化电机 */
-bool RobotInterface::init_motors() {
-    if (initialized_.load()) {
-        return true;
-    }
-
-    adapter_ = std::make_shared<myactua::EthercatAdapterIGH>();
-    controller_ = std::make_unique<myactua::MYACTUA>(adapter_, config_.num_motors);
-
-    std::cout << "[RobotInterface] Connecting EtherCAT on "
-              << config_.ethercat_ifname << "...\n";
-    if (!controller_->connect(config_.ethercat_ifname.c_str())) {
-        std::cerr << "[RobotInterface] EtherCAT connect failed.\n";
-        controller_.reset();
-        adapter_.reset();
-        return false;
-    }
-
-    if (!wait_all_slaves_ready()) {
-        std::cerr << "[RobotInterface] Not all slaves became ready in timeout.\n";
-        controller_.reset();
-        adapter_.reset();
-        return false;
-    }
-
-    /* 设置电机控制模式 */
-    for (int i = 0; i < config_.num_motors; ++i) {
-        controller_->set_mode(myactua::ControlMode::CSP, i);
-    }
-
-    controller_->start();
-    controller_->send_command(myactua::ControlCommand(myactua::CommandType::RESTART, -1));
-
-    if (!start_imu_reader()) {
-        std::cerr << "[RobotInterface] IMU startup failed.\n";
-        controller_->send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
-        controller_->shutdown();
-        controller_.reset();
-        adapter_.reset();
-        return false;
-    }
-
-    initialized_.store(true);
-    return true;
-}
-
 
 void RobotInterface::deinit_motors() {
-    if (!initialized_.load()) {
-        stop_imu_reader();
-        return;
-    }
-
     stop_imu_reader();
 
-    if (controller_) {
+    if (motors_initialized_.load() && controller_) {
         controller_->send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         controller_->shutdown();
@@ -179,8 +191,13 @@ void RobotInterface::deinit_motors() {
 
     controller_.reset();
     adapter_.reset();
-    initialized_.store(false);
+    motors_initialized_.store(false);
+    imu_initialized_.store(false);
 }
+
+
+
+
 
 
 std::vector<double> RobotInterface::get_joint_q() const {
@@ -241,7 +258,7 @@ std::array<double, 3> RobotInterface::get_ang_vel() const {
 
 
 bool RobotInterface::apply_action(const std::vector<double>& target_q_rad) {
-    if (!initialized_.load() || !controller_) {
+    if (!motors_initialized_.load() || !controller_) {
         return false;
     }
     if (static_cast<int>(target_q_rad.size()) != config_.num_motors) {
@@ -270,7 +287,7 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_rad) {
 
 
 bool RobotInterface::reset_joints() {
-    if (!initialized_.load()) {
+    if (!motors_initialized_.load()) {
         return false;
     }
 

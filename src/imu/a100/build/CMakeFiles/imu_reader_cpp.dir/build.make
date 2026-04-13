@@ -73,57 +73,57 @@ CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.o: CMakeFiles/imu_reader_cpp.dir
 CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.o: /home/cat/Myactua_Ethercat/src/imu/a100/examples/main.cpp
 CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.o: CMakeFiles/imu_reader_cpp.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.o -MF CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.o.d -o CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.o -c /home/cat/Myactua_Ethercat/src/imu/a100/examples/main.cpp
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.o -MF CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.o.d -o CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.o -c /home/cat/Myactua_Ethercat/src/imu/a100/examples/main.cpp
 
 CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/imu/a100/examples/main.cpp > CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.i
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/imu/a100/examples/main.cpp > CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.i
 
 CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/imu/a100/examples/main.cpp -o CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.s
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/imu/a100/examples/main.cpp -o CMakeFiles/imu_reader_cpp.dir/examples/main.cpp.s
 
 CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.o: CMakeFiles/imu_reader_cpp.dir/flags.make
 CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.o: /home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/serial_port.cpp
 CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.o: CMakeFiles/imu_reader_cpp.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.o -MF CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.o.d -o CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.o -c /home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/serial_port.cpp
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.o -MF CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.o.d -o CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.o -c /home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/serial_port.cpp
 
 CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/serial_port.cpp > CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.i
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/serial_port.cpp > CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.i
 
 CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/serial_port.cpp -o CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.s
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/serial_port.cpp -o CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.s
 
 CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.o: CMakeFiles/imu_reader_cpp.dir/flags.make
 CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.o: /home/cat/Myactua_Ethercat/src/imu/a100/src/protocol/frame/imu_parser.cpp
 CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.o: CMakeFiles/imu_reader_cpp.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.o -MF CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.o.d -o CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.o -c /home/cat/Myactua_Ethercat/src/imu/a100/src/protocol/frame/imu_parser.cpp
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.o -MF CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.o.d -o CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.o -c /home/cat/Myactua_Ethercat/src/imu/a100/src/protocol/frame/imu_parser.cpp
 
 CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/imu/a100/src/protocol/frame/imu_parser.cpp > CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.i
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/imu/a100/src/protocol/frame/imu_parser.cpp > CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.i
 
 CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/imu/a100/src/protocol/frame/imu_parser.cpp -o CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.s
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/imu/a100/src/protocol/frame/imu_parser.cpp -o CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.s
 
 CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.o: CMakeFiles/imu_reader_cpp.dir/flags.make
 CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.o: /home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/imu_reader.cpp
 CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.o: CMakeFiles/imu_reader_cpp.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Building CXX object CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.o -MF CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.o.d -o CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.o -c /home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/imu_reader.cpp
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.o -MF CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.o.d -o CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.o -c /home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/imu_reader.cpp
 
 CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/imu_reader.cpp > CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.i
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/imu_reader.cpp > CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.i
 
 CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/imu_reader.cpp -o CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.s
+	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/imu_reader.cpp -o CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.s
 
 # Object files for target imu_reader_cpp
 imu_reader_cpp_OBJECTS = \
@@ -140,6 +140,7 @@ imu_reader_cpp: CMakeFiles/imu_reader_cpp.dir/src/drivers/serial_port.cpp.o
 imu_reader_cpp: CMakeFiles/imu_reader_cpp.dir/src/protocol/frame/imu_parser.cpp.o
 imu_reader_cpp: CMakeFiles/imu_reader_cpp.dir/src/drivers/imu_reader.cpp.o
 imu_reader_cpp: CMakeFiles/imu_reader_cpp.dir/build.make
+imu_reader_cpp: motors_build/libMYACTUA_EtherCat.a
 imu_reader_cpp: CMakeFiles/imu_reader_cpp.dir/link.txt
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Linking CXX executable imu_reader_cpp"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/imu_reader_cpp.dir/link.txt --verbose=$(VERBOSE)

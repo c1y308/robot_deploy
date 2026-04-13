@@ -1,0 +1,130 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-.-Release-c52baacddc2d32a8362a.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						3
+					]
+				},
+				{
+					"build" : "motors_build",
+					"jsonFile" : "directory-motors_build-Release-019989be1ef08dec1db2.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.8"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 1,
+					"source" : "/home/cat/Myactua_Ethercat/src/motors",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						4
+					]
+				}
+			],
+			"name" : "Release",
+			"projects" : 
+			[
+				{
+					"childIndexes" : 
+					[
+						1
+					],
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "rk3588_imu_reader_cpp",
+					"targetIndexes" : 
+					[
+						3
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						1
+					],
+					"name" : "MYACTUA_EtherCat",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						4
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 1,
+					"id" : "ID_test::@800ccebf966c31d5df0e",
+					"jsonFile" : "target-ID_test-Release-7944fc97110dd9115b4c.json",
+					"name" : "ID_test",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "MYACTUA_EtherCat::@800ccebf966c31d5df0e",
+					"jsonFile" : "target-MYACTUA_EtherCat-Release-f4dc3c8cfc1478b95ab3.json",
+					"name" : "MYACTUA_EtherCat",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "debug_tool::@800ccebf966c31d5df0e",
+					"jsonFile" : "target-debug_tool-Release-5a99c7a4b6dda8b29ff5.json",
+					"name" : "debug_tool",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "imu_reader_cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-imu_reader_cpp-Release-3f73ad969dd42ebf3a20.json",
+					"name" : "imu_reader_cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "simple_test::@800ccebf966c31d5df0e",
+					"jsonFile" : "target-simple_test-Release-fe1b0d30069837711d9a.json",
+					"name" : "simple_test",
+					"projectIndex" : 1
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/home/cat/Myactua_Ethercat/src/imu/a100/build",
+		"source" : "/home/cat/Myactua_Ethercat/src/imu/a100"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 4
+	}
+}

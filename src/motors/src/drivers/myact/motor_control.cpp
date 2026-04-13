@@ -116,13 +116,13 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
         motor.tx.max_torque = 5000;
         switch (motor.target_mode) 
         {
-            case ControlMode::CSV:
+            case ControlMode::CSV:  // rpm
                 motor.tx.target_vel = static_cast<int32_t>((setvalue * 131072.0) / 60.0);
                 break;
-            case ControlMode::CSP:
-                motor.tx.target_pos = static_cast<int32_t>(setvalue * (65535.0 / 180.0));
+            case ControlMode::CSP:  // setvalue: deg, 1 rev = 131072 plus
+                motor.tx.target_pos = static_cast<int32_t>(setvalue * (131072.0 / 360.0));
                 break;
-            case ControlMode::CST:
+            case ControlMode::CST:  // 电流百分比
                 motor.tx.target_torque = static_cast<int16_t>(setvalue);
                 break;
             default:
@@ -382,8 +382,8 @@ void MYACTUA::print_motors_info(void){
         if (m.step == MotorStep::MODE_SWITCHING) color_code = "\033[33m";
 
         int32_t current_target = 0;
-        if (m.rx.op_mode == 8)      current_target = m.tx.target_pos;
-        else if (m.rx.op_mode == 9) current_target = m.tx.target_vel;
+        if (m.rx.op_mode == 8)       current_target = m.tx.target_pos;
+        else if (m.rx.op_mode == 9)  current_target = m.tx.target_vel;
         else if (m.rx.op_mode == 10) current_target = (int32_t)m.tx.target_torque;
 
         const char* step_name = "UNKNOWN";

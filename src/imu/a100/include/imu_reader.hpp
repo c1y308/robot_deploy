@@ -8,7 +8,8 @@
 #include <memory>
 
 namespace imu {
-
+    
+/* IMU配置结构体 */
 struct Config_t {
     std::string device;
     int baudrate;
@@ -20,6 +21,7 @@ struct Config_t {
                  print_imu(false),
                  print_stats(false) {}
 };
+
 
 class IMUReader {
 public:

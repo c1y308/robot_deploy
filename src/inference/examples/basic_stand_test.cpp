@@ -35,16 +35,15 @@ int main() {
     inference::RobotInterfaceConfig cfg;
     cfg.num_motors = 12;
     cfg.ethercat_ifname = "enp8s0";
-    cfg.enable_imu = true;
     cfg.imu_device = "/dev/ttyUSB0";
     cfg.imu_baudrate = 921600;
     cfg.stand_pose_rad = std::vector<double>(cfg.num_motors, 0.0);
 
     inference::RobotInterface robot(cfg);
 
-    std::cout << "[TEST] 1/4 init_motors()\n";
-    if (!robot.init_motors()) {
-        std::cerr << "[TEST] init_motors failed.\n";
+    std::cout << "[TEST] 1/4 initial_start_motors()\n";
+    if (!robot.initial_start_motors()) {
+        std::cerr << "[TEST] initial_start_motors failed.\n";
         return -1;
     }
 
@@ -81,4 +80,3 @@ int main() {
     std::cout << "[TEST] shutdown complete.\n";
     return 0;
 }
-

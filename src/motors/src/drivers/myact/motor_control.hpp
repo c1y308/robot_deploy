@@ -60,6 +60,8 @@ public:
     void set_status_callback(StatusCallback cb);  // 设置电机状态快照回调函数
     bool is_running() const { return running_; }  // 是否正在运行实时线程
     void print_motors_info(void);
+
+    
 private:
     std::shared_ptr<EthercatAdapter> _adapter;
     std::vector<MotorState> _motors;

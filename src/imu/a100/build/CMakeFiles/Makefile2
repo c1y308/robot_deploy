@@ -64,29 +64,52 @@ CMAKE_BINARY_DIR = /home/cat/Myactua_Ethercat/src/imu/a100/build
 
 # The main recursive "all" target.
 all: CMakeFiles/imu_reader_cpp.dir/all
+all: motors_build/all
 .PHONY : all
 
 # The main recursive "preinstall" target.
-preinstall:
+preinstall: motors_build/preinstall
 .PHONY : preinstall
 
 # The main recursive "clean" target.
 clean: CMakeFiles/imu_reader_cpp.dir/clean
+clean: motors_build/clean
 .PHONY : clean
+
+#=============================================================================
+# Directory level rules for directory motors_build
+
+# Recursive "all" directory target.
+motors_build/all: motors_build/CMakeFiles/MYACTUA_EtherCat.dir/all
+motors_build/all: motors_build/CMakeFiles/simple_test.dir/all
+motors_build/all: motors_build/CMakeFiles/debug_tool.dir/all
+motors_build/all: motors_build/CMakeFiles/ID_test.dir/all
+.PHONY : motors_build/all
+
+# Recursive "preinstall" directory target.
+motors_build/preinstall:
+.PHONY : motors_build/preinstall
+
+# Recursive "clean" directory target.
+motors_build/clean: motors_build/CMakeFiles/MYACTUA_EtherCat.dir/clean
+motors_build/clean: motors_build/CMakeFiles/simple_test.dir/clean
+motors_build/clean: motors_build/CMakeFiles/debug_tool.dir/clean
+motors_build/clean: motors_build/CMakeFiles/ID_test.dir/clean
+.PHONY : motors_build/clean
 
 #=============================================================================
 # Target rules for target CMakeFiles/imu_reader_cpp.dir
 
 # All Build rule for target.
-CMakeFiles/imu_reader_cpp.dir/all:
+CMakeFiles/imu_reader_cpp.dir/all: motors_build/CMakeFiles/MYACTUA_EtherCat.dir/all
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles --progress-num=1,2,3,4,5 "Built target imu_reader_cpp"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles --progress-num=8,9,10,11,12 "Built target imu_reader_cpp"
 .PHONY : CMakeFiles/imu_reader_cpp.dir/all
 
 # Build rule for subdir invocation for target.
 CMakeFiles/imu_reader_cpp.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles 5
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles 8
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/imu_reader_cpp.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start /home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles 0
 .PHONY : CMakeFiles/imu_reader_cpp.dir/rule
@@ -99,6 +122,110 @@ imu_reader_cpp: CMakeFiles/imu_reader_cpp.dir/rule
 CMakeFiles/imu_reader_cpp.dir/clean:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/clean
 .PHONY : CMakeFiles/imu_reader_cpp.dir/clean
+
+#=============================================================================
+# Target rules for target motors_build/CMakeFiles/MYACTUA_EtherCat.dir
+
+# All Build rule for target.
+motors_build/CMakeFiles/MYACTUA_EtherCat.dir/all:
+	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/MYACTUA_EtherCat.dir/build.make motors_build/CMakeFiles/MYACTUA_EtherCat.dir/depend
+	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/MYACTUA_EtherCat.dir/build.make motors_build/CMakeFiles/MYACTUA_EtherCat.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles --progress-num=3,4,5 "Built target MYACTUA_EtherCat"
+.PHONY : motors_build/CMakeFiles/MYACTUA_EtherCat.dir/all
+
+# Build rule for subdir invocation for target.
+motors_build/CMakeFiles/MYACTUA_EtherCat.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles 3
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 motors_build/CMakeFiles/MYACTUA_EtherCat.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles 0
+.PHONY : motors_build/CMakeFiles/MYACTUA_EtherCat.dir/rule
+
+# Convenience name for target.
+MYACTUA_EtherCat: motors_build/CMakeFiles/MYACTUA_EtherCat.dir/rule
+.PHONY : MYACTUA_EtherCat
+
+# clean rule for target.
+motors_build/CMakeFiles/MYACTUA_EtherCat.dir/clean:
+	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/MYACTUA_EtherCat.dir/build.make motors_build/CMakeFiles/MYACTUA_EtherCat.dir/clean
+.PHONY : motors_build/CMakeFiles/MYACTUA_EtherCat.dir/clean
+
+#=============================================================================
+# Target rules for target motors_build/CMakeFiles/simple_test.dir
+
+# All Build rule for target.
+motors_build/CMakeFiles/simple_test.dir/all: motors_build/CMakeFiles/MYACTUA_EtherCat.dir/all
+	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/simple_test.dir/build.make motors_build/CMakeFiles/simple_test.dir/depend
+	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/simple_test.dir/build.make motors_build/CMakeFiles/simple_test.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles --progress-num=13,14 "Built target simple_test"
+.PHONY : motors_build/CMakeFiles/simple_test.dir/all
+
+# Build rule for subdir invocation for target.
+motors_build/CMakeFiles/simple_test.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles 5
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 motors_build/CMakeFiles/simple_test.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles 0
+.PHONY : motors_build/CMakeFiles/simple_test.dir/rule
+
+# Convenience name for target.
+simple_test: motors_build/CMakeFiles/simple_test.dir/rule
+.PHONY : simple_test
+
+# clean rule for target.
+motors_build/CMakeFiles/simple_test.dir/clean:
+	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/simple_test.dir/build.make motors_build/CMakeFiles/simple_test.dir/clean
+.PHONY : motors_build/CMakeFiles/simple_test.dir/clean
+
+#=============================================================================
+# Target rules for target motors_build/CMakeFiles/debug_tool.dir
+
+# All Build rule for target.
+motors_build/CMakeFiles/debug_tool.dir/all: motors_build/CMakeFiles/MYACTUA_EtherCat.dir/all
+	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/debug_tool.dir/build.make motors_build/CMakeFiles/debug_tool.dir/depend
+	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/debug_tool.dir/build.make motors_build/CMakeFiles/debug_tool.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles --progress-num=6,7 "Built target debug_tool"
+.PHONY : motors_build/CMakeFiles/debug_tool.dir/all
+
+# Build rule for subdir invocation for target.
+motors_build/CMakeFiles/debug_tool.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles 5
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 motors_build/CMakeFiles/debug_tool.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles 0
+.PHONY : motors_build/CMakeFiles/debug_tool.dir/rule
+
+# Convenience name for target.
+debug_tool: motors_build/CMakeFiles/debug_tool.dir/rule
+.PHONY : debug_tool
+
+# clean rule for target.
+motors_build/CMakeFiles/debug_tool.dir/clean:
+	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/debug_tool.dir/build.make motors_build/CMakeFiles/debug_tool.dir/clean
+.PHONY : motors_build/CMakeFiles/debug_tool.dir/clean
+
+#=============================================================================
+# Target rules for target motors_build/CMakeFiles/ID_test.dir
+
+# All Build rule for target.
+motors_build/CMakeFiles/ID_test.dir/all: motors_build/CMakeFiles/MYACTUA_EtherCat.dir/all
+	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/ID_test.dir/build.make motors_build/CMakeFiles/ID_test.dir/depend
+	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/ID_test.dir/build.make motors_build/CMakeFiles/ID_test.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles --progress-num=1,2 "Built target ID_test"
+.PHONY : motors_build/CMakeFiles/ID_test.dir/all
+
+# Build rule for subdir invocation for target.
+motors_build/CMakeFiles/ID_test.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles 5
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 motors_build/CMakeFiles/ID_test.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles 0
+.PHONY : motors_build/CMakeFiles/ID_test.dir/rule
+
+# Convenience name for target.
+ID_test: motors_build/CMakeFiles/ID_test.dir/rule
+.PHONY : ID_test
+
+# clean rule for target.
+motors_build/CMakeFiles/ID_test.dir/clean:
+	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/ID_test.dir/build.make motors_build/CMakeFiles/ID_test.dir/clean
+.PHONY : motors_build/CMakeFiles/ID_test.dir/clean
 
 #=============================================================================
 # Special targets to cleanup operation of make.

@@ -1,8 +1,36 @@
 {
-    "cmake.sourceDirectory": "/home/cat/Myactua_Ethercat/src/inference",
-    "cmake.buildDirectory": "/home/cat/Myactua_Ethercat/src/inference/build",
-    "C_Cpp.default.compileCommands": "/home/cat/Myactua_Ethercat/src/inference/build/compile_commands.json",
+    "cmake.configureOnOpen": false,
+    "C_Cpp.default.compilerPath": "/usr/bin/g++",
+    "C_Cpp.default.cppStandard": "c++17",
+    "C_Cpp.default.intelliSenseMode": "linux-gcc-x64",
+    "C_Cpp.default.includePath": [
+        "${workspaceFolder}/src/**",
+        "/home/cat/ethercat/include",
+        "/opt/etherlab/include",
+        "/usr/include",
+        "/usr/local/include"
+    ],
+    "C_Cpp.default.browse.path": [
+        "${workspaceFolder}/src",
+        "/home/cat/ethercat/include",
+        "/opt/etherlab/include",
+        "/usr/include",
+        "/usr/local/include"
+    ],
     "clangd.arguments": [
-        "--compile-commands-dir=/home/cat/Myactua_Ethercat/src/inference/build"
+        "--background-index",
+        "--header-insertion=never"
+    ],
+    "clangd.fallbackFlags": [
+        "-std=c++17",
+        "-I/home/cat/Myactua_Ethercat/src/motors/include",
+        "-I/home/cat/Myactua_Ethercat/src/motors/src/drivers/myact",
+        "-I/home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat",
+        "-I/home/cat/Myactua_Ethercat/src/inference/include",
+        "-I/home/cat/Myactua_Ethercat/src/imu/a100/include",
+        "-I/home/cat/Myactua_Ethercat/src/imu/a100/src/drivers",
+        "-I/home/cat/Myactua_Ethercat/src/imu/a100/src/protocol/frame",
+        "-I/home/cat/ethercat/include",
+        "-I/opt/etherlab/include"
     ]
 }

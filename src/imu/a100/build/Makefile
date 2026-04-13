@@ -174,6 +174,58 @@ imu_reader_cpp/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/imu_reader_cpp.dir/build.make CMakeFiles/imu_reader_cpp.dir/build
 .PHONY : imu_reader_cpp/fast
 
+#=============================================================================
+# Target rules for targets named MYACTUA_EtherCat
+
+# Build rule for target.
+MYACTUA_EtherCat: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 MYACTUA_EtherCat
+.PHONY : MYACTUA_EtherCat
+
+# fast build rule for target.
+MYACTUA_EtherCat/fast:
+	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/MYACTUA_EtherCat.dir/build.make motors_build/CMakeFiles/MYACTUA_EtherCat.dir/build
+.PHONY : MYACTUA_EtherCat/fast
+
+#=============================================================================
+# Target rules for targets named simple_test
+
+# Build rule for target.
+simple_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 simple_test
+.PHONY : simple_test
+
+# fast build rule for target.
+simple_test/fast:
+	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/simple_test.dir/build.make motors_build/CMakeFiles/simple_test.dir/build
+.PHONY : simple_test/fast
+
+#=============================================================================
+# Target rules for targets named debug_tool
+
+# Build rule for target.
+debug_tool: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 debug_tool
+.PHONY : debug_tool
+
+# fast build rule for target.
+debug_tool/fast:
+	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/debug_tool.dir/build.make motors_build/CMakeFiles/debug_tool.dir/build
+.PHONY : debug_tool/fast
+
+#=============================================================================
+# Target rules for targets named ID_test
+
+# Build rule for target.
+ID_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 ID_test
+.PHONY : ID_test
+
+# fast build rule for target.
+ID_test/fast:
+	$(MAKE) $(MAKESILENT) -f motors_build/CMakeFiles/ID_test.dir/build.make motors_build/CMakeFiles/ID_test.dir/build
+.PHONY : ID_test/fast
+
 examples/main.o: examples/main.cpp.o
 .PHONY : examples/main.o
 
@@ -282,7 +334,11 @@ help:
 	@echo "... install/strip"
 	@echo "... list_install_components"
 	@echo "... rebuild_cache"
+	@echo "... ID_test"
+	@echo "... MYACTUA_EtherCat"
+	@echo "... debug_tool"
 	@echo "... imu_reader_cpp"
+	@echo "... simple_test"
 	@echo "... examples/main.o"
 	@echo "... examples/main.i"
 	@echo "... examples/main.s"
