@@ -29,7 +29,7 @@ struct RobotInterfaceConfig {
     int num_motors = 12;
     std::string ethercat_ifname = "enp8s0";
     /* 等待所有从站就绪的超时和轮询时间 */
-    int wait_all_slaves_timeout_ms = 10000;
+    int wait_all_slaves_timeout_ms = 20000;
     int wait_all_slaves_poll_ms = 100;
 
     

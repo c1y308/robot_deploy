@@ -14,7 +14,7 @@ namespace myactua {
  * 1: 无转发站版本（仅电机从站）
  */
 #ifndef MYACTUA_ECAT_NO_FORWARDERS
-#define MYACTUA_ECAT_NO_FORWARDERS 1
+#define MYACTUA_ECAT_NO_FORWARDERS 0
 #endif
 
 /*

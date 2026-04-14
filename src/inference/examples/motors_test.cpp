@@ -22,7 +22,7 @@ int main() {
     std::signal(SIGTERM, signal_handler);
 
     inference::RobotInterfaceConfig cfg;
-    cfg.num_motors = 1;  // 当前电机个数为 1，其余配置使用默认值
+    cfg.num_motors = 12;
 
     inference::RobotInterface robot(cfg);
 
