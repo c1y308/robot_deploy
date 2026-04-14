@@ -1,9 +1,11 @@
 #pragma once
 #include <vector>
+#include <deque>
 #include <memory>
 #include <cstdio>
 #include <thread>
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <functional>
 #include "MotorTypes.hpp"
@@ -35,12 +37,14 @@ public:
         ModeSwitchStep mode_switch_step;
         TxPDO tx;
         RxPDO rx;
+        bool comm_ok;
         double setpoint;
         bool print_info;
 
         MotorState(int index)
         : slave_index(index), target_mode(ControlMode::NONE), step(MotorStep::IDLE), 
-          mode_switch_step(ModeSwitchStep::IDLE), tx({}), rx({}), setpoint(0.0), print_info(false) {}
+          mode_switch_step(ModeSwitchStep::IDLE), tx({}), rx({}), comm_ok(false),
+          setpoint(0.0), print_info(false) {}
     };
 
     MYACTUA(std::shared_ptr<EthercatAdapter> adapter, int num_motors);
@@ -76,8 +80,25 @@ public:
 
     
 private:
+    struct DiscreteCommand {
+        CommandType type;
+        ControlMode mode;
+        uint64_t next_retry_cycle;
+
+        int retry_count;
+        int stable_success_cycles;
+
+        DiscreteCommand(CommandType t = CommandType::STOP, ControlMode m = ControlMode::NONE)
+            : type(t), mode(m), next_retry_cycle(0), stable_success_cycles(0), retry_count(0) {}
+    };
+
     std::shared_ptr<EthercatAdapter> _adapter;
     std::vector<MotorState> _motors;
+
+    /* 电机的离散命令队列 */
+    std::vector<std::deque<DiscreteCommand>> discrete_cmd_queues_;
+    /* 离散命令重试周期 */
+    uint64_t control_cycle_{0};
 
     std::thread rt_thread_;
     std::atomic<bool> running_{false};  // 实时线程运行标志
@@ -93,6 +114,12 @@ private:
     void rt_thread_func();
     void process_commands();
     void update_status_snapshot();
+
+    /* 处理离散命令相关 */
+    void enqueue_discrete_command(const ControlCommand& cmd);
+    void service_discrete_commands(const std::vector<bool>& comm_ok);
+    void apply_discrete_command_to_motor(int motor_index, const DiscreteCommand& cmd);
+    bool is_discrete_command_satisfied(const MotorState& motor, const DiscreteCommand& cmd) const;
 
     void process_single_motor(MotorState& motor, double setvalue);
 

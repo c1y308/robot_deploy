@@ -34,13 +34,14 @@ struct MotorStatusSnapshot {
     double position;
     double velocity;
     double torque;
+    bool comm_ok;
     uint16_t status_word;
     uint16_t error_code;
     ControlMode op_mode;
     ControlMode target_mode;
 
     MotorStatusSnapshot() 
-        : slave_index(-1), position(0), velocity(0), torque(0),
+        : slave_index(-1), position(0), velocity(0), torque(0), comm_ok(false),
           status_word(0), error_code(0), 
           op_mode(ControlMode::NONE), target_mode(ControlMode::NONE) {}
 };

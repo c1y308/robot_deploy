@@ -46,8 +46,9 @@ motors_build/CMakeFiles/MYACTUA_EtherCat.dir/src/drivers/myact/motor_control.cpp
  /usr/include/c++/12/bits/stl_function.h \
  /usr/include/c++/12/backward/binders.h \
  /usr/include/c++/12/bits/range_access.h \
- /usr/include/c++/12/bits/vector.tcc /usr/include/c++/12/memory \
- /usr/include/c++/12/bits/stl_tempbuf.h \
+ /usr/include/c++/12/bits/vector.tcc /usr/include/c++/12/deque \
+ /usr/include/c++/12/bits/stl_deque.h /usr/include/c++/12/bits/deque.tcc \
+ /usr/include/c++/12/memory /usr/include/c++/12/bits/stl_tempbuf.h \
  /usr/include/c++/12/bits/stl_raw_storage_iter.h \
  /usr/include/c++/12/bits/align.h /usr/include/c++/12/bit \
  /usr/lib/gcc/aarch64-linux-gnu/12/include/stdint.h /usr/include/stdint.h \
@@ -175,11 +176,11 @@ motors_build/CMakeFiles/MYACTUA_EtherCat.dir/src/drivers/myact/motor_control.cpp
  /home/cat/Myactua_Ethercat/src/motors/include/MotorTypes.hpp \
  /home/cat/Myactua_Ethercat/src/motors/src/protocol/ethercat/EthercatAdapter.hpp \
  /home/cat/Myactua_Ethercat/src/motors/src/drivers/myact/ThreadSafeQueue.hpp \
- /usr/include/c++/12/queue /usr/include/c++/12/deque \
- /usr/include/c++/12/bits/stl_deque.h /usr/include/c++/12/bits/deque.tcc \
- /usr/include/c++/12/bits/stl_queue.h \
+ /usr/include/c++/12/queue /usr/include/c++/12/bits/stl_queue.h \
  /usr/include/c++/12/condition_variable /usr/include/c++/12/chrono \
  /home/cat/Myactua_Ethercat/src/motors/include/ControlTypes.hpp \
+ /usr/include/c++/12/algorithm \
+ /usr/include/c++/12/pstl/glue_algorithm_defs.h \
  /usr/include/c++/12/iostream /usr/include/c++/12/ostream \
  /usr/include/c++/12/ios /usr/include/c++/12/bits/ios_base.h \
  /usr/include/c++/12/bits/locale_classes.h \

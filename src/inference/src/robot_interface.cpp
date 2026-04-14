@@ -104,6 +104,7 @@ bool RobotInterface::initial_and_start_motors() {
 
     std::cout << "[RobotInterface] Connecting EtherCAT on "
               << config_.ethercat_ifname << "...\n";
+              
     if (!controller_->connect(config_.ethercat_ifname.c_str())) {
         std::cerr << "[RobotInterface] EtherCAT connect failed.\n";
         controller_.reset();
