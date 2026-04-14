@@ -36,13 +36,14 @@ public:
         TxPDO tx;
         RxPDO rx;
         double setpoint;
+        bool print_info;
 
         MotorState(int index)
         : slave_index(index), target_mode(ControlMode::NONE), step(MotorStep::IDLE), 
-          mode_switch_step(ModeSwitchStep::IDLE), tx({}), rx({}), setpoint(0.0) {}
+          mode_switch_step(ModeSwitchStep::IDLE), tx({}), rx({}), setpoint(0.0), print_info(false) {}
     };
 
-    MYACTUA(std::shared_ptr<EthercatAdapter> adapter,int num_motors);
+    MYACTUA(std::shared_ptr<EthercatAdapter> adapter, int num_motors);
 
     ~MYACTUA();
 
@@ -55,13 +56,18 @@ public:
     void start();  // 启动实时线程
     void shutdown();  // 关闭实时线程
     void send_command(const ControlCommand& cmd);   // 异步发送控制命令
+
     std::vector<MotorStatusSnapshot> get_status();  // 获取电机状态快照
     std::vector<double> get_joint_q_rad();          // 关节位置(rad)
     std::vector<double> get_joint_vel_rad_s();      // 关节速度(rad/s)
     std::vector<double> get_joint_tau_raw();        // 关节力矩(raw)
+
     using StatusCallback = std::function<void(const std::vector<MotorStatusSnapshot>&)>;  // 电机状态快照回调函数
     void set_status_callback(StatusCallback cb);  // 设置电机状态快照回调函数
     bool is_running() const { return running_; }  // 是否正在运行实时线程
+
+    /* 只打印存在于 slave_indices 中ID的电机信息 */
+    void set_print_info(const std::vector<int>& slave_indices);
     void print_motors_info(void);
 
     static double raw_pos_to_rad(double raw_pos);
@@ -79,6 +85,8 @@ private:
     ThreadSafeQueue<ControlCommand> cmd_queue_;
     std::mutex status_mutex_;
     std::vector<MotorStatusSnapshot> status_snapshot_;
+
+    std::vector<int> print_motor_ids_;
     
     StatusCallback status_callback_;
 

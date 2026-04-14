@@ -123,6 +123,9 @@ bool RobotInterface::initial_and_start_motors() {
         controller_->set_mode(myactua::ControlMode::CSV, i);
     }
 
+    /* 设置需要打印的电机ID */
+    controller_->set_print_info(config_.print_motor_ids);
+
     /* 启动实时线程 */
     controller_->start();
 

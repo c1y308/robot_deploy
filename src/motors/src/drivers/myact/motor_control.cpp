@@ -1,4 +1,5 @@
 #include "motor_control.hpp"
+#include <algorithm>
 #include <iostream>
 #include <time.h>
 #include <pthread.h>
@@ -36,6 +37,7 @@ MYACTUA::MYACTUA(std::shared_ptr<EthercatAdapter> adapter, int num_motors) : _ad
 {
     for (int i = 0; i < num_motors; i++) {
         _motors.emplace_back(i);
+        print_motor_ids_.push_back(i);
     }
     status_snapshot_.resize(num_motors);
 }
@@ -86,7 +88,9 @@ void MYACTUA::update(const std::vector<double> &setvalues)
 
     if (++print_count >= 500) {
         print_count = 0;
-        print_motors_info();
+        if (!print_motor_ids_.empty()) {
+            print_motors_info();
+        }
     }
 }
 
@@ -427,6 +431,28 @@ void MYACTUA::set_status_callback(StatusCallback cb)
 }
 
 
+/* 默认为不打印电机信息 */
+void MYACTUA::set_print_info(const std::vector<int>& slave_indices)
+{
+    for (auto& motor : _motors) {
+        motor.print_info = false;
+    }
+    print_motor_ids_.clear();
+
+    for (int slave_index : slave_indices) {
+        if (slave_index < 0 || slave_index >= static_cast<int>(_motors.size())) {
+            continue;
+        }
+        /* 去重 */
+        if (std::find(print_motor_ids_.begin(), print_motor_ids_.end(), slave_index) ==
+            print_motor_ids_.end()) {
+            print_motor_ids_.push_back(slave_index);
+            _motors[slave_index].print_info = true;
+        }
+    }
+}
+
+
 void MYACTUA::print_motors_info(void){
     printf("\033[2J\033[H");
 
@@ -436,6 +462,10 @@ void MYACTUA::print_motors_info(void){
     printf("---------------------------------------------------------------------------------------------------------------------------------\n");
 
     for (const auto& m : _motors) {
+        if (std::find(print_motor_ids_.begin(), print_motor_ids_.end(), m.slave_index) ==
+            print_motor_ids_.end()) {
+            continue;
+        }
         const char* color_code = "\033[32m";
         if (m.step == MotorStep::FAULT) color_code = "\033[31m";
         if (m.step == MotorStep::STOPPED) color_code = "\033[35m";

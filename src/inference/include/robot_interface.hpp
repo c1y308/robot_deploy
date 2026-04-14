@@ -31,7 +31,9 @@ struct RobotInterfaceConfig {
     /* 等待所有从站就绪的超时和轮询时间 */
     int wait_all_slaves_timeout_ms = 20000;
     int wait_all_slaves_poll_ms = 100;
+    bool print_motors_info = false;
 
+    std::vector<int> print_motor_ids = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}; 
     
     /* IMU 配置 */
     std::string imu_device = "/dev/ttyUSB0";
