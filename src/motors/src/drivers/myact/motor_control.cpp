@@ -17,8 +17,19 @@ constexpr double kRawPosToRad = (2.0 * kPi) / kPosPlusPerRev;
 constexpr double kRawVelToRpm = 60.0 / kPosPlusPerRev;
 constexpr double kRpmToRadPerSec = (2.0 * kPi) / 60.0;
 constexpr double kRadToDeg = 180.0 / kPi;
-constexpr uint64_t kDiscreteRetryCycles = 10;      // 10 ms @ 1kHz
-constexpr int kDiscreteSuccessStableCycles = 3;    // 连续 3 个周期满足判据视为成功
+
+
+constexpr uint64_t kDiscreteRetryCycles = 10;       // 重试间隔：10 ms @ 1kHz
+constexpr int kDiscreteSuccessStableCycles = 3;     // 连续 3 个周期满足判据视为成功
+constexpr int kDiscreteMaxRetries = 100;            // 最多重试 100 次
+constexpr uint64_t kDiscreteTimeoutCycles = 5000;   // 命令超时：5 s @ 1kHz
+
+enum DiscreteFailReason {
+    kDiscreteFailNone = 0,
+    kDiscreteFailFault = 1,
+    kDiscreteFailTimeout = 2,
+    kDiscreteFailMaxRetry = 3,
+};
 }
 
 static struct timespec timespec_add(struct timespec time1, struct timespec time2)
@@ -366,7 +377,15 @@ void MYACTUA::enqueue_discrete_command(const ControlCommand& cmd)
             return;
         }
         DiscreteCommand pending(cmd.type, cmd.mode);
+        pending.phase = DiscretePhase::QUEUED;
+
+        pending.enqueue_cycle = control_cycle_;
         pending.next_retry_cycle = control_cycle_;
+        pending.deadline_cycle = control_cycle_ + kDiscreteTimeoutCycles;
+        pending.max_retries = kDiscreteMaxRetries;
+        pending.retry_count = 0;
+        pending.stable_success_cycles = 0;
+        pending.fail_reason = kDiscreteFailNone;
         discrete_cmd_queues_[idx].push_back(pending);
     };
 
@@ -394,28 +413,75 @@ void MYACTUA::service_discrete_commands(const std::vector<bool>& comm_ok)
         auto& cmd = queue.front();
         auto& motor = _motors[i];
 
-        /* 当前掉线，标记失败，跳过处理 */
+        /* 当前命令已完成 */
+        if (cmd.phase == DiscretePhase::DONE) {
+            queue.pop_front();
+            continue;
+        }
+        if (cmd.phase == DiscretePhase::FAILED) {
+            std::cerr << "[MYACTUA] discrete command failed on motor " << i
+                      << ", type=" << static_cast<int>(cmd.type)
+                      << ", reason=" << cmd.fail_reason
+                      << ", retry=" << cmd.retry_count << "\n";
+            queue.pop_front();
+            continue;
+        }
+
+        if (control_cycle_ > cmd.deadline_cycle) {
+            cmd.phase = DiscretePhase::FAILED;
+            cmd.fail_reason = kDiscreteFailTimeout;
+            continue;
+        }
+
+        /* 当前掉线，保持等待，不推进命令阶段 */
         if (!comm_ok[i]) {
             cmd.stable_success_cycles = 0;
             continue;
         }
 
-        /* 下一个周期开始第一次检查是否执行成功，通过回传的状态字进行确认 */
-        /* 连续成功kDiscreteSuccessStableCycles次则表明此次命令成功 */
-        if (is_discrete_command_satisfied(motor, cmd)) {
-            cmd.stable_success_cycles += 1;
-            if (cmd.stable_success_cycles >= kDiscreteSuccessStableCycles) {
-                queue.pop_front();
+        /* 驱动明确报错，命令直接失败 */
+        if (is_fault(motor.rx.status_word) || motor.rx.error != 0) {
+            cmd.phase = DiscretePhase::FAILED;
+            cmd.fail_reason = kDiscreteFailFault;
+            continue;
+        }
+
+        if (cmd.phase == DiscretePhase::QUEUED) {
+            cmd.phase = DiscretePhase::APPLY_PENDING;
+        }
+
+        if (cmd.phase == DiscretePhase::APPLY_PENDING) {
+            if (cmd.retry_count >= cmd.max_retries) {
+                cmd.phase = DiscretePhase::FAILED;
+                cmd.fail_reason = kDiscreteFailMaxRetry;
+                continue;
+            }
+            if (control_cycle_ >= cmd.next_retry_cycle) {
+                apply_discrete_command_to_motor(static_cast<int>(i), cmd);
+                cmd.retry_count += 1;
+                cmd.next_retry_cycle = control_cycle_ + kDiscreteRetryCycles;
+                cmd.stable_success_cycles = 0;
+                cmd.phase = DiscretePhase::VERIFYING;
             }
             continue;
         }
 
-        /* 未满足条件，重置成功计数，当前周期继续发送当前控制命令 */
-        cmd.stable_success_cycles = 0;
-        if (control_cycle_ >= cmd.next_retry_cycle) {
-            apply_discrete_command_to_motor(static_cast<int>(i), cmd);
-            cmd.retry_count += 1;
-            cmd.next_retry_cycle = control_cycle_ + kDiscreteRetryCycles;
+        if (cmd.phase == DiscretePhase::VERIFYING) {
+            /* 验证成功 */
+            if (is_discrete_command_satisfied(motor, cmd)) {
+                cmd.stable_success_cycles += 1;
+                if (cmd.stable_success_cycles >= kDiscreteSuccessStableCycles) {
+                    cmd.phase = DiscretePhase::DONE;
+                    queue.pop_front();
+                }
+            }
+            /* 验证失败 */
+            else {
+                cmd.stable_success_cycles = 0;
+                if (control_cycle_ >= cmd.next_retry_cycle) {
+                    cmd.phase = DiscretePhase::APPLY_PENDING;
+                }
+            }
         }
     }
 }
@@ -458,9 +524,9 @@ bool MYACTUA::is_discrete_command_satisfied(const MotorState& motor, const Discr
 
     switch (cmd.type) {
         case CommandType::STOP:
-            return !is_operation_enabled(sw);
+            return (motor.step == MotorStep::STOPPED) && !is_operation_enabled(sw);
         case CommandType::RESTART:
-            return is_operation_enabled(sw);
+            return (motor.step != MotorStep::STOPPED) && is_operation_enabled(sw);
         case CommandType::SET_MODE:
             return (motor.rx.op_mode == cmd.mode) && is_operation_enabled(sw);
         case CommandType::SET_SETPOINTS:

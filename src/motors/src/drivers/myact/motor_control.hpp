@@ -80,16 +80,31 @@ public:
 
     
 private:
+    enum class DiscretePhase {
+        QUEUED,
+        APPLY_PENDING,
+        VERIFYING,
+        DONE,
+        FAILED
+    };
+
     struct DiscreteCommand {
         CommandType type;
         ControlMode mode;
+        DiscretePhase phase;
+        uint64_t enqueue_cycle;
         uint64_t next_retry_cycle;
+        uint64_t deadline_cycle;
 
+        int max_retries;
         int retry_count;
         int stable_success_cycles;
+        int fail_reason;
 
         DiscreteCommand(CommandType t = CommandType::STOP, ControlMode m = ControlMode::NONE)
-            : type(t), mode(m), next_retry_cycle(0), stable_success_cycles(0), retry_count(0) {}
+            : type(t), mode(m), phase(DiscretePhase::QUEUED),
+              enqueue_cycle(0), next_retry_cycle(0), deadline_cycle(0),
+              max_retries(0), retry_count(0), stable_success_cycles(0), fail_reason(0) {}
     };
 
     std::shared_ptr<EthercatAdapter> _adapter;
