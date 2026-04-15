@@ -110,6 +110,9 @@ void MYACTUA::update(const std::vector<double> &setvalues)
     for (size_t i = 0; i < _motors.size(); i++)
     {
         comm_ok[i] = _adapter->isConfigured(_motors[i].slave_index);
+        if (!comm_ok[i]) {
+            ++_motors[i].comm_offline_total_count;
+        }
         _motors[i].comm_ok = comm_ok[i];
         
         /* 只接受通信正常的电机数据 */
@@ -650,8 +653,8 @@ void MYACTUA::print_motors_info(void){
     printf("\033[2J\033[H");
 
     printf("\033[1;36m============================ MOTOR REAL-TIME MONITOR ============================\033[0m\n");
-    printf("%-6s | %-6s | %-16s | %-22s | %-12s | %-12s | %-10s | %-14s | %-6s\n",
-        "ID", "COMM", "STEP", "MODE_SWITCH_STEP", "POS(rad)", "VEL(rad/s)", "TORQUE", "TARGET(conv)", "MODE");
+    printf("%-6s | %-10s | %-16s | %-22s | %-12s | %-12s | %-10s | %-14s | %-6s\n",
+        "ID", "OFFLINE_CNT", "STEP", "MODE_SWITCH_STEP", "POS(rad)", "VEL(rad/s)", "TORQUE", "TARGET(conv)", "MODE");
     printf("--------------------------------------------------------------------------------------------------------------------------------------------\n");
 
     for (const auto& m : _motors) {
@@ -663,9 +666,6 @@ void MYACTUA::print_motors_info(void){
         if (m.step == MotorStep::FAULT) color_code = "\033[31m";
         if (m.step == MotorStep::STOPPED) color_code = "\033[35m";
         if (m.step == MotorStep::MODE_SWITCHING) color_code = "\033[33m";
-        const char* comm_color_code = m.comm_ok ? "\033[32m" : "\033[31m";
-        const char* comm_name = m.comm_ok ? "UP" : "DOWN";
-
         double current_target = 0.0;
         if (m.rx.op_mode == ControlMode::CSP) {
             current_target = raw_pos_to_rad(static_cast<double>(m.tx.target_pos));
@@ -706,10 +706,9 @@ void MYACTUA::print_motors_info(void){
             default: break;
         }
 
-        printf("M %-4d | %s%-6s\033[0m | %s%-16s\033[0m | %s%-22s\033[0m | %-12.4f | %-12.4f | %-10d | %-14.4f | %-6s\n",
+        printf("M %-4d | %-10u | %s%-16s\033[0m | %s%-22s\033[0m | %-12.4f | %-12.4f | %-10d | %-14.4f | %-6s\n",
             m.slave_index,
-            comm_color_code,
-            comm_name,
+            static_cast<unsigned int>(m.comm_offline_total_count),
             color_code,
             step_name,
             color_code,

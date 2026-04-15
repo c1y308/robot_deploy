@@ -38,12 +38,14 @@ public:
         TxPDO tx;
         RxPDO rx;
         bool comm_ok;
+        uint32_t comm_offline_total_count;
         double setpoint;
         bool print_info;
 
         MotorState(int index)
         : slave_index(index), target_mode(ControlMode::NONE), step(MotorStep::IDLE), 
           mode_switch_step(ModeSwitchStep::IDLE), tx({}), rx({}), comm_ok(false),
+          comm_offline_total_count(0),
           setpoint(0.0), print_info(false) {}
     };
 

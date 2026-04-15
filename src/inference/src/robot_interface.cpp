@@ -143,6 +143,7 @@ bool RobotInterface::wait_all_slaves_ready() const {
         return false;
     }
 
+    const auto start_time = std::chrono::steady_clock::now();
     const int timeout_ms = std::max(0, config_.wait_all_slaves_timeout_ms);
     const int poll_ms    = std::max(1, config_.wait_all_slaves_poll_ms);
     const int max_tries  = (timeout_ms == 0) ? 1 : (timeout_ms + poll_ms - 1) / poll_ms;
@@ -155,6 +156,10 @@ bool RobotInterface::wait_all_slaves_ready() const {
             }
         }
         if (ready_count == config_.num_motors) {
+            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start_time).count();
+            std::cout << "[RobotInterface] All slaves ready in "
+                      << elapsed_ms << " ms\n";
             return true;
         }
 
@@ -163,6 +168,10 @@ bool RobotInterface::wait_all_slaves_ready() const {
         std::this_thread::sleep_for(std::chrono::milliseconds(poll_ms));
     }
 
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start_time).count();
+    std::cout << "[RobotInterface] wait_all_slaves_ready timeout after "
+              << elapsed_ms << " ms\n";
     return false;
 }
 
