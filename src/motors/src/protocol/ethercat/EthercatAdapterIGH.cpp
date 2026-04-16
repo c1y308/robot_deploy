@@ -198,9 +198,6 @@ void EthercatAdapterIGH::rt_loop()
             slave_configured[i].store(ok, std::memory_order_relaxed);
         }
 
-        /*下面是数据处理*/
-
-
         if (sync_ref_counter) {
             sync_ref_counter--;
         } else {
@@ -219,6 +216,7 @@ void EthercatAdapterIGH::rt_loop()
 void EthercatAdapterIGH::send(int index, const TxPDO& pdo)
 {
     if(index < 0 || index >= slave_offsets.size()) return;
+    if (!domain1_pd) return;
 
     SlaveOffsets& off = slave_offsets[index];
     EC_WRITE_U16(domain1_pd + off.off_ctrl_word,    pdo.control_word);
@@ -240,7 +238,7 @@ RxPDO EthercatAdapterIGH::receive(int index)
     pdo.vel         = EC_READ_S32(domain1_pd + off.off_vel);
     pdo.torque      = EC_READ_S16(domain1_pd + off.off_torque);
     pdo.error       = EC_READ_U16(domain1_pd + off.off_error);
-    pdo.op_mode     = (ControlMode)EC_READ_S8 (domain1_pd + off.off_mode_disp);
+    pdo.op_mode     = EC_READ_S8 (domain1_pd + off.off_mode_disp);
 
     return pdo;
 }

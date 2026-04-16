@@ -1,1 +1,1 @@
-/usr/bin/aarch64-linux-gnu-g++  -Wall -Wextra -O2 -O3 -DNDEBUG CMakeFiles/simple_test.dir/examples/simple_test.cpp.o -o simple_test   -L/home/cat/ethercat/lib  -L/opt/etherlab/lib  -Wl,-rpath,/home/cat/ethercat/lib:/opt/etherlab/lib libMYACTUA_EtherCat.a -lethercat -lpthread -lrt 
+/usr/bin/c++  -Wall -Wextra -O2 -O3 -DNDEBUG CMakeFiles/simple_test.dir/examples/simple_test.cpp.o -o simple_test   -L/home/cat/ethercat/lib  -L/opt/etherlab/lib  -Wl,-rpath,/home/cat/ethercat/lib:/opt/etherlab/lib libMYACTUA_EtherCat.a -lethercat -lpthread -lrt 

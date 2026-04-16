@@ -25,7 +25,7 @@ namespace myactua {
  * 使用“无转发站，仅电机从站”的连续映射
  */
 #if MYACTUA_ECAT_NO_FORWARDERS
-inline constexpr std::array<uint16_t, 12> kSlavePositions = {
+inline constexpr std::array<uint16_t, 2> kSlavePositions = {
     0, 1
 };
 #else

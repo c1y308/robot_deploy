@@ -136,6 +136,7 @@ bool RobotInterface::initial_and_start_motors() {
 
     controller_->send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
     motors_initialized_.store(true);
+    motion_enabled_.store(false);
 
     return true;
 }
@@ -184,7 +185,7 @@ void RobotInterface::deinit_motors() {
     stop_imu_reader();
 
     if (motors_initialized_.load() && controller_) {
-        controller_->send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
+        stop_motors(-1);
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         controller_->shutdown();
     }
@@ -193,6 +194,7 @@ void RobotInterface::deinit_motors() {
     adapter_.reset();
     motors_initialized_.store(false);
     imu_initialized_.store(false);
+    motion_enabled_.store(false);
 }
 
 
@@ -242,8 +244,50 @@ std::array<double, 3> RobotInterface::get_ang_vel() const {
 }
 
 
+bool RobotInterface::stop_motors(int slave_index) {
+    if (!motors_initialized_.load() || !controller_) {
+        return false;
+    }
+    if (slave_index >= config_.num_motors) {
+        std::cerr << "[RobotInterface] stop_motors invalid slave_index="
+                  << slave_index << "\n";
+        return false;
+    }
+
+    controller_->send_command(myactua::ControlCommand(myactua::CommandType::STOP, slave_index));
+    if (slave_index < 0) {
+        motion_enabled_.store(false);
+    }
+    return true;
+}
+
+
+bool RobotInterface::restart_motors(int slave_index) {
+    if (!motors_initialized_.load() || !controller_) {
+        return false;
+    }
+    if (slave_index >= config_.num_motors) {
+        std::cerr << "[RobotInterface] restart_motors invalid slave_index="
+                  << slave_index << "\n";
+        return false;
+    }
+
+    controller_->send_command(myactua::ControlCommand(myactua::CommandType::RESTART,
+                                                      slave_index));
+    if (slave_index < 0 || config_.num_motors == 1) {
+        motion_enabled_.store(true);
+    }
+    return true;
+}
+
+
 bool RobotInterface::apply_action(const std::vector<double>& target_q_rad) {
     if (!motors_initialized_.load() || !controller_) {
+        return false;
+    }
+    if (!motion_enabled_.load()) {
+        std::cerr << "[RobotInterface] apply_action rejected: motors are stopped. "
+                  << "Call restart_motors(-1) first.\n";
         return false;
     }
     if (static_cast<int>(target_q_rad.size()) != config_.num_motors) {

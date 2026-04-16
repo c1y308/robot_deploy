@@ -81,7 +81,7 @@ enum ControlWordCommand : uint16_t {
     CMD_QUICK_STOP = 0x0002,  // 0010：失能并急停
     CMD_DISABLE_VOLTAGE = 0x0000,  // 0000：停电
 
-    CMD_SWITCH_ON = 0x0007,
+    CMD_SWITCH_ON = 0x0007,          // 0111：保持使能但停止运行
     CMD_DISABLE_OPERATION = 0x0007,  // 0111：保持使能，停止运行
     CMD_ENABLE_OPERATION = 0x000F,  //  1111：保持使能，正常运行
 };
@@ -89,7 +89,9 @@ enum ControlWordCommand : uint16_t {
 /* 模式切换子状态 */
 enum class ModeSwitchStep {
     IDLE,               // 空闲
-    SET_MODE_CLEAR_DISABLE, // 设置新模式并清除目标值
+    SET_MODE,           // 设置新模式
+    CLEAR,              // 清除
+    DISABLE,            // 失能
     ENABLE,             // 使能
     OPERATING,          // 开始运行
     DONE                // 完成
@@ -106,7 +108,7 @@ struct TxPDO
     int32_t  target_vel;                // 0x60FF:目标转速(周期同步速度模式)
     int16_t  target_torque;             // 0x6071:目标扭矩(周期同步扭矩模式)
     uint16_t max_torque;                // 0x6072:
-    ControlMode op_mode;                // 0x6060:设置运行模式
+    int8_t   op_mode;                // 0x6060:设置运行模式
     uint8_t  reserved;                  // 0x5FFE (1字节填充)
 }__attribute__((packed));
 /* RxPD0主站接受从站数据 */   
@@ -117,7 +119,7 @@ struct RxPDO
     int32_t vel;                    // 0x606C:电机实际转速
     int16_t torque;                 // 0x6077:电机实际扭矩
     uint16_t error;                 // 0x603F
-    ControlMode op_mode;            // 0x6061:显示运行模式
+    int8_t op_mode;            // 0x6061:显示运行模式
     uint8_t reserved;               // 0x5FFE (1字节填充)
 }__attribute__((packed));
 #pragma pack(pop)

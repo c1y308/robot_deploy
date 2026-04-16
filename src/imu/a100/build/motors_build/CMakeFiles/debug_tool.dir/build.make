@@ -73,15 +73,15 @@ motors_build/CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o: motors_build/C
 motors_build/CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o: /home/cat/Myactua_Ethercat/src/motors/examples/debug_tool.cpp
 motors_build/CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o: motors_build/CMakeFiles/debug_tool.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object motors_build/CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o"
-	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT motors_build/CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o -MF CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o.d -o CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/examples/debug_tool.cpp
+	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT motors_build/CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o -MF CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o.d -o CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/examples/debug_tool.cpp
 
 motors_build/CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.i"
-	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/motors/examples/debug_tool.cpp > CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.i
+	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/motors/examples/debug_tool.cpp > CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.i
 
 motors_build/CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.s"
-	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/motors/examples/debug_tool.cpp -o CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.s
+	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/motors/examples/debug_tool.cpp -o CMakeFiles/debug_tool.dir/examples/debug_tool.cpp.s
 
 # Object files for target debug_tool
 debug_tool_OBJECTS = \

@@ -19,8 +19,9 @@ constexpr double kRpmToRadPerSec = (2.0 * kPi) / 60.0;
 constexpr double kRadToDeg = 180.0 / kPi;
 
 
-constexpr uint64_t kDiscreteRetryCycles = 10;       // 重试间隔：10 ms @ 1kHz
-constexpr int kDiscreteSuccessStableCycles = 3;     // 连续 3 个周期满足判据视为成功
+constexpr uint64_t kDiscreteRetryCycles = 100;       // 重试间隔：100 ms @ 1kHz
+constexpr uint64_t kDiscreteVerifyIntervalCycles = 100; // 验证间隔：100 ms @ 1kHz
+constexpr int kDiscreteSuccessStableCycles = 1;     // 连续 1 个周期满足判据视为成功
 constexpr int kDiscreteMaxRetries = 100;            // 最多重试 100 次
 constexpr uint64_t kDiscreteTimeoutCycles = 5000;   // 命令超时：5 s @ 1kHz
 
@@ -118,6 +119,7 @@ void MYACTUA::update(const std::vector<double> &setvalues)
         /* 只接受通信正常的电机数据 */
         if (comm_ok[i]) {
             _motors[i].rx = _adapter->receive(_motors[i].slave_index);
+            refresh_observed_state(_motors[i]);
         }
     }
 
@@ -129,7 +131,7 @@ void MYACTUA::update(const std::vector<double> &setvalues)
         if (!comm_ok[i]) {
             continue;
         }
-        double val = (i < setvalues.size()) ? setvalues[i] : _motors[i].setpoint;
+        double val = (i < setvalues.size()) ? setvalues[i] : _motors[i].desired.setpoint;
         process_single_motor(_motors[i], val);
     }
 
@@ -148,42 +150,77 @@ void MYACTUA::update(const std::vector<double> &setvalues)
 }
 
 
+void MYACTUA::refresh_observed_state(MotorState& motor)
+{
+    const uint16_t sw = motor.rx.status_word;
+    motor.observed.status_word = sw;
+    motor.observed.error_code = motor.rx.error;
+    motor.observed.mode = (ControlMode)motor.rx.op_mode;
+    motor.observed.ready_to_switch_on = is_ready_to_switch_on(sw);
+    motor.observed.switched_on = is_switched_on(sw);
+    motor.observed.operation_enabled = is_operation_enabled(sw);
+    motor.observed.fault = is_fault(sw) || (motor.rx.error != 0);
+}
+
+
 void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
 {
-    uint16_t sw = motor.rx.status_word;
+    const auto& observed = motor.observed;
+    const auto& desired  = motor.desired;
+    const uint16_t sw = observed.status_word;
 
-    if(motor.step == MotorStep::STOPPED) {
+    // if (observed.fault) {
+    //     motor.step = MotorStep::FAULT;
+    //     motor.mode_switch_step = ModeSwitchStep::IDLE;
+    //     motor.tx.control_word = CMD_SHUTDOWN;
+    //     motor.tx.op_mode = desired.mode;
+    //     motor.tx.target_pos = motor.rx.pos;
+    //     motor.tx.target_vel = 0;
+    //     motor.tx.target_torque = 0;
+    //     return;
+    // }
+
+    /* 需要停止 */
+    if (!desired.enabled) {
+        motor.step = MotorStep::STOPPED;
+        motor.mode_switch_step = ModeSwitchStep::IDLE;
         motor.tx.control_word = CMD_DISABLE_OPERATION;
+        motor.tx.op_mode = desired.mode;
         motor.tx.target_vel = 0;
         motor.tx.target_pos = motor.rx.pos;
         motor.tx.target_torque = 0;
         return;
     }
 
-    if (is_fault(sw)) 
-    {
-        motor.step = MotorStep::FAULT;
-        motor.tx.control_word = CMD_SHUTDOWN;
-        return;
-    }
-    if (motor.rx.op_mode != motor.target_mode && motor.step == MotorStep::RUNNING)
-    {
+    // if (desired.mode == ControlMode::NONE) {
+    //     motor.step = MotorStep::IDLE;
+    //     motor.mode_switch_step = ModeSwitchStep::IDLE;
+    //     motor.tx.control_word = CMD_SHUTDOWN;
+    //     motor.tx.op_mode = ControlMode::NONE;
+    //     motor.tx.target_pos = motor.rx.pos;
+    //     motor.tx.target_vel = 0;
+    //     motor.tx.target_torque = 0;
+    //     return;
+    // }
+
+    if (observed.mode != desired.mode) {
         motor.step = MotorStep::MODE_SWITCHING;
-    }
-    if(motor.step == MotorStep::MODE_SWITCHING){
         handle_mode_switching(motor);
         return;
     }
-    
-    /* 检测是否需要提前执行特殊控制命令 */
-    motor.tx.control_word = get_next_control_word(sw);
+    std::cout << "observed.mode == desired.mode: " << (int)observed.mode << std::endl;
+    if (motor.mode_switch_step != ModeSwitchStep::IDLE) {
+        motor.mode_switch_step =  ModeSwitchStep::IDLE;
+    }
 
-    if (is_operation_enabled(sw))  
-    {   
+    /* 模式一致后进入使能/运行控制 */
+    motor.tx.control_word = get_next_control_word(sw);
+    motor.tx.op_mode = desired.mode;
+
+    if (observed.operation_enabled) {
         motor.step = MotorStep::RUNNING;
         motor.tx.max_torque = 5000;
-        switch (motor.target_mode) 
-        {
+        switch (desired.mode) {
             case ControlMode::CSV:  // rpm
                 motor.tx.target_vel = static_cast<int32_t>(setvalue / kRawVelToRpm);
                 break;
@@ -196,9 +233,7 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
             default:
                 break;
         }
-    } 
-    else 
-    {
+    } else {
         motor.step = MotorStep::ENABLING;
         motor.tx.target_pos = motor.rx.pos;
         motor.tx.target_vel = 0;
@@ -210,52 +245,69 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
 /* 状态机切换电机控制模式 */
 void MYACTUA::handle_mode_switching(MotorState& motor)
 {
-    uint16_t sw = motor.rx.status_word;
+    const auto& observed = motor.observed;
+    const auto& desired  = motor.desired;
+    const uint16_t sw = observed.status_word;
+
+    /* 模式切换期间持续下发目标模式，避免 0x6060 仅写入一次丢失 */
+    motor.tx.op_mode = desired.mode;
 
     switch (motor.mode_switch_step)
     {
         case ModeSwitchStep::IDLE:
-            motor.mode_switch_step = ModeSwitchStep::SET_MODE_CLEAR_DISABLE;
+            motor.mode_switch_step = ModeSwitchStep::SET_MODE;
             break;
 
-        case ModeSwitchStep::SET_MODE_CLEAR_DISABLE:
-            motor.tx.op_mode = motor.target_mode;
+        case ModeSwitchStep::SET_MODE:
+            /* 直接推进，不等待 0x6061 先变化，避免僵住在 RX_MODE=NONE */
+            motor.mode_switch_step = ModeSwitchStep::CLEAR;
+            break;
+
+        case ModeSwitchStep::CLEAR:
             motor.tx.target_pos = motor.rx.pos;
             motor.tx.target_vel = 0;
             motor.tx.target_torque = 0;
+            motor.mode_switch_step = ModeSwitchStep::DISABLE;
+            break;
+
+        case ModeSwitchStep::DISABLE:
             motor.tx.control_word = CMD_SHUTDOWN;
-            motor.mode_switch_step = ModeSwitchStep::ENABLE;
+            if (!is_switched_on(sw) && !is_operation_enabled(sw)) {
+                motor.mode_switch_step = ModeSwitchStep::ENABLE;
+            }
             break;
 
         case ModeSwitchStep::ENABLE:
-            if (!is_switched_on(sw) && !is_operation_enabled(sw)) {
-                if (is_ready_to_switch_on(sw)) {
-                    motor.tx.control_word = CMD_SWITCH_ON;
-                    motor.mode_switch_step = ModeSwitchStep::OPERATING;
-                } else {
-                    motor.tx.control_word = CMD_SHUTDOWN;
-                }
-            } else
+            if (is_operation_enabled(sw)) {
+                motor.mode_switch_step = ModeSwitchStep::DONE;
+            } else if (is_switched_on(sw)) {
+                motor.mode_switch_step = ModeSwitchStep::OPERATING;
+            } else if (is_ready_to_switch_on(sw)) {
+                motor.tx.control_word = CMD_SWITCH_ON;
+            } else {
                 motor.tx.control_word = CMD_SHUTDOWN;
+            }
             break;
 
         case ModeSwitchStep::OPERATING:
-            if(is_switched_on(sw)){
-                if (is_operation_enabled(sw)) {
-                    motor.mode_switch_step = ModeSwitchStep::DONE;
-                } else {
-                    motor.tx.control_word = CMD_ENABLE_OPERATION;
-                }
-            }else
+            if (is_operation_enabled(sw)) {
+                motor.mode_switch_step = ModeSwitchStep::DONE;
+            } else if (is_switched_on(sw)) {
+                motor.tx.control_word = CMD_ENABLE_OPERATION;
+            } else if (is_ready_to_switch_on(sw)) {
                 motor.tx.control_word = CMD_SWITCH_ON;
+            } else {
+                motor.tx.control_word = CMD_SHUTDOWN;
+                motor.mode_switch_step = ModeSwitchStep::ENABLE;
+            }
             break;
 
         case ModeSwitchStep::DONE:
-            if (motor.rx.op_mode == motor.target_mode) {
+            if (observed.mode == desired.mode) {
                 motor.mode_switch_step = ModeSwitchStep::IDLE;
                 motor.step = MotorStep::RUNNING;
             } else {
-                motor.mode_switch_step = ModeSwitchStep::SET_MODE_CLEAR_DISABLE;
+                motor.mode_switch_step = ModeSwitchStep::SET_MODE;
             }
             break;
     }
@@ -283,7 +335,8 @@ void MYACTUA::set_mode(ControlMode mode, int slave_index)
 {
     if(slave_index >= 0 && slave_index < _motors.size())
     {
-        _motors[slave_index].target_mode = mode;
+        _motors[slave_index].desired.mode = mode;
+        _motors[slave_index].mode_switch_step = ModeSwitchStep::IDLE;
     }
 }
 
@@ -292,11 +345,11 @@ void MYACTUA::stop_motor(int slave_index)
 {
     if(slave_index < 0) {
         for(auto& motor : _motors) {
-            motor.step = MotorStep::STOPPED;
+            motor.desired.enabled = false;
             motor.mode_switch_step = ModeSwitchStep::IDLE;
         }
     } else if(slave_index < _motors.size()) {
-        _motors[slave_index].step = MotorStep::STOPPED;
+        _motors[slave_index].desired.enabled = false;
         _motors[slave_index].mode_switch_step = ModeSwitchStep::IDLE;
     }
 }
@@ -306,11 +359,11 @@ void MYACTUA::restart(int slave_index)
 {
     if(slave_index < 0) {
         for(auto& motor : _motors) {
-            motor.step = MotorStep::ENABLING;
+            motor.desired.enabled = true;
             motor.mode_switch_step = ModeSwitchStep::IDLE;
         }
     } else if(slave_index < _motors.size()) {
-        _motors[slave_index].step = MotorStep::ENABLING;
+        _motors[slave_index].desired.enabled = true;
         _motors[slave_index].mode_switch_step = ModeSwitchStep::IDLE;
     }
 }
@@ -352,7 +405,7 @@ void MYACTUA::process_commands()
         switch (cmd.type) {
             case CommandType::SET_SETPOINTS:
                 for (size_t i = 0; i < cmd.values.size() && i < _motors.size(); i++) {
-                    _motors[i].setpoint = cmd.values[i];
+                    _motors[i].desired.setpoint = cmd.values[i];
                 }
                 break;
                 
@@ -384,6 +437,7 @@ void MYACTUA::enqueue_discrete_command(const ControlCommand& cmd)
 
         pending.enqueue_cycle = control_cycle_;
         pending.next_retry_cycle = control_cycle_;
+        pending.next_verify_cycle = control_cycle_;
         pending.deadline_cycle = control_cycle_ + kDiscreteTimeoutCycles;
         pending.max_retries = kDiscreteMaxRetries;
         pending.retry_count = 0;
@@ -443,7 +497,7 @@ void MYACTUA::service_discrete_commands(const std::vector<bool>& comm_ok)
         }
 
         /* 驱动明确报错，命令直接失败 */
-        if (is_fault(motor.rx.status_word) || motor.rx.error != 0) {
+        if (motor.observed.fault) {
             cmd.phase = DiscretePhase::FAILED;
             cmd.fail_reason = kDiscreteFailFault;
             continue;
@@ -463,6 +517,7 @@ void MYACTUA::service_discrete_commands(const std::vector<bool>& comm_ok)
                 apply_discrete_command_to_motor(static_cast<int>(i), cmd);
                 cmd.retry_count += 1;
                 cmd.next_retry_cycle = control_cycle_ + kDiscreteRetryCycles;
+                cmd.next_verify_cycle = control_cycle_ + kDiscreteVerifyIntervalCycles;
                 cmd.stable_success_cycles = 0;
                 cmd.phase = DiscretePhase::VERIFYING;
             }
@@ -470,12 +525,17 @@ void MYACTUA::service_discrete_commands(const std::vector<bool>& comm_ok)
         }
 
         if (cmd.phase == DiscretePhase::VERIFYING) {
+            if (control_cycle_ < cmd.next_verify_cycle) {
+                continue;
+            }
             /* 验证成功 */
             if (is_discrete_command_satisfied(motor, cmd)) {
                 cmd.stable_success_cycles += 1;
                 if (cmd.stable_success_cycles >= kDiscreteSuccessStableCycles) {
                     cmd.phase = DiscretePhase::DONE;
                     queue.pop_front();
+                } else {
+                    cmd.next_verify_cycle = control_cycle_ + kDiscreteVerifyIntervalCycles;
                 }
             }
             /* 验证失败 */
@@ -499,17 +559,23 @@ void MYACTUA::apply_discrete_command_to_motor(int motor_index, const DiscreteCom
     MotorState& motor = _motors[motor_index];
     switch (cmd.type) {
         case CommandType::STOP:
-            motor.step = MotorStep::STOPPED;
-            motor.mode_switch_step = ModeSwitchStep::IDLE;
+            // Edge-triggered: avoid resetting mode-switch state on retries.
+            if (motor.desired.enabled) {
+                motor.desired.enabled = false;
+                motor.mode_switch_step = ModeSwitchStep::IDLE;
+            }
             break;
         case CommandType::RESTART:
-            motor.step = MotorStep::ENABLING;
-            motor.mode_switch_step = ModeSwitchStep::IDLE;
+            // Edge-triggered: first restart arms enable flow; later retries are no-op.
+            if (!motor.desired.enabled) {
+                motor.desired.enabled = true;
+                motor.mode_switch_step = ModeSwitchStep::IDLE;
+            }
             break;
         case CommandType::SET_MODE:
-            motor.target_mode = cmd.mode;
-            if (motor.step == MotorStep::RUNNING && motor.rx.op_mode != motor.target_mode) {
-                motor.step = MotorStep::MODE_SWITCHING;
+            if (motor.desired.mode != cmd.mode) {
+                motor.desired.mode  = cmd.mode;
+                motor.mode_switch_step = ModeSwitchStep::IDLE;
             }
             break;
         case CommandType::SET_SETPOINTS:
@@ -520,18 +586,18 @@ void MYACTUA::apply_discrete_command_to_motor(int motor_index, const DiscreteCom
 
 bool MYACTUA::is_discrete_command_satisfied(const MotorState& motor, const DiscreteCommand& cmd) const
 {
-    const uint16_t sw = motor.rx.status_word;
-    if (is_fault(sw) || motor.rx.error != 0) {
+    const auto& observed = motor.observed;
+    if (observed.fault) {
         return false;
     }
 
     switch (cmd.type) {
         case CommandType::STOP:
-            return (motor.step == MotorStep::STOPPED) && !is_operation_enabled(sw);
+            return !observed.operation_enabled;
         case CommandType::RESTART:
-            return (motor.step != MotorStep::STOPPED) && is_operation_enabled(sw);
+            return  observed.operation_enabled;
         case CommandType::SET_MODE:
-            return (motor.rx.op_mode == cmd.mode) && is_operation_enabled(sw);
+            return observed.mode == cmd.mode;
         case CommandType::SET_SETPOINTS:
             return true;
     }
@@ -551,8 +617,8 @@ void MYACTUA::update_status_snapshot()
         status_snapshot_[i].comm_ok = m.comm_ok;
         status_snapshot_[i].status_word = m.rx.status_word;
         status_snapshot_[i].error_code = m.rx.error;
-        status_snapshot_[i].op_mode = m.rx.op_mode;
-        status_snapshot_[i].target_mode = m.target_mode;
+        status_snapshot_[i].op_mode = (ControlMode)m.rx.op_mode;
+        status_snapshot_[i].target_mode = m.desired.mode;
     }
 }
 
@@ -653,9 +719,10 @@ void MYACTUA::print_motors_info(void){
     printf("\033[2J\033[H");
 
     printf("\033[1;36m============================ MOTOR REAL-TIME MONITOR ============================\033[0m\n");
-    printf("%-6s | %-10s | %-16s | %-22s | %-12s | %-12s | %-10s | %-14s | %-6s\n",
-        "ID", "OFFLINE_CNT", "STEP", "MODE_SWITCH_STEP", "POS(rad)", "VEL(rad/s)", "TORQUE", "TARGET(conv)", "MODE");
-    printf("--------------------------------------------------------------------------------------------------------------------------------------------\n");
+    printf("%-6s | %-10s | %-16s | %-22s | %-8s | %-8s | %-7s | %-8s | %-6s | %-6s | %-10s\n",
+        "ID", "OFFLINE_CNT", "STEP", "MODE_SWITCH_STEP", "RX_MODE", "TX_MODE", "DES_EN", "TX_CW",
+        "OP_EN", "SW_ON", "RDY_SW_ON");
+    printf("---------------------------------------------------------------------------------------------------------------------------------\n");
 
     for (const auto& m : _motors) {
         if (std::find(print_motor_ids_.begin(), print_motor_ids_.end(), m.slave_index) ==
@@ -666,17 +733,8 @@ void MYACTUA::print_motors_info(void){
         if (m.step == MotorStep::FAULT) color_code = "\033[31m";
         if (m.step == MotorStep::STOPPED) color_code = "\033[35m";
         if (m.step == MotorStep::MODE_SWITCHING) color_code = "\033[33m";
-        double current_target = 0.0;
-        if (m.rx.op_mode == ControlMode::CSP) {
-            current_target = raw_pos_to_rad(static_cast<double>(m.tx.target_pos));
-        } else if (m.rx.op_mode == ControlMode::CSV) {
-            current_target = raw_vel_to_rad_s(static_cast<double>(m.tx.target_vel));
-        } else if (m.rx.op_mode == ControlMode::CST) {
-            current_target = static_cast<double>(m.tx.target_torque);
-        }
-
-        const double pos_rad    = raw_pos_to_rad(static_cast<double>(m.rx.pos));
-        const double vel_rad_s  = raw_vel_to_rad_s(static_cast<double>(m.rx.vel));
+        char cw_hex[9] = {};
+        std::snprintf(cw_hex, sizeof(cw_hex), "0x%04X", static_cast<unsigned>(m.tx.control_word));
 
         const char* step_name = "UNKNOWN";
         switch (m.step) {
@@ -691,7 +749,9 @@ void MYACTUA::print_motors_info(void){
         const char* mode_switch_step_name = "N/A";
         switch (m.mode_switch_step) {
             case ModeSwitchStep::IDLE: mode_switch_step_name = "IDLE"; break;
-            case ModeSwitchStep::SET_MODE_CLEAR_DISABLE: mode_switch_step_name = "SET_MODE_CLEAR_DISABLE"; break;
+            case ModeSwitchStep::SET_MODE: mode_switch_step_name = "SET_MODE"; break;
+            case ModeSwitchStep::CLEAR: mode_switch_step_name = "CLEAR"; break;
+            case ModeSwitchStep::DISABLE: mode_switch_step_name = "DISABLE"; break;
             case ModeSwitchStep::ENABLE: mode_switch_step_name = "ENABLE"; break;
             case ModeSwitchStep::OPERATING: mode_switch_step_name = "OPERATING"; break;
             case ModeSwitchStep::DONE: mode_switch_step_name = "DONE"; break;
@@ -706,18 +766,29 @@ void MYACTUA::print_motors_info(void){
             default: break;
         }
 
-        printf("M %-4d | %-10u | %s%-16s\033[0m | %s%-22s\033[0m | %-12.4f | %-12.4f | %-10d | %-14.4f | %-6s\n",
+        const char* tx_mode_name = "UNKNOWN";
+        switch (m.tx.op_mode) {
+            case ControlMode::NONE: tx_mode_name = "NONE"; break;
+            case ControlMode::CSP: tx_mode_name = "CSP"; break;
+            case ControlMode::CSV: tx_mode_name = "CSV"; break;
+            case ControlMode::CST: tx_mode_name = "CST"; break;
+            default: break;
+        }
+
+        printf("M %-4d | %-10u | %s%-16s\033[0m | %s%-22s\033[0m | %-8s | %-8s | %-7s | %-8s | %-6s | %-6s | %-10s\n",
             m.slave_index,
             static_cast<unsigned int>(m.comm_offline_total_count),
             color_code,
             step_name,
             color_code,
             mode_switch_step_name,
-            pos_rad,
-            vel_rad_s,
-            m.rx.torque,
-            current_target,
-            mode_name);
+            mode_name,
+            tx_mode_name,
+            m.desired.enabled ? "Y" : "N",
+            cw_hex,
+            m.observed.operation_enabled ? "Y" : "N",
+            m.observed.switched_on ? "Y" : "N",
+            m.observed.ready_to_switch_on ? "Y" : "N");
     }
     printf("\033[1;36m=================================================================================\033[0m\n");
     

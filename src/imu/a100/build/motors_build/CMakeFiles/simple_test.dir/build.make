@@ -73,15 +73,15 @@ motors_build/CMakeFiles/simple_test.dir/examples/simple_test.cpp.o: motors_build
 motors_build/CMakeFiles/simple_test.dir/examples/simple_test.cpp.o: /home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp
 motors_build/CMakeFiles/simple_test.dir/examples/simple_test.cpp.o: motors_build/CMakeFiles/simple_test.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object motors_build/CMakeFiles/simple_test.dir/examples/simple_test.cpp.o"
-	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT motors_build/CMakeFiles/simple_test.dir/examples/simple_test.cpp.o -MF CMakeFiles/simple_test.dir/examples/simple_test.cpp.o.d -o CMakeFiles/simple_test.dir/examples/simple_test.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp
+	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT motors_build/CMakeFiles/simple_test.dir/examples/simple_test.cpp.o -MF CMakeFiles/simple_test.dir/examples/simple_test.cpp.o.d -o CMakeFiles/simple_test.dir/examples/simple_test.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp
 
 motors_build/CMakeFiles/simple_test.dir/examples/simple_test.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/simple_test.dir/examples/simple_test.cpp.i"
-	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp > CMakeFiles/simple_test.dir/examples/simple_test.cpp.i
+	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp > CMakeFiles/simple_test.dir/examples/simple_test.cpp.i
 
 motors_build/CMakeFiles/simple_test.dir/examples/simple_test.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/simple_test.dir/examples/simple_test.cpp.s"
-	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp -o CMakeFiles/simple_test.dir/examples/simple_test.cpp.s
+	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/motors/examples/simple_test.cpp -o CMakeFiles/simple_test.dir/examples/simple_test.cpp.s
 
 # Object files for target simple_test
 simple_test_OBJECTS = \

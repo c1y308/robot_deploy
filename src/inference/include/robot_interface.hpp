@@ -64,6 +64,10 @@ public:
     bool initial_and_start_imu();
     void deinit_imu();
 
+    // Discrete motor commands. slave_index < 0 means all motors.
+    bool stop_motors(int slave_index = -1);
+    bool restart_motors(int slave_index = -1);
+
 
     bool apply_action(const std::vector<double>& target_q_rad);
     bool reset_joints();
@@ -107,6 +111,8 @@ private:
 
     std::atomic<bool> motors_initialized_{false};
     std::atomic<bool> imu_initialized_{false};
+    // Gate apply_action: startup policy requires explicit restart after initial STOP.
+    std::atomic<bool> motion_enabled_{false};
 };
 
 }  // namespace inference

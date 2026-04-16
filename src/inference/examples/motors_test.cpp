@@ -32,12 +32,13 @@ int main() {
         return -1;
     }
 
-    /* restart */
-    // std::cout << "[MOTORS_TEST] 2/4 restart motors" << std::endl;
-    // robot.controller_->restart(-1);
-    // std::this_thread::sleep_for(std::chrono::seconds(2));
-
-
+    std::cout << "[MOTORS_TEST] 2/4 restart motors" << std::endl;
+    if (!robot.restart_motors(-1)) {
+        std::cerr << "[MOTORS_TEST] restart_motors failed." << std::endl;
+        robot.deinit_motors();
+        return -1;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     std::cout << "[MOTORS_TEST] 3/4 send zero command to motor 0" << std::endl;
     if (!robot.apply_action(std::vector<double>{314, 314})) {

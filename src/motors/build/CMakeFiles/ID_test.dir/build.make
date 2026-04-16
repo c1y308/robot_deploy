@@ -73,15 +73,15 @@ CMakeFiles/ID_test.dir/examples/ID_test.cpp.o: CMakeFiles/ID_test.dir/flags.make
 CMakeFiles/ID_test.dir/examples/ID_test.cpp.o: /home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp
 CMakeFiles/ID_test.dir/examples/ID_test.cpp.o: CMakeFiles/ID_test.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/ID_test.dir/examples/ID_test.cpp.o"
-	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/ID_test.dir/examples/ID_test.cpp.o -MF CMakeFiles/ID_test.dir/examples/ID_test.cpp.o.d -o CMakeFiles/ID_test.dir/examples/ID_test.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/ID_test.dir/examples/ID_test.cpp.o -MF CMakeFiles/ID_test.dir/examples/ID_test.cpp.o.d -o CMakeFiles/ID_test.dir/examples/ID_test.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp
 
 CMakeFiles/ID_test.dir/examples/ID_test.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/ID_test.dir/examples/ID_test.cpp.i"
-	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp > CMakeFiles/ID_test.dir/examples/ID_test.cpp.i
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp > CMakeFiles/ID_test.dir/examples/ID_test.cpp.i
 
 CMakeFiles/ID_test.dir/examples/ID_test.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/ID_test.dir/examples/ID_test.cpp.s"
-	/usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp -o CMakeFiles/ID_test.dir/examples/ID_test.cpp.s
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp -o CMakeFiles/ID_test.dir/examples/ID_test.cpp.s
 
 # Object files for target ID_test
 ID_test_OBJECTS = \

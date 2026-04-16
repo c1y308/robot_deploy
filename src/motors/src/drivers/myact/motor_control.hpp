@@ -30,38 +30,62 @@ enum class MotorStep {
 
 class MYACTUA {
 public:
+    struct DesiredState {
+        bool enabled;
+        ControlMode mode;
+        double setpoint;
+
+        DesiredState()
+            : enabled(false), mode(ControlMode::CSP), setpoint(0.0) {}
+    };
+
+    struct ObservedState {
+        bool fault;
+        bool operation_enabled;
+        bool switched_on;
+        bool ready_to_switch_on;
+        uint16_t status_word;
+        uint16_t error_code;
+        ControlMode mode;
+
+        ObservedState()
+            : fault(false), operation_enabled(false), switched_on(false),
+              ready_to_switch_on(false), status_word(0), error_code(0),
+              mode(ControlMode::CSP) {}
+    };
+
     struct MotorState{
         int slave_index;
-        ControlMode target_mode;
+        DesiredState desired;
+        ObservedState observed;
         MotorStep step;
         ModeSwitchStep mode_switch_step;
         TxPDO tx;
         RxPDO rx;
         bool comm_ok;
         uint32_t comm_offline_total_count;
-        double setpoint;
         bool print_info;
 
         MotorState(int index)
-        : slave_index(index), target_mode(ControlMode::NONE), step(MotorStep::IDLE), 
+        : slave_index(index), desired(), observed(), step(MotorStep::IDLE),
           mode_switch_step(ModeSwitchStep::IDLE), tx({}), rx({}), comm_ok(false),
-          comm_offline_total_count(0),
-          setpoint(0.0), print_info(false) {}
+          comm_offline_total_count(0), print_info(false) {}
     };
 
     MYACTUA(std::shared_ptr<EthercatAdapter> adapter, int num_motors);
 
     ~MYACTUA();
 
-    void update(const std::vector<double>& setvalues);
+    void send_command(const ControlCommand& cmd);   // 异步发送控制命令
+
     void set_mode(ControlMode mode,int slave_index);
     void stop_motor(int slave_index = -1);
     void restart(int slave_index = -1);
-    bool connect(const char* ifname);
 
+    bool connect(const char* ifname);
     void start();  // 启动实时线程
     void shutdown();  // 关闭实时线程
-    void send_command(const ControlCommand& cmd);   // 异步发送控制命令
+    void update(const std::vector<double>& setvalues);
 
     std::vector<MotorStatusSnapshot> get_status();  // 获取电机状态快照
     std::vector<double> get_joint_q_rad();          // 关节位置(rad)
@@ -96,6 +120,7 @@ private:
         DiscretePhase phase;
         uint64_t enqueue_cycle;
         uint64_t next_retry_cycle;
+        uint64_t next_verify_cycle;
         uint64_t deadline_cycle;
 
         int max_retries;
@@ -105,7 +130,7 @@ private:
 
         DiscreteCommand(CommandType t = CommandType::STOP, ControlMode m = ControlMode::NONE)
             : type(t), mode(m), phase(DiscretePhase::QUEUED),
-              enqueue_cycle(0), next_retry_cycle(0), deadline_cycle(0),
+              enqueue_cycle(0), next_retry_cycle(0), next_verify_cycle(0), deadline_cycle(0),
               max_retries(0), retry_count(0), stable_success_cycles(0), fail_reason(0) {}
     };
 
@@ -137,6 +162,7 @@ private:
     void service_discrete_commands(const std::vector<bool>& comm_ok);
     void apply_discrete_command_to_motor(int motor_index, const DiscreteCommand& cmd);
     bool is_discrete_command_satisfied(const MotorState& motor, const DiscreteCommand& cmd) const;
+    void refresh_observed_state(MotorState& motor);
 
     void process_single_motor(MotorState& motor, double setvalue);
 

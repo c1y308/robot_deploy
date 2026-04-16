@@ -73,15 +73,15 @@ motors_build/CMakeFiles/ID_test.dir/examples/ID_test.cpp.o: motors_build/CMakeFi
 motors_build/CMakeFiles/ID_test.dir/examples/ID_test.cpp.o: /home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp
 motors_build/CMakeFiles/ID_test.dir/examples/ID_test.cpp.o: motors_build/CMakeFiles/ID_test.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object motors_build/CMakeFiles/ID_test.dir/examples/ID_test.cpp.o"
-	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT motors_build/CMakeFiles/ID_test.dir/examples/ID_test.cpp.o -MF CMakeFiles/ID_test.dir/examples/ID_test.cpp.o.d -o CMakeFiles/ID_test.dir/examples/ID_test.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp
+	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT motors_build/CMakeFiles/ID_test.dir/examples/ID_test.cpp.o -MF CMakeFiles/ID_test.dir/examples/ID_test.cpp.o.d -o CMakeFiles/ID_test.dir/examples/ID_test.cpp.o -c /home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp
 
 motors_build/CMakeFiles/ID_test.dir/examples/ID_test.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/ID_test.dir/examples/ID_test.cpp.i"
-	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp > CMakeFiles/ID_test.dir/examples/ID_test.cpp.i
+	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp > CMakeFiles/ID_test.dir/examples/ID_test.cpp.i
 
 motors_build/CMakeFiles/ID_test.dir/examples/ID_test.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/ID_test.dir/examples/ID_test.cpp.s"
-	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/aarch64-linux-gnu-g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp -o CMakeFiles/ID_test.dir/examples/ID_test.cpp.s
+	cd /home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/cat/Myactua_Ethercat/src/motors/examples/ID_test.cpp -o CMakeFiles/ID_test.dir/examples/ID_test.cpp.s
 
 # Object files for target ID_test
 ID_test_OBJECTS = \
