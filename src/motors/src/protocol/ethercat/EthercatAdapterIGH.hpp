@@ -14,7 +14,7 @@ namespace myactua {
  * 1: 无转发站版本（仅电机从站）
  */
 #ifndef MYACTUA_ECAT_NO_FORWARDERS
-#define MYACTUA_ECAT_NO_FORWARDERS 0
+#define MYACTUA_ECAT_NO_FORWARDERS 1
 #endif
 
 /*
@@ -26,7 +26,7 @@ namespace myactua {
  */
 #if MYACTUA_ECAT_NO_FORWARDERS
 inline constexpr std::array<uint16_t, 12> kSlavePositions = {
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
+    0, 1
 };
 #else
 inline constexpr std::array<uint16_t, 12> kSlavePositions = {

@@ -185,10 +185,10 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
         switch (motor.target_mode) 
         {
             case ControlMode::CSV:  // rpm
-                motor.tx.target_vel = static_cast<int32_t>((setvalue * 131072.0) / 60.0);
+                motor.tx.target_vel = static_cast<int32_t>(setvalue / kRawVelToRpm);
                 break;
             case ControlMode::CSP:  // setvalue: deg, 1 rev = 131072 plus
-                motor.tx.target_pos = static_cast<int32_t>(setvalue * (131072.0 / 360.0));
+                motor.tx.target_pos = static_cast<int32_t>((setvalue / kRadToDeg) / kRawPosToRad);
                 break;
             case ControlMode::CST:  // 电流百分比
                 motor.tx.target_torque = static_cast<int16_t>(setvalue);

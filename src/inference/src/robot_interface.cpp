@@ -121,7 +121,7 @@ bool RobotInterface::initial_and_start_motors() {
 
     /* 设置电机控制模式 */
     for (int i = 0; i < config_.num_motors; ++i) {
-        controller_->set_mode(myactua::ControlMode::CSV, i);
+        controller_->set_mode(myactua::ControlMode::CSP, i);
     }
 
     /* 根据配置决定是否打印电机信息 */
@@ -255,12 +255,12 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_rad) {
     std::vector<double> target_deg(config_.num_motors, 0.0);
     for (int i = 0; i < config_.num_motors; ++i) {
         double q = target_q_rad[i];
-        if (config_.joint_min_rad.size() == static_cast<size_t>(config_.num_motors)) {
-            q = std::max(q, config_.joint_min_rad[i]);
-        }
-        if (config_.joint_max_rad.size() == static_cast<size_t>(config_.num_motors)) {
-            q = std::min(q, config_.joint_max_rad[i]);
-        }
+        // if (config_.joint_min_rad.size() == static_cast<size_t>(config_.num_motors)) {
+        //     q = std::max(q, config_.joint_min_rad[i]);
+        // }
+        // if (config_.joint_max_rad.size() == static_cast<size_t>(config_.num_motors)) {
+        //     q = std::min(q, config_.joint_max_rad[i]);
+        // }
         target_deg[i] = myactua::MYACTUA::rad_to_deg(q);
     }
 
