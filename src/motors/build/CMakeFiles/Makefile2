@@ -67,6 +67,7 @@ all: CMakeFiles/MYACTUA_EtherCat.dir/all
 all: CMakeFiles/simple_test.dir/all
 all: CMakeFiles/debug_tool.dir/all
 all: CMakeFiles/ID_test.dir/all
+all: CMakeFiles/stop_read_status.dir/all
 .PHONY : all
 
 # The main recursive "preinstall" target.
@@ -78,6 +79,7 @@ clean: CMakeFiles/MYACTUA_EtherCat.dir/clean
 clean: CMakeFiles/simple_test.dir/clean
 clean: CMakeFiles/debug_tool.dir/clean
 clean: CMakeFiles/ID_test.dir/clean
+clean: CMakeFiles/stop_read_status.dir/clean
 .PHONY : clean
 
 #=============================================================================
@@ -183,6 +185,32 @@ ID_test: CMakeFiles/ID_test.dir/rule
 CMakeFiles/ID_test.dir/clean:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ID_test.dir/build.make CMakeFiles/ID_test.dir/clean
 .PHONY : CMakeFiles/ID_test.dir/clean
+
+#=============================================================================
+# Target rules for target CMakeFiles/stop_read_status.dir
+
+# All Build rule for target.
+CMakeFiles/stop_read_status.dir/all: CMakeFiles/MYACTUA_EtherCat.dir/all
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/stop_read_status.dir/build.make CMakeFiles/stop_read_status.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/stop_read_status.dir/build.make CMakeFiles/stop_read_status.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles --progress-num=10,11 "Built target stop_read_status"
+.PHONY : CMakeFiles/stop_read_status.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/stop_read_status.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles 5
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/stop_read_status.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles 0
+.PHONY : CMakeFiles/stop_read_status.dir/rule
+
+# Convenience name for target.
+stop_read_status: CMakeFiles/stop_read_status.dir/rule
+.PHONY : stop_read_status
+
+# clean rule for target.
+CMakeFiles/stop_read_status.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/stop_read_status.dir/build.make CMakeFiles/stop_read_status.dir/clean
+.PHONY : CMakeFiles/stop_read_status.dir/clean
 
 #=============================================================================
 # Special targets to cleanup operation of make.

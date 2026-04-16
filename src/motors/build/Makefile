@@ -168,6 +168,19 @@ ID_test/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ID_test.dir/build.make CMakeFiles/ID_test.dir/build
 .PHONY : ID_test/fast
 
+#=============================================================================
+# Target rules for targets named stop_read_status
+
+# Build rule for target.
+stop_read_status: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 stop_read_status
+.PHONY : stop_read_status
+
+# fast build rule for target.
+stop_read_status/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/stop_read_status.dir/build.make CMakeFiles/stop_read_status.dir/build
+.PHONY : stop_read_status/fast
+
 examples/ID_test.o: examples/ID_test.cpp.o
 .PHONY : examples/ID_test.o
 
@@ -240,6 +253,30 @@ examples/simple_test.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/simple_test.dir/build.make CMakeFiles/simple_test.dir/examples/simple_test.cpp.s
 .PHONY : examples/simple_test.cpp.s
 
+examples/stop_read_status.o: examples/stop_read_status.cpp.o
+.PHONY : examples/stop_read_status.o
+
+# target to build an object file
+examples/stop_read_status.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/stop_read_status.dir/build.make CMakeFiles/stop_read_status.dir/examples/stop_read_status.cpp.o
+.PHONY : examples/stop_read_status.cpp.o
+
+examples/stop_read_status.i: examples/stop_read_status.cpp.i
+.PHONY : examples/stop_read_status.i
+
+# target to preprocess a source file
+examples/stop_read_status.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/stop_read_status.dir/build.make CMakeFiles/stop_read_status.dir/examples/stop_read_status.cpp.i
+.PHONY : examples/stop_read_status.cpp.i
+
+examples/stop_read_status.s: examples/stop_read_status.cpp.s
+.PHONY : examples/stop_read_status.s
+
+# target to generate assembly for a file
+examples/stop_read_status.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/stop_read_status.dir/build.make CMakeFiles/stop_read_status.dir/examples/stop_read_status.cpp.s
+.PHONY : examples/stop_read_status.cpp.s
+
 src/drivers/myact/motor_control.o: src/drivers/myact/motor_control.cpp.o
 .PHONY : src/drivers/myact/motor_control.o
 
@@ -300,6 +337,7 @@ help:
 	@echo "... MYACTUA_EtherCat"
 	@echo "... debug_tool"
 	@echo "... simple_test"
+	@echo "... stop_read_status"
 	@echo "... examples/ID_test.o"
 	@echo "... examples/ID_test.i"
 	@echo "... examples/ID_test.s"
@@ -309,6 +347,9 @@ help:
 	@echo "... examples/simple_test.o"
 	@echo "... examples/simple_test.i"
 	@echo "... examples/simple_test.s"
+	@echo "... examples/stop_read_status.o"
+	@echo "... examples/stop_read_status.i"
+	@echo "... examples/stop_read_status.s"
 	@echo "... src/drivers/myact/motor_control.o"
 	@echo "... src/drivers/myact/motor_control.i"
 	@echo "... src/drivers/myact/motor_control.s"

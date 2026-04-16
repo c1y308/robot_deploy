@@ -47,4 +47,5 @@ set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/simple_test.dir/DependInfo.cmake"
   "CMakeFiles/debug_tool.dir/DependInfo.cmake"
   "CMakeFiles/ID_test.dir/DependInfo.cmake"
+  "CMakeFiles/stop_read_status.dir/DependInfo.cmake"
   )
