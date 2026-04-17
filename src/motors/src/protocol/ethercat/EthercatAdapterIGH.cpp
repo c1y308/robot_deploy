@@ -1,4 +1,6 @@
 #include "EthercatAdapterIGH.hpp"
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <cstring>
 #include <unistd.h>
@@ -11,6 +13,54 @@
 #define TIMESPEC2NS(T) ((uint64_t) (T).tv_sec * NSEC_PER_SEC + (T).tv_nsec)
 
 namespace myactua {
+
+namespace {
+
+bool parse_diag_enabled_from_env(bool default_value)
+{
+    const char* env = std::getenv("MYACTUA_ECAT_DIAG");
+    if (!env) {
+        return default_value;
+    }
+    if (std::strcmp(env, "0") == 0 ||
+        std::strcmp(env, "false") == 0 ||
+        std::strcmp(env, "FALSE") == 0 ||
+        std::strcmp(env, "off") == 0 ||
+        std::strcmp(env, "OFF") == 0) {
+        return false;
+    }
+    return true;
+}
+
+uint64_t parse_diag_interval_from_env(uint64_t default_value)
+{
+    const char* env = std::getenv("MYACTUA_ECAT_DIAG_INTERVAL");
+    if (!env) {
+        return default_value;
+    }
+    char* end = nullptr;
+    const unsigned long long parsed = std::strtoull(env, &end, 10);
+    if (end == env || parsed == 0) {
+        return default_value;
+    }
+    return static_cast<uint64_t>(parsed);
+}
+
+const char* wc_state_to_string(ec_wc_state_t state)
+{
+    switch (state) {
+        case EC_WC_ZERO:
+            return "ZERO";
+        case EC_WC_INCOMPLETE:
+            return "INCOMPLETE";
+        case EC_WC_COMPLETE:
+            return "COMPLETE";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+} // namespace
 
 struct timespec timespec_add(struct timespec time1, struct timespec time2)
 {
@@ -66,6 +116,16 @@ EthercatAdapterIGH::EthercatAdapterIGH() {
     slave_offsets.resize(kNumSlaves);
     for (std::size_t i = 0; i < kNumSlaves; ++i) {
         slave_configured[i].store(false, std::memory_order_relaxed);
+        diag_last_send_cw[i].store(0, std::memory_order_relaxed);
+        diag_send_counter[i].store(0, std::memory_order_relaxed);
+        tx_shadow[i] = {};
+        tx_shadow[i].control_word = CMD_SHUTDOWN;
+        tx_shadow[i].target_pos = 0;
+        tx_shadow[i].target_vel = 0;
+        tx_shadow[i].target_torque = 0;
+        tx_shadow[i].max_torque = 0;
+        tx_shadow[i].op_mode = ControlMode::NONE;
+        tx_shadow[i].reserved = 0;
     }
     is_initialized = false;
     keep_running = false;
@@ -163,6 +223,12 @@ bool EthercatAdapterIGH::init(const char* ifname)
         return false;
     }
 
+    diag_enabled = parse_diag_enabled_from_env(diag_enabled);
+    diag_interval_cycles = parse_diag_interval_from_env(diag_interval_cycles);
+    std::cout << "[ECAT_DIAG] " << (diag_enabled ? "enabled" : "disabled")
+              << ", interval_cycles=" << diag_interval_cycles
+              << " (env: MYACTUA_ECAT_DIAG / MYACTUA_ECAT_DIAG_INTERVAL)" << std::endl;
+
     is_initialized = true;
     keep_running = true;
     rt_thread = std::thread(&EthercatAdapterIGH::rt_loop, this);
@@ -182,6 +248,16 @@ void EthercatAdapterIGH::rt_loop()
     const struct timespec cycle_time = {0, 1000000}; // 1ms = 1e6 ns
     while (keep_running)
     {
+        const uint64_t cycle = diag_cycle_counter.fetch_add(1, std::memory_order_relaxed) + 1;
+        const bool sample_diag = diag_enabled &&
+                                 (diag_interval_cycles > 0) &&
+                                 (cycle % diag_interval_cycles == 0);
+        std::array<uint16_t, kNumSlaves> cw_after_process = {};
+        std::array<uint16_t, kNumSlaves> cw_pre_queue = {};
+        std::array<uint16_t, kNumSlaves> sw_snapshot = {};
+        std::array<uint16_t, kNumSlaves> err_snapshot = {};
+        std::array<int8_t, kNumSlaves> op_snapshot = {};
+
         wakeup_time = timespec_add(wakeup_time, cycle_time); // 1ms周期
         clock_nanosleep(CLOCK_TO_USE, TIMER_ABSTIME, &wakeup_time, nullptr); // 精确睡眠到下一个周期,TIMER_ABSTIME(绝对时间)
         ecrt_master_application_time(master, TIMESPEC2NS(wakeup_time)); // 更新主站应用时间（用于从站同步插补）
@@ -191,6 +267,26 @@ void EthercatAdapterIGH::rt_loop()
         
         ecrt_master_receive(master); // 接收从站 PDO 数据
         ecrt_domain_process(domain1); // 处理域数据
+
+        if (sample_diag && domain1_pd) {
+            for (std::size_t i = 0; i < kNumSlaves; ++i) {
+                const SlaveOffsets& off = slave_offsets[i];
+                cw_after_process[i] = EC_READ_U16(domain1_pd + off.off_ctrl_word);
+                sw_snapshot[i] = EC_READ_U16(domain1_pd + off.off_status_word);
+                err_snapshot[i] = EC_READ_U16(domain1_pd + off.off_error);
+                op_snapshot[i] = EC_READ_S8(domain1_pd + off.off_mode_disp);
+            }
+        }
+
+        // 关键修复: process 后将应用线程写入的 shadow 覆盖到域内存
+        std::array<TxPDO, kNumSlaves> tx_snapshot = {};
+        {
+            std::lock_guard<std::mutex> lock(tx_shadow_mutex);
+            tx_snapshot = tx_shadow;
+        }
+        for (std::size_t i = 0; i < kNumSlaves; ++i) {
+            write_txpdo_to_domain(i, tx_snapshot[i]);
+        }
 
         for (std::size_t i = 0; i < kNumSlaves; ++i) {
             ecrt_slave_config_state(sc[i], &sc_state[i]);
@@ -208,23 +304,72 @@ void EthercatAdapterIGH::rt_loop()
         }
         ecrt_master_sync_slave_clocks(master); // 同步从站时钟
 
+        if (sample_diag && domain1_pd) {
+            for (std::size_t i = 0; i < kNumSlaves; ++i) {
+                const SlaveOffsets& off = slave_offsets[i];
+                cw_pre_queue[i] = EC_READ_U16(domain1_pd + off.off_ctrl_word);
+            }
+
+            if (ecrt_domain_state(domain1, &domain1_state) < 0) {
+                std::printf("[ECAT_DIAG] cycle=%llu ecrt_domain_state failed\n",
+                            static_cast<unsigned long long>(cycle));
+            } else {
+                std::printf("[ECAT_DIAG] cycle=%llu wc=%u wc_state=%s\n",
+                            static_cast<unsigned long long>(cycle),
+                            domain1_state.working_counter,
+                            wc_state_to_string(domain1_state.wc_state));
+            }
+
+            for (std::size_t i = 0; i < kNumSlaves; ++i) {
+                const uint16_t app_cw = diag_last_send_cw[i].load(std::memory_order_relaxed);
+                const uint32_t app_send_cnt = diag_send_counter[i].load(std::memory_order_relaxed);
+                std::printf(
+                    "  M%zu send_cw=0x%04X send_cnt=%u pd_after_process=0x%04X pd_pre_queue=0x%04X"
+                    " status=0x%04X err=0x%04X op=%d cfg=%d\n",
+                    i,
+                    static_cast<unsigned>(app_cw),
+                    static_cast<unsigned>(app_send_cnt),
+                    static_cast<unsigned>(cw_after_process[i]),
+                    static_cast<unsigned>(cw_pre_queue[i]),
+                    static_cast<unsigned>(sw_snapshot[i]),
+                    static_cast<unsigned>(err_snapshot[i]),
+                    static_cast<int>(op_snapshot[i]),
+                    slave_configured[i].load(std::memory_order_relaxed) ? 1 : 0);
+            }
+            std::fflush(stdout);
+        }
+
         ecrt_domain_queue(domain1); // 队列域数据准备发送
         ecrt_master_send(master); // 发送 PDO 数据到从站
     }
 }
 
+void EthercatAdapterIGH::write_txpdo_to_domain(std::size_t index, const TxPDO& pdo)
+{
+    if (!domain1_pd || index >= slave_offsets.size()) {
+        return;
+    }
+    SlaveOffsets& off = slave_offsets[index];
+    EC_WRITE_U16(domain1_pd + off.off_ctrl_word, pdo.control_word);
+    EC_WRITE_S32(domain1_pd + off.off_target_pos, pdo.target_pos);
+    EC_WRITE_S32(domain1_pd + off.off_target_vel, pdo.target_vel);
+    EC_WRITE_S16(domain1_pd + off.off_target_torque, pdo.target_torque);
+    EC_WRITE_U16(domain1_pd + off.off_max_torque, pdo.max_torque);
+    EC_WRITE_S8(domain1_pd + off.off_mode_of_op, pdo.op_mode);
+}
+
 void EthercatAdapterIGH::send(int index, const TxPDO& pdo)
 {
     if(index < 0 || index >= slave_offsets.size()) return;
-    if (!domain1_pd) return;
 
-    SlaveOffsets& off = slave_offsets[index];
-    EC_WRITE_U16(domain1_pd + off.off_ctrl_word,    pdo.control_word);
-    EC_WRITE_S32(domain1_pd + off.off_target_pos,   pdo.target_pos);
-    EC_WRITE_S32(domain1_pd + off.off_target_vel,   pdo.target_vel);
-    EC_WRITE_S16(domain1_pd + off.off_target_torque,pdo.target_torque);
-    EC_WRITE_U16(domain1_pd + off.off_max_torque,   pdo.max_torque);
-    EC_WRITE_S8 (domain1_pd + off.off_mode_of_op,   pdo.op_mode);
+    if (diag_enabled) {
+        diag_last_send_cw[index].store(pdo.control_word, std::memory_order_relaxed);
+        diag_send_counter[index].fetch_add(1, std::memory_order_relaxed);
+    }
+    {
+        std::lock_guard<std::mutex> lock(tx_shadow_mutex);
+        tx_shadow[index] = pdo;
+    }
 }
 
 RxPDO EthercatAdapterIGH::receive(int index)
