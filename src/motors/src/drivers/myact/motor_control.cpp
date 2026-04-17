@@ -17,20 +17,6 @@ constexpr double kRawPosToRad = (2.0 * kPi) / kPosPlusPerRev;
 constexpr double kRawVelToRpm = 60.0 / kPosPlusPerRev;
 constexpr double kRpmToRadPerSec = (2.0 * kPi) / 60.0;
 constexpr double kRadToDeg = 180.0 / kPi;
-
-
-constexpr uint64_t kDiscreteRetryCycles = 100;       // 重试间隔：100 ms @ 1kHz
-constexpr uint64_t kDiscreteVerifyIntervalCycles = 100; // 验证间隔：100 ms @ 1kHz
-constexpr int kDiscreteSuccessStableCycles = 1;     // 连续 1 个周期满足判据视为成功
-constexpr int kDiscreteMaxRetries = 100;            // 最多重试 100 次
-constexpr uint64_t kDiscreteTimeoutCycles = 5000;   // 命令超时：5 s @ 1kHz
-
-enum DiscreteFailReason {
-    kDiscreteFailNone = 0,
-    kDiscreteFailFault = 1,
-    kDiscreteFailTimeout = 2,
-    kDiscreteFailMaxRetry = 3,
-};
 }
 
 static struct timespec timespec_add(struct timespec time1, struct timespec time2)
@@ -106,6 +92,7 @@ void MYACTUA::process_commands()
     ControlCommand cmd;
     while (cmd_queue_.pop(cmd, 0)) {
         switch (cmd.type) {
+            /* 设置 DesiredState 中的目标值*/
             case CommandType::SET_SETPOINTS:
                 for (size_t i = 0; i < cmd.values.size() && i < _motors.size(); i++) {
                     _motors[i].desired.setpoint = cmd.values[i];
@@ -127,7 +114,7 @@ void MYACTUA::process_commands()
     }
 }
 
-
+/* 如果为离散命令需要确保完整执行； */
 void MYACTUA::enqueue_discrete_command(const ControlCommand& cmd)
 {
     /* 就地定义、使用，拉满封装性 */
@@ -136,19 +123,20 @@ void MYACTUA::enqueue_discrete_command(const ControlCommand& cmd)
             return;
         }
         DiscreteCommand pending(cmd.type, cmd.mode);
-        pending.phase = DiscretePhase::QUEUED;
+        pending.phase = DiscretePhase::QUEUED;  // 初始状态为 QUEUED(入队列)
 
-        pending.enqueue_cycle = control_cycle_;
-        pending.next_retry_cycle = control_cycle_;
-        pending.next_verify_cycle = control_cycle_;
-        pending.deadline_cycle = control_cycle_ + kDiscreteTimeoutCycles;
+        pending.enqueue_tick      = discrete_cmd_tick_;
+        pending.next_retry_tick   = discrete_cmd_tick_;  // 首次 apply 不等待
+        pending.next_verify_tick  = discrete_cmd_tick_;  // 占位值 
+        pending.deadline_tick     = discrete_cmd_tick_ + kDiscreteTimeoutTicks;
+
+        pending.cur_retry = 0;
         pending.max_retries = kDiscreteMaxRetries;
-        pending.retry_count = 0;
         pending.stable_success_cycles = 0;
         pending.fail_reason = kDiscreteFailNone;
+
         discrete_cmd_queues_[idx].push_back(pending);
     };
-
 
     /* 小于 0 表示对所有电机执行命令 */
     if (cmd.slave_index < 0) {
@@ -164,7 +152,7 @@ void MYACTUA::enqueue_discrete_command(const ControlCommand& cmd)
 void MYACTUA::update(const std::vector<double> &setvalues)
 {
     static int print_count = 0;
-    ++control_cycle_;
+    ++discrete_cmd_tick_;  // 离散命令时间戳增加
     std::vector<bool> comm_ok(_motors.size(), false);
 
     /* 接受电机回传数据，并记录当前周期通信状态 */
@@ -183,6 +171,7 @@ void MYACTUA::update(const std::vector<double> &setvalues)
         }
     }
 
+    /* 处理离散命令 */
     service_discrete_commands(comm_ok);
 
     /* 设置电机目标值。通信异常时保持当前控制状态，不覆写 step。 */
@@ -195,6 +184,7 @@ void MYACTUA::update(const std::vector<double> &setvalues)
         process_single_motor(_motors[i], val);
     }
 
+    /* 最终发送 */
     for (size_t i = 0; i < _motors.size(); i++)
     {
         if (!comm_ok[i]) continue;
@@ -221,6 +211,158 @@ void MYACTUA::refresh_observed_state(MotorState& motor)
     motor.observed.operation_enabled = is_operation_enabled(sw);
     motor.observed.fault = is_fault(sw) || (motor.rx.error != 0);
 }
+
+
+void MYACTUA::service_discrete_commands(const std::vector<bool>& comm_ok)
+{
+    for (size_t i = 0; i < _motors.size(); ++i) {
+        auto& queue = discrete_cmd_queues_[i];
+        /* 无命令则跳过 */
+        if (queue.empty()) {
+            continue;
+        }
+        /* 获取命令和对应的电机 */
+        auto& cmd   = queue.front();
+        auto& motor = _motors[i];
+
+        /* 当前命令已完成 */
+        if (cmd.phase == DiscretePhase::DONE) {
+            queue.pop_front();
+            continue;
+        }
+        if (cmd.phase == DiscretePhase::FAILED) {
+            std::cerr << "[MYACTUA] discrete command failed on motor " << i
+                      << ", type=" << static_cast<int>(cmd.type)
+                      << ", reason=" << cmd.fail_reason
+                      << ", retry=" << cmd.cur_retry << "\n";
+            queue.pop_front();
+            continue;
+        }
+
+        /* 超时 */
+        if (discrete_cmd_tick_ > cmd.deadline_tick) {
+            cmd.phase = DiscretePhase::FAILED;
+            cmd.fail_reason = kDiscreteFailTimeout;
+            continue;
+        }
+
+        /* 当前掉线，保持等待，不推进命令阶段 */
+        if (!comm_ok[i]) {
+            cmd.stable_success_cycles = 0;
+            continue;
+        }
+
+        /* 驱动明确报错，命令直接失败 */
+        if (motor.observed.fault) {
+            cmd.phase = DiscretePhase::FAILED;
+            cmd.fail_reason = kDiscreteFailFault;
+            continue;
+        }
+
+        if (cmd.phase == DiscretePhase::QUEUED) {
+            cmd.phase = DiscretePhase::APPLY_PENDING;
+        }
+
+        if (cmd.phase == DiscretePhase::APPLY_PENDING) {
+            if (cmd.cur_retry >= cmd.max_retries) {
+                cmd.phase = DiscretePhase::FAILED;
+                cmd.fail_reason = kDiscreteFailMaxRetry;
+                continue;
+            }
+            if (discrete_cmd_tick_ >= cmd.next_retry_tick) {
+                apply_discrete_command_to_motor(static_cast<int>(i), cmd);
+                cmd.cur_retry += 1;
+                cmd.next_retry_tick  = discrete_cmd_tick_ + kDiscreteRetryTicks;
+                cmd.next_verify_tick = discrete_cmd_tick_ + kDiscreteVerifyIntervalTicks;
+                cmd.stable_success_cycles = 0;
+                cmd.phase = DiscretePhase::VERIFYING;
+            }
+            continue;
+        }
+
+        if (cmd.phase == DiscretePhase::VERIFYING) {
+            /* 没到验证时间 */
+            if (discrete_cmd_tick_ < cmd.next_verify_tick) {
+                continue;
+            }
+
+            /* 验证成功 */
+            if (is_discrete_command_satisfied(motor, cmd)) {
+                cmd.stable_success_cycles += 1;
+                if (cmd.stable_success_cycles >= kDiscreteSuccessStableTicks) {
+                    cmd.phase = DiscretePhase::DONE;
+                    queue.pop_front();
+                } else {
+                    cmd.next_verify_tick = discrete_cmd_tick_ + kDiscreteVerifyIntervalTicks;
+                }
+            }
+            /* 验证失败 */
+            else {
+                cmd.stable_success_cycles = 0;
+                /* 重发周期到了，可以进行重发 */
+                if (discrete_cmd_tick_ >= cmd.next_retry_tick) {
+                    cmd.phase = DiscretePhase::APPLY_PENDING;
+                }
+            }
+        }
+    }
+}
+
+/* 设置 DesiredState 结构体中的数据 */
+void MYACTUA::apply_discrete_command_to_motor(int motor_index, const DiscreteCommand& cmd)
+{
+    if (motor_index < 0 || motor_index >= static_cast<int>(_motors.size())) {
+        return;
+    }
+
+    MotorState& motor = _motors[motor_index];
+    switch (cmd.type) {
+        case CommandType::STOP:
+            // Edge-triggered: avoid resetting mode-switch state on retries.
+            if (motor.desired.enabled) {
+                motor.desired.enabled = false;
+                motor.mode_switch_step = ModeSwitchStep::IDLE;
+            }
+            break;
+        case CommandType::RESTART:
+            // Edge-triggered: first restart arms enable flow; later retries are no-op.
+            if (!motor.desired.enabled) {
+                motor.desired.enabled = true;
+                motor.mode_switch_step = ModeSwitchStep::IDLE;
+            }
+            break;
+        case CommandType::SET_MODE:
+            if (motor.desired.mode != cmd.mode) {
+                motor.desired.mode  = cmd.mode;
+                motor.mode_switch_step = ModeSwitchStep::IDLE;
+            }
+            break;
+        case CommandType::SET_SETPOINTS:
+            break;
+    }
+}
+
+
+bool MYACTUA::is_discrete_command_satisfied(const MotorState& motor, const DiscreteCommand& cmd) const
+{
+    const auto& observed = motor.observed;
+    if (observed.fault) {
+        return false;
+    }
+
+    switch (cmd.type) {
+        case CommandType::STOP:
+            return !observed.operation_enabled;
+        case CommandType::RESTART:
+            return  observed.operation_enabled;
+        case CommandType::SET_MODE:
+            return observed.mode == cmd.mode;
+        case CommandType::SET_SETPOINTS:
+            return true;
+    }
+    return false;
+}
+
 
 
 void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
@@ -264,7 +406,7 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
     }
 
     const bool mode_switch_active =
-        (motor.mode_switch_step != ModeSwitchStep::IDLE) || (observed.mode != desired.mode);
+         (observed.mode != desired.mode) || (motor.mode_switch_step != ModeSwitchStep::IDLE);
     if (mode_switch_active) {
         motor.step = MotorStep::MODE_SWITCHING;
         handle_mode_switching(motor);
@@ -414,180 +556,6 @@ ControlWordCommand MYACTUA::get_next_control_word(uint16_t status_word)
 }
 
 
-void MYACTUA::start()
-{
-    if (running_) return;
-    
-    running_ = true;
-    rt_thread_ = std::thread(&MYACTUA::rt_thread_func, this);
-    
-    struct sched_param param;
-    param.sched_priority = 80;
-    pthread_setschedparam(rt_thread_.native_handle(), SCHED_FIFO, &param);
-    
-    std::cout << "[MYACTUA] 实时控制线程已启动" << std::endl;
-}
-
-
-void MYACTUA::shutdown()
-{
-    if (!running_) return;
-    
-    running_ = false;
-    if (rt_thread_.joinable()) {
-        rt_thread_.join();
-    }
-    
-    std::cout << "[MYACTUA] 实时控制线程已停止" << std::endl;
-}
-
-
-void MYACTUA::service_discrete_commands(const std::vector<bool>& comm_ok)
-{
-    for (size_t i = 0; i < _motors.size(); ++i) {
-        auto& queue = discrete_cmd_queues_[i];
-        /* 无命令则跳过 */
-        if (queue.empty()) {
-            continue;
-        }
-
-        auto& cmd = queue.front();
-        auto& motor = _motors[i];
-
-        /* 当前命令已完成 */
-        if (cmd.phase == DiscretePhase::DONE) {
-            queue.pop_front();
-            continue;
-        }
-        if (cmd.phase == DiscretePhase::FAILED) {
-            std::cerr << "[MYACTUA] discrete command failed on motor " << i
-                      << ", type=" << static_cast<int>(cmd.type)
-                      << ", reason=" << cmd.fail_reason
-                      << ", retry=" << cmd.retry_count << "\n";
-            queue.pop_front();
-            continue;
-        }
-
-        if (control_cycle_ > cmd.deadline_cycle) {
-            cmd.phase = DiscretePhase::FAILED;
-            cmd.fail_reason = kDiscreteFailTimeout;
-            continue;
-        }
-
-        /* 当前掉线，保持等待，不推进命令阶段 */
-        if (!comm_ok[i]) {
-            cmd.stable_success_cycles = 0;
-            continue;
-        }
-
-        /* 驱动明确报错，命令直接失败 */
-        if (motor.observed.fault) {
-            cmd.phase = DiscretePhase::FAILED;
-            cmd.fail_reason = kDiscreteFailFault;
-            continue;
-        }
-
-        if (cmd.phase == DiscretePhase::QUEUED) {
-            cmd.phase = DiscretePhase::APPLY_PENDING;
-        }
-
-        if (cmd.phase == DiscretePhase::APPLY_PENDING) {
-            if (cmd.retry_count >= cmd.max_retries) {
-                cmd.phase = DiscretePhase::FAILED;
-                cmd.fail_reason = kDiscreteFailMaxRetry;
-                continue;
-            }
-            if (control_cycle_ >= cmd.next_retry_cycle) {
-                apply_discrete_command_to_motor(static_cast<int>(i), cmd);
-                cmd.retry_count += 1;
-                cmd.next_retry_cycle = control_cycle_ + kDiscreteRetryCycles;
-                cmd.next_verify_cycle = control_cycle_ + kDiscreteVerifyIntervalCycles;
-                cmd.stable_success_cycles = 0;
-                cmd.phase = DiscretePhase::VERIFYING;
-            }
-            continue;
-        }
-
-        if (cmd.phase == DiscretePhase::VERIFYING) {
-            if (control_cycle_ < cmd.next_verify_cycle) {
-                continue;
-            }
-            /* 验证成功 */
-            if (is_discrete_command_satisfied(motor, cmd)) {
-                cmd.stable_success_cycles += 1;
-                if (cmd.stable_success_cycles >= kDiscreteSuccessStableCycles) {
-                    cmd.phase = DiscretePhase::DONE;
-                    queue.pop_front();
-                } else {
-                    cmd.next_verify_cycle = control_cycle_ + kDiscreteVerifyIntervalCycles;
-                }
-            }
-            /* 验证失败 */
-            else {
-                cmd.stable_success_cycles = 0;
-                if (control_cycle_ >= cmd.next_retry_cycle) {
-                    cmd.phase = DiscretePhase::APPLY_PENDING;
-                }
-            }
-        }
-    }
-}
-
-
-void MYACTUA::apply_discrete_command_to_motor(int motor_index, const DiscreteCommand& cmd)
-{
-    if (motor_index < 0 || motor_index >= static_cast<int>(_motors.size())) {
-        return;
-    }
-
-    MotorState& motor = _motors[motor_index];
-    switch (cmd.type) {
-        case CommandType::STOP:
-            // Edge-triggered: avoid resetting mode-switch state on retries.
-            if (motor.desired.enabled) {
-                motor.desired.enabled = false;
-                motor.mode_switch_step = ModeSwitchStep::IDLE;
-            }
-            break;
-        case CommandType::RESTART:
-            // Edge-triggered: first restart arms enable flow; later retries are no-op.
-            if (!motor.desired.enabled) {
-                motor.desired.enabled = true;
-                motor.mode_switch_step = ModeSwitchStep::IDLE;
-            }
-            break;
-        case CommandType::SET_MODE:
-            if (motor.desired.mode != cmd.mode) {
-                motor.desired.mode  = cmd.mode;
-                motor.mode_switch_step = ModeSwitchStep::IDLE;
-            }
-            break;
-        case CommandType::SET_SETPOINTS:
-            break;
-    }
-}
-
-
-bool MYACTUA::is_discrete_command_satisfied(const MotorState& motor, const DiscreteCommand& cmd) const
-{
-    const auto& observed = motor.observed;
-    if (observed.fault) {
-        return false;
-    }
-
-    switch (cmd.type) {
-        case CommandType::STOP:
-            return !observed.operation_enabled;
-        case CommandType::RESTART:
-            return  observed.operation_enabled;
-        case CommandType::SET_MODE:
-            return observed.mode == cmd.mode;
-        case CommandType::SET_SETPOINTS:
-            return true;
-    }
-    return false;
-}
-
 
 void MYACTUA::update_status_snapshot()
 {
@@ -597,10 +565,10 @@ void MYACTUA::update_status_snapshot()
         status_snapshot_[i].slave_index = m.slave_index;
         status_snapshot_[i].position = static_cast<double>(m.rx.pos);
         status_snapshot_[i].velocity = static_cast<double>(m.rx.vel);
-        status_snapshot_[i].torque = static_cast<double>(m.rx.torque);
-        status_snapshot_[i].comm_ok = m.comm_ok;
+        status_snapshot_[i].torque   = static_cast<double>(m.rx.torque);
+        status_snapshot_[i].comm_ok  = m.comm_ok;
         status_snapshot_[i].status_word = m.rx.status_word;
-        status_snapshot_[i].error_code = m.rx.error;
+        status_snapshot_[i].error_code  = m.rx.error;
         status_snapshot_[i].op_mode = (ControlMode)m.rx.op_mode;
         status_snapshot_[i].target_mode = m.desired.mode;
     }
@@ -780,5 +748,34 @@ void MYACTUA::print_motors_info(void){
     
     fflush(stdout); 
 }
+
+
+void MYACTUA::start()
+{
+    if (running_) return;
+    
+    running_ = true;
+    rt_thread_ = std::thread(&MYACTUA::rt_thread_func, this);
+    
+    struct sched_param param;
+    param.sched_priority = 80;
+    pthread_setschedparam(rt_thread_.native_handle(), SCHED_FIFO, &param);
+    
+    std::cout << "[MYACTUA] 实时控制线程已启动" << std::endl;
+}
+
+
+void MYACTUA::shutdown()
+{
+    if (!running_) return;
+    
+    running_ = false;
+    if (rt_thread_.joinable()) {
+        rt_thread_.join();
+    }
+    
+    std::cout << "[MYACTUA] 实时控制线程已停止" << std::endl;
+}
+
 
 }

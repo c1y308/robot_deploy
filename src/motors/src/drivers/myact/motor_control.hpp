@@ -30,6 +30,7 @@ enum class MotorStep {
 
 class MYACTUA {
 public:
+    /* 所有命令的本质都是操作这个结构体，在process_single_motor中进行下一步处理 */
     struct DesiredState {
         bool enabled;
         ControlMode mode;
@@ -86,7 +87,6 @@ public:
     bool connect(const char* ifname);
     void start();  // 启动实时线程
     void shutdown();  // 关闭实时线程
-    void update(const std::vector<double>& setvalues);
 
     std::vector<MotorStatusSnapshot> get_status();  // 获取电机状态快照
     std::vector<double> get_joint_q_rad();          // 关节位置(rad)
@@ -107,47 +107,20 @@ public:
 
     
 private:
-    enum class DiscretePhase {
-        QUEUED,
-        APPLY_PENDING,
-        VERIFYING,
-        DONE,
-        FAILED
-    };
-
-    struct DiscreteCommand {
-        CommandType type;
-        ControlMode mode;
-        DiscretePhase phase;
-        uint64_t enqueue_cycle;
-        uint64_t next_retry_cycle;
-        uint64_t next_verify_cycle;
-        uint64_t deadline_cycle;
-
-        int max_retries;
-        int retry_count;
-        int stable_success_cycles;
-        int fail_reason;
-
-        DiscreteCommand(CommandType t = CommandType::STOP, ControlMode m = ControlMode::NONE)
-            : type(t), mode(m), phase(DiscretePhase::QUEUED),
-              enqueue_cycle(0), next_retry_cycle(0), next_verify_cycle(0), deadline_cycle(0),
-              max_retries(0), retry_count(0), stable_success_cycles(0), fail_reason(0) {}
-    };
-
     std::shared_ptr<EthercatAdapter> _adapter;
     std::vector<MotorState> _motors;
 
+    /* 控制命令队列 */
+    ThreadSafeQueue<ControlCommand> cmd_queue_;
+    std::mutex status_mutex_;
+
     /* 电机的离散命令队列 */
     std::vector<std::deque<DiscreteCommand>> discrete_cmd_queues_;
-    /* 离散命令重试周期 */
-    uint64_t control_cycle_{0};
+    uint64_t discrete_cmd_tick_{0};  // 离散命令时间戳（按控制周期递增）
 
     std::thread rt_thread_;
     std::atomic<bool> running_{false};  // 实时线程运行标志
     
-    ThreadSafeQueue<ControlCommand> cmd_queue_;
-    std::mutex status_mutex_;
     std::vector<MotorStatusSnapshot> status_snapshot_;
 
     std::vector<int> print_motor_ids_;
@@ -156,6 +129,7 @@ private:
 
     void rt_thread_func();
     void process_commands();
+    void update(const std::vector<double>& setvalues);
     void update_status_snapshot();
 
     /* 处理离散命令相关 */
@@ -163,6 +137,8 @@ private:
     void service_discrete_commands(const std::vector<bool>& comm_ok);
     void apply_discrete_command_to_motor(int motor_index, const DiscreteCommand& cmd);
     bool is_discrete_command_satisfied(const MotorState& motor, const DiscreteCommand& cmd) const;
+
+
     void refresh_observed_state(MotorState& motor);
 
     void process_single_motor(MotorState& motor, double setvalue);
