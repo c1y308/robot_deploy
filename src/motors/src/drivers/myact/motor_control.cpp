@@ -169,16 +169,16 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
     const auto& desired  = motor.desired;
     const uint16_t sw = observed.status_word;
 
-    // if (observed.fault) {
-    //     motor.step = MotorStep::FAULT;
-    //     motor.mode_switch_step = ModeSwitchStep::IDLE;
-    //     motor.tx.control_word = CMD_SHUTDOWN;
-    //     motor.tx.op_mode = desired.mode;
-    //     motor.tx.target_pos = motor.rx.pos;
-    //     motor.tx.target_vel = 0;
-    //     motor.tx.target_torque = 0;
-    //     return;
-    // }
+    if (observed.fault) {
+        motor.step = MotorStep::FAULT;
+        motor.mode_switch_step = ModeSwitchStep::IDLE;
+        motor.tx.control_word = CMD_SHUTDOWN;
+        motor.tx.op_mode = desired.mode;
+        motor.tx.target_pos = motor.rx.pos;
+        motor.tx.target_vel = 0;
+        motor.tx.target_torque = 0;
+        return;
+    }
 
     /* 需要停止 */
     if (!desired.enabled) {
@@ -192,25 +192,24 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
         return;
     }
 
-    // if (desired.mode == ControlMode::NONE) {
-    //     motor.step = MotorStep::IDLE;
-    //     motor.mode_switch_step = ModeSwitchStep::IDLE;
-    //     motor.tx.control_word = CMD_SHUTDOWN;
-    //     motor.tx.op_mode = ControlMode::NONE;
-    //     motor.tx.target_pos = motor.rx.pos;
-    //     motor.tx.target_vel = 0;
-    //     motor.tx.target_torque = 0;
-    //     return;
-    // }
-
-    if (observed.mode != desired.mode) {
-        motor.step = MotorStep::MODE_SWITCHING;
-        handle_mode_switching(motor);
+    if (desired.mode == ControlMode::NONE) {
+        motor.step = MotorStep::IDLE;
+        motor.mode_switch_step = ModeSwitchStep::IDLE;
+        motor.tx.control_word = CMD_SHUTDOWN;
+        motor.tx.op_mode = ControlMode::NONE;
+        motor.tx.target_pos = motor.rx.pos;
+        motor.tx.target_vel = 0;
+        motor.tx.target_torque = 0;
         return;
     }
-    std::cout << "observed.mode == desired.mode: " << (int)observed.mode << std::endl;
-    if (motor.mode_switch_step != ModeSwitchStep::IDLE) {
-        motor.mode_switch_step =  ModeSwitchStep::IDLE;
+
+    const bool mode_switch_active =
+        (motor.mode_switch_step != ModeSwitchStep::IDLE) || (observed.mode != desired.mode);
+    if (mode_switch_active) {
+        motor.step = MotorStep::MODE_SWITCHING;
+        handle_mode_switching(motor);
+        // 模式切换采用闭环状态机，本周期不进入常规运行逻辑，避免覆盖切换命令。
+        return;
     }
 
     /* 模式一致后进入使能/运行控制 */
@@ -248,66 +247,90 @@ void MYACTUA::handle_mode_switching(MotorState& motor)
     const auto& observed = motor.observed;
     const auto& desired  = motor.desired;
     const uint16_t sw = observed.status_word;
+    const bool mode_ok = (observed.mode == desired.mode);
 
-    /* 模式切换期间持续下发目标模式，避免 0x6060 仅写入一次丢失 */
+    // 模式切换期间固定目标，避免切换过程中产生突变。
     motor.tx.op_mode = desired.mode;
+    motor.tx.target_pos = motor.rx.pos;
+    motor.tx.target_vel = 0;
+    motor.tx.target_torque = 0;
+    motor.tx.max_torque = 5000;
 
     switch (motor.mode_switch_step)
     {
         case ModeSwitchStep::IDLE:
+            // 1) 写 0x6060(目标模式)
+            motor.tx.control_word = CMD_SHUTDOWN;
             motor.mode_switch_step = ModeSwitchStep::SET_MODE;
             break;
 
         case ModeSwitchStep::SET_MODE:
-            /* 直接推进，不等待 0x6061 先变化，避免僵住在 RX_MODE=NONE */
-            motor.mode_switch_step = ModeSwitchStep::CLEAR;
+            // 保持 0x6040=6，在失能态等待 0x6061 回读到目标模式，闭环推进。
+            motor.tx.control_word = CMD_SHUTDOWN;
+            if (mode_ok) {
+                motor.mode_switch_step = ModeSwitchStep::CLEAR;
+            }
             break;
 
         case ModeSwitchStep::CLEAR:
-            motor.tx.target_pos = motor.rx.pos;
-            motor.tx.target_vel = 0;
-            motor.tx.target_torque = 0;
-            motor.mode_switch_step = ModeSwitchStep::DISABLE;
+            // 2) 读 0x6064，并将 0x607A 对齐到当前位置。
+            // 对齐命令至少发送一个周期后再进入下一步。
+            motor.tx.control_word = CMD_SHUTDOWN;
+            if (!mode_ok) {
+                motor.mode_switch_step = ModeSwitchStep::SET_MODE;
+            } else {
+                motor.mode_switch_step = ModeSwitchStep::DISABLE;
+            }
             break;
 
         case ModeSwitchStep::DISABLE:
+            // 3-1) 写 0x6040=6，等待状态字进入 Ready to switch on。
             motor.tx.control_word = CMD_SHUTDOWN;
-            if (!is_switched_on(sw) && !is_operation_enabled(sw)) {
+            if (!mode_ok) {
+                motor.mode_switch_step = ModeSwitchStep::SET_MODE;
+                break;
+            }
+            if (is_ready_to_switch_on(sw) && !is_switched_on(sw) && !is_operation_enabled(sw)) {
                 motor.mode_switch_step = ModeSwitchStep::ENABLE;
             }
             break;
 
         case ModeSwitchStep::ENABLE:
-            if (is_operation_enabled(sw)) {
-                motor.mode_switch_step = ModeSwitchStep::DONE;
-            } else if (is_switched_on(sw)) {
+            // 3-2) 写 0x6040=7，等待状态字进入 Switched on。
+            motor.tx.control_word = CMD_SWITCH_ON;
+            if (!mode_ok) {
+                motor.mode_switch_step = ModeSwitchStep::SET_MODE;
+                break;
+            }
+            if (is_switched_on(sw) && !is_operation_enabled(sw)) {
                 motor.mode_switch_step = ModeSwitchStep::OPERATING;
-            } else if (is_ready_to_switch_on(sw)) {
-                motor.tx.control_word = CMD_SWITCH_ON;
-            } else {
-                motor.tx.control_word = CMD_SHUTDOWN;
+            } else if (!is_ready_to_switch_on(sw)) {
+                motor.mode_switch_step = ModeSwitchStep::DISABLE;
             }
             break;
 
         case ModeSwitchStep::OPERATING:
+            // 3-3) 写 0x6040=15，等待状态字进入 Operation enabled。
+            motor.tx.control_word = CMD_ENABLE_OPERATION;
+            if (!mode_ok) {
+                motor.mode_switch_step = ModeSwitchStep::SET_MODE;
+                break;
+            }
             if (is_operation_enabled(sw)) {
                 motor.mode_switch_step = ModeSwitchStep::DONE;
-            } else if (is_switched_on(sw)) {
-                motor.tx.control_word = CMD_ENABLE_OPERATION;
-            } else if (is_ready_to_switch_on(sw)) {
-                motor.tx.control_word = CMD_SWITCH_ON;
-            } else {
-                motor.tx.control_word = CMD_SHUTDOWN;
+            } else if (!is_switched_on(sw)) {
                 motor.mode_switch_step = ModeSwitchStep::ENABLE;
             }
             break;
 
         case ModeSwitchStep::DONE:
-            if (observed.mode == desired.mode) {
+            // 4) 闭环完成: 模式正确且已使能，切回常规运行控制。
+            motor.tx.control_word = CMD_ENABLE_OPERATION;
+            if (mode_ok && is_operation_enabled(sw)) {
                 motor.mode_switch_step = ModeSwitchStep::IDLE;
                 motor.step = MotorStep::RUNNING;
             } else {
-                motor.mode_switch_step = ModeSwitchStep::SET_MODE;
+                motor.mode_switch_step = mode_ok ? ModeSwitchStep::OPERATING : ModeSwitchStep::SET_MODE;
             }
             break;
     }

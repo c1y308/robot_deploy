@@ -3,9 +3,11 @@
 #include <ecrt.h>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 #include <thread>
 #include <atomic>
+#include <mutex>
 
 namespace myactua {
 
@@ -80,6 +82,18 @@ private:
     std::thread rt_thread;             // 独立的发包线程
     std::atomic<bool> keep_running;    // 线程运行标志
     void rt_loop();                    // 线程循环函数
+
+    // 修复并发覆盖: 应用线程只写 shadow，EtherCAT 线程统一落盘到 domain1_pd
+    std::array<TxPDO, kNumSlaves> tx_shadow = {};
+    std::mutex tx_shadow_mutex;
+    void write_txpdo_to_domain(std::size_t index, const TxPDO& pdo);
+
+    // 诊断: 仅用于验证时序问题，不改变控制路径
+    bool diag_enabled = true;
+    uint64_t diag_interval_cycles = 500;
+    std::atomic<uint64_t> diag_cycle_counter{0};
+    std::array<std::atomic<uint16_t>, kNumSlaves> diag_last_send_cw = {};
+    std::array<std::atomic<uint32_t>, kNumSlaves> diag_send_counter = {};
 
 public:
     EthercatAdapterIGH();
