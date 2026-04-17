@@ -56,14 +56,19 @@ public:
 
     struct MotorState{
         int slave_index;
-        DesiredState desired;
-        ObservedState observed;
+
+        DesiredState    desired;
+        ObservedState   observed;
+
         MotorStep step;
         ModeSwitchStep mode_switch_step;
+
         TxPDO tx;
         RxPDO rx;
+
         bool comm_ok;
         uint32_t comm_offline_total_count;
+        
         bool print_info;
 
         MotorState(int index)
@@ -77,10 +82,6 @@ public:
     ~MYACTUA();
 
     void send_command(const ControlCommand& cmd);   // 异步发送控制命令
-
-    void set_mode(ControlMode mode,int slave_index);
-    void stop_motor(int slave_index = -1);
-    void restart(int slave_index = -1);
 
     bool connect(const char* ifname);
     void start();  // 启动实时线程

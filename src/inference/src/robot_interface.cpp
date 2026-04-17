@@ -121,7 +121,10 @@ bool RobotInterface::initial_and_start_motors() {
 
     /* 设置电机控制模式 */
     for (int i = 0; i < config_.num_motors; ++i) {
-        controller_->set_mode(myactua::ControlMode::CSP, i);
+        controller_->send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE,
+                                                          i,
+                                                          {},
+                                                          myactua::ControlMode::CSP));
     }
 
     /* 根据配置决定是否打印电机信息 */

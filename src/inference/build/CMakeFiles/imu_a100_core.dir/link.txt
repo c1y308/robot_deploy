@@ -1,2 +1,0 @@
-/usr/bin/ar qc libimu_a100_core.a CMakeFiles/imu_a100_core.dir/home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/serial_port.cpp.o CMakeFiles/imu_a100_core.dir/home/cat/Myactua_Ethercat/src/imu/a100/src/protocol/frame/imu_parser.cpp.o CMakeFiles/imu_a100_core.dir/home/cat/Myactua_Ethercat/src/imu/a100/src/drivers/imu_reader.cpp.o
-/usr/bin/ranlib libimu_a100_core.a

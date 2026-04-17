@@ -1,9 +1,0 @@
-/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles/imu_a100_core.dir
-/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles/edit_cache.dir
-/home/cat/Myactua_Ethercat/src/imu/a100/build/CMakeFiles/rebuild_cache.dir
-/home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build/CMakeFiles/MYACTUA_EtherCat.dir
-/home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build/CMakeFiles/simple_test.dir
-/home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build/CMakeFiles/debug_tool.dir
-/home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build/CMakeFiles/ID_test.dir
-/home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build/CMakeFiles/edit_cache.dir
-/home/cat/Myactua_Ethercat/src/imu/a100/build/motors_build/CMakeFiles/rebuild_cache.dir

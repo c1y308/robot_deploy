@@ -60,8 +60,14 @@ int main() {
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
     std::cout << "正在设置电机 CSV 模式..." << std::endl;
-    controller.set_mode(myactua::ControlMode::CSV, 0);
-    controller.set_mode(myactua::ControlMode::CSV, 1);
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE,
+                                                     0,
+                                                     {},
+                                                     myactua::ControlMode::CSV));
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE,
+                                                     1,
+                                                     {},
+                                                     myactua::ControlMode::CSV));
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
     std::cout << "电机以 50 速度运行 5 秒..." << std::endl;
@@ -75,8 +81,14 @@ int main() {
     std::this_thread::sleep_for(std::chrono::seconds(1));
     
     std::cout << "正在设置电机 CSP 模式..." << std::endl;
-    controller.set_mode(myactua::ControlMode::CSP, 0);
-    controller.set_mode(myactua::ControlMode::CSP, 1);
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE,
+                                                     0,
+                                                     {},
+                                                     myactua::ControlMode::CSP));
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE,
+                                                     1,
+                                                     {},
+                                                     myactua::ControlMode::CSP));
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
     std::cout << "电机以位置模式运行复位..." << std::endl;

@@ -89,7 +89,7 @@ private:
     void write_txpdo_to_domain(std::size_t index, const TxPDO& pdo);
 
     // 诊断: 仅用于验证时序问题，不改变控制路径
-    bool diag_enabled = true;
+    bool diag_enabled = false;
     uint64_t diag_interval_cycles = 500;
     std::atomic<uint64_t> diag_cycle_counter{0};
     std::array<std::atomic<uint16_t>, kNumSlaves> diag_last_send_cw = {};

@@ -40,18 +40,18 @@ int main() {
     }
 
     std::cout << "[3/4] 连接成功，正在设置电机 CSV 模式..." << std::endl;
-    controller.set_mode(myactua::ControlMode::CSV, 0);
-    controller.set_mode(myactua::ControlMode::CSV, 1);
-    controller.set_mode(myactua::ControlMode::CSV, 2);
-    controller.set_mode(myactua::ControlMode::CSV, 3);
-    controller.set_mode(myactua::ControlMode::CSV, 4);
-    controller.set_mode(myactua::ControlMode::CSV, 5);
-    controller.set_mode(myactua::ControlMode::CSV, 6);
-    controller.set_mode(myactua::ControlMode::CSV, 7);
-    controller.set_mode(myactua::ControlMode::CSV, 8);
-    controller.set_mode(myactua::ControlMode::CSV, 9);
-    controller.set_mode(myactua::ControlMode::CSV, 10);
-    controller.set_mode(myactua::ControlMode::CSV, 11);
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE, 0, {}, myactua::ControlMode::CSV));
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE, 1, {}, myactua::ControlMode::CSV));
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE, 2, {}, myactua::ControlMode::CSV));
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE, 3, {}, myactua::ControlMode::CSV));
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE, 4, {}, myactua::ControlMode::CSV));
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE, 5, {}, myactua::ControlMode::CSV));
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE, 6, {}, myactua::ControlMode::CSV));
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE, 7, {}, myactua::ControlMode::CSV));
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE, 8, {}, myactua::ControlMode::CSV));
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE, 9, {}, myactua::ControlMode::CSV));
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE, 10, {}, myactua::ControlMode::CSV));
+    controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE, 11, {}, myactua::ControlMode::CSV));
 
     std::cout << "[4/4] 启动实时控制线程..." << std::endl;
     controller.start();

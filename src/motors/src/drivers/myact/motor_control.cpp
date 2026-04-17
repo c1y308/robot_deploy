@@ -46,9 +46,10 @@ static struct timespec timespec_add(struct timespec time1, struct timespec time2
     return result;
 }
 
-
+/* 电机控制器构造函数 */
 MYACTUA::MYACTUA(std::shared_ptr<EthercatAdapter> adapter, int num_motors) : _adapter(adapter)
 {
+    /* 初始化电机状态列表 */
     for (int i = 0; i < num_motors; i++) {
         _motors.emplace_back(i);
         print_motor_ids_.push_back(i);
@@ -57,13 +58,13 @@ MYACTUA::MYACTUA(std::shared_ptr<EthercatAdapter> adapter, int num_motors) : _ad
     discrete_cmd_queues_.resize(num_motors);
 }
 
-
+/* 析构函数 */
 MYACTUA::~MYACTUA()
 {
     shutdown();
 }
 
-
+/* 连接网卡函数 */
 bool MYACTUA::connect(const char* ifname)
 {
     if(_adapter->init(ifname))
@@ -71,7 +72,7 @@ bool MYACTUA::connect(const char* ifname)
     return false;
 }
 
-
+/* 电机实时控制线程 */
 void MYACTUA::rt_thread_func()
 {
     struct timespec next_period;
@@ -99,6 +100,65 @@ void MYACTUA::rt_thread_func()
     }
 }
 
+
+void MYACTUA::process_commands()
+{
+    ControlCommand cmd;
+    while (cmd_queue_.pop(cmd, 0)) {
+        switch (cmd.type) {
+            case CommandType::SET_SETPOINTS:
+                for (size_t i = 0; i < cmd.values.size() && i < _motors.size(); i++) {
+                    _motors[i].desired.setpoint = cmd.values[i];
+                }
+                break;
+                
+            case CommandType::STOP:
+                enqueue_discrete_command(cmd);
+                break;
+                
+            case CommandType::RESTART:
+                enqueue_discrete_command(cmd);
+                break;
+                
+            case CommandType::SET_MODE:
+                enqueue_discrete_command(cmd);
+                break;
+        }
+    }
+}
+
+
+void MYACTUA::enqueue_discrete_command(const ControlCommand& cmd)
+{
+    /* 就地定义、使用，拉满封装性 */
+    auto enqueue_one = [this, &cmd](int idx) {
+        if (idx < 0 || idx >= static_cast<int>(_motors.size())) {
+            return;
+        }
+        DiscreteCommand pending(cmd.type, cmd.mode);
+        pending.phase = DiscretePhase::QUEUED;
+
+        pending.enqueue_cycle = control_cycle_;
+        pending.next_retry_cycle = control_cycle_;
+        pending.next_verify_cycle = control_cycle_;
+        pending.deadline_cycle = control_cycle_ + kDiscreteTimeoutCycles;
+        pending.max_retries = kDiscreteMaxRetries;
+        pending.retry_count = 0;
+        pending.stable_success_cycles = 0;
+        pending.fail_reason = kDiscreteFailNone;
+        discrete_cmd_queues_[idx].push_back(pending);
+    };
+
+
+    /* 小于 0 表示对所有电机执行命令 */
+    if (cmd.slave_index < 0) {
+        for (int i = 0; i < static_cast<int>(_motors.size()); ++i) {
+            enqueue_one(i);
+        }
+    } else {
+        enqueue_one(cmd.slave_index);
+    }
+}
 
 
 void MYACTUA::update(const std::vector<double> &setvalues)
@@ -354,44 +414,6 @@ ControlWordCommand MYACTUA::get_next_control_word(uint16_t status_word)
 }
 
 
-void MYACTUA::set_mode(ControlMode mode, int slave_index)
-{
-    if(slave_index >= 0 && slave_index < _motors.size())
-    {
-        _motors[slave_index].desired.mode = mode;
-        _motors[slave_index].mode_switch_step = ModeSwitchStep::IDLE;
-    }
-}
-
-
-void MYACTUA::stop_motor(int slave_index)
-{
-    if(slave_index < 0) {
-        for(auto& motor : _motors) {
-            motor.desired.enabled = false;
-            motor.mode_switch_step = ModeSwitchStep::IDLE;
-        }
-    } else if(slave_index < _motors.size()) {
-        _motors[slave_index].desired.enabled = false;
-        _motors[slave_index].mode_switch_step = ModeSwitchStep::IDLE;
-    }
-}
-
-
-void MYACTUA::restart(int slave_index)
-{
-    if(slave_index < 0) {
-        for(auto& motor : _motors) {
-            motor.desired.enabled = true;
-            motor.mode_switch_step = ModeSwitchStep::IDLE;
-        }
-    } else if(slave_index < _motors.size()) {
-        _motors[slave_index].desired.enabled = true;
-        _motors[slave_index].mode_switch_step = ModeSwitchStep::IDLE;
-    }
-}
-
-
 void MYACTUA::start()
 {
     if (running_) return;
@@ -417,67 +439,6 @@ void MYACTUA::shutdown()
     }
     
     std::cout << "[MYACTUA] 实时控制线程已停止" << std::endl;
-}
-
-
-
-void MYACTUA::process_commands()
-{
-    ControlCommand cmd;
-    while (cmd_queue_.pop(cmd, 0)) {
-        switch (cmd.type) {
-            case CommandType::SET_SETPOINTS:
-                for (size_t i = 0; i < cmd.values.size() && i < _motors.size(); i++) {
-                    _motors[i].desired.setpoint = cmd.values[i];
-                }
-                break;
-                
-            case CommandType::STOP:
-                enqueue_discrete_command(cmd);
-                break;
-                
-            case CommandType::RESTART:
-                enqueue_discrete_command(cmd);
-                break;
-                
-            case CommandType::SET_MODE:
-                enqueue_discrete_command(cmd);
-                break;
-        }
-    }
-}
-
-
-void MYACTUA::enqueue_discrete_command(const ControlCommand& cmd)
-{
-    /* 就地定义、使用，拉满封装性 */
-    auto enqueue_one = [this, &cmd](int idx) {
-        if (idx < 0 || idx >= static_cast<int>(_motors.size())) {
-            return;
-        }
-        DiscreteCommand pending(cmd.type, cmd.mode);
-        pending.phase = DiscretePhase::QUEUED;
-
-        pending.enqueue_cycle = control_cycle_;
-        pending.next_retry_cycle = control_cycle_;
-        pending.next_verify_cycle = control_cycle_;
-        pending.deadline_cycle = control_cycle_ + kDiscreteTimeoutCycles;
-        pending.max_retries = kDiscreteMaxRetries;
-        pending.retry_count = 0;
-        pending.stable_success_cycles = 0;
-        pending.fail_reason = kDiscreteFailNone;
-        discrete_cmd_queues_[idx].push_back(pending);
-    };
-
-
-    /* 小于 0 表示对所有电机执行命令 */
-    if (cmd.slave_index < 0) {
-        for (int i = 0; i < static_cast<int>(_motors.size()); ++i) {
-            enqueue_one(i);
-        }
-    } else {
-        enqueue_one(cmd.slave_index);
-    }
 }
 
 
@@ -742,10 +703,10 @@ void MYACTUA::print_motors_info(void){
     printf("\033[2J\033[H");
 
     printf("\033[1;36m============================ MOTOR REAL-TIME MONITOR ============================\033[0m\n");
-    printf("%-6s | %-10s | %-16s | %-22s | %-8s | %-8s | %-7s | %-8s | %-6s | %-6s | %-10s\n",
+    printf("%-6s | %-10s | %-16s | %-22s | %-8s | %-8s | %-7s | %-8s | %-11s | %-11s | %-6s | %-6s | %-10s\n",
         "ID", "OFFLINE_CNT", "STEP", "MODE_SWITCH_STEP", "RX_MODE", "TX_MODE", "DES_EN", "TX_CW",
-        "OP_EN", "SW_ON", "RDY_SW_ON");
-    printf("---------------------------------------------------------------------------------------------------------------------------------\n");
+        "RX_POS_RAW", "RX_VEL_RAW", "OP_EN", "SW_ON", "RDY_SW_ON");
+    printf("-------------------------------------------------------------------------------------------------------------------------------------------------\n");
 
     for (const auto& m : _motors) {
         if (std::find(print_motor_ids_.begin(), print_motor_ids_.end(), m.slave_index) ==
@@ -798,7 +759,7 @@ void MYACTUA::print_motors_info(void){
             default: break;
         }
 
-        printf("M %-4d | %-10u | %s%-16s\033[0m | %s%-22s\033[0m | %-8s | %-8s | %-7s | %-8s | %-6s | %-6s | %-10s\n",
+        printf("M %-4d | %-10u | %s%-16s\033[0m | %s%-22s\033[0m | %-8s | %-8s | %-7s | %-8s | %-11lld | %-11lld | %-6s | %-6s | %-10s\n",
             m.slave_index,
             static_cast<unsigned int>(m.comm_offline_total_count),
             color_code,
@@ -809,6 +770,8 @@ void MYACTUA::print_motors_info(void){
             tx_mode_name,
             m.desired.enabled ? "Y" : "N",
             cw_hex,
+            static_cast<long long>(m.rx.pos),
+            static_cast<long long>(m.rx.vel),
             m.observed.operation_enabled ? "Y" : "N",
             m.observed.switched_on ? "Y" : "N",
             m.observed.ready_to_switch_on ? "Y" : "N");

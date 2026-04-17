@@ -26,7 +26,7 @@ target_include_directories(MYACTUA_EtherCat PUBLIC
     /opt/etherlab/include
 )
 
-# 链接依赖库
+# 目标库链接依赖库
 target_link_libraries(MYACTUA_EtherCat
     ethercat
     pthread
@@ -35,13 +35,11 @@ target_link_libraries(MYACTUA_EtherCat
 
 # 编译可执行文件
 add_executable(simple_test examples/simple_test.cpp)
-add_executable(debug_tool examples/debug_tool.cpp)
 add_executable(ID_test examples/ID_test.cpp)
 add_executable(stop_read_status examples/stop_read_status.cpp)
 
-# 链接你自己的库
+# 链接库
 target_link_libraries(simple_test MYACTUA_EtherCat)
-target_link_libraries(debug_tool  MYACTUA_EtherCat)
 target_link_libraries(ID_test MYACTUA_EtherCat)
 target_link_libraries(stop_read_status MYACTUA_EtherCat)
 
