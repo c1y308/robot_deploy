@@ -22,7 +22,7 @@ using Clock = std::chrono::steady_clock;
 volatile std::sig_atomic_t g_should_stop = 0;
 
 constexpr char kIfName[] = "enp8s0";
-constexpr int kNumMotors = 10;
+constexpr int kNumMotors = 12;
 
 constexpr int kWaitReadyTimeoutMs = 20000;  // 等待全部从站进入 OP 的超时时间
 constexpr int kWaitReadyPollMs = 100;       // 检查从站状态的轮询周期
@@ -42,7 +42,7 @@ constexpr char kErrorLogFile[] = "squat_stand_interp_error.txt";
 // };
 constexpr std::array<double, kNumMotors> kSquatTargetDeg = {
     8.6, 21.745, -12.8, 50, 90, -94,
-    0.0, -17, -1, -50
+    0.0, -17, -1, -50, 0, 0
 };
 
 void signal_handler(int)

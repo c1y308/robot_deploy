@@ -171,8 +171,8 @@ bool EthercatAdapterIGH::init(const char* ifname)
                       << "，物理位置 " << position << "\n";
             return false;
         }
-
-        ecrt_slave_config_dc(sc[i], 0x0300, 1000000, 4400000, 0, 0); // 配置 DC 时钟
+                                                                                    // sync0_shift 4400000(4.4ms)
+        ecrt_slave_config_dc(sc[i], 0x0300, 1000000, 100000, 0, 0); // 配置 DC 时钟
 
         // 注册 PDO 条目到 Domain
         /*
