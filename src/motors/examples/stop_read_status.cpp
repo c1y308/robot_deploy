@@ -1,5 +1,4 @@
 #include "EthercatAdapterIGH.hpp"
-#include "ControlTypes.hpp"
 
 #include <atomic>
 #include <chrono>

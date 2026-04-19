@@ -671,10 +671,10 @@ void MYACTUA::print_motors_info(void){
     printf("\033[2J\033[H");
 
     printf("\033[1;36m============================ MOTOR REAL-TIME MONITOR ============================\033[0m\n");
-    printf("%-6s | %-10s | %-16s | %-22s | %-8s | %-8s | %-7s | %-8s | %-11s | %-11s | %-6s | %-6s | %-10s\n",
-        "ID", "OFFLINE_CNT", "STEP", "MODE_SWITCH_STEP", "RX_MODE", "TX_MODE", "DES_EN", "TX_CW",
-        "RX_POS_RAW", "RX_VEL_RAW", "OP_EN", "SW_ON", "RDY_SW_ON");
-    printf("-------------------------------------------------------------------------------------------------------------------------------------------------\n");
+    printf("%-6s | %-10s | %-16s | %-22s | %-8s | %-8s | %-7s | %-16s | %-14s | %-14s | %-12s\n",
+        "ID", "OFFLINE_CNT", "STEP", "MODE_SWITCH_STEP", "RX_MODE", "TX_MODE", "DES_EN",
+        "TX_TARGET", "RX_POS_RAD", "RX_POS_DEG", "RX_VEL_RPM");
+    printf("------------------------------------------------------------------------------------------------------------------------------------------------------\n");
 
     for (const auto& m : _motors) {
         if (std::find(print_motor_ids_.begin(), print_motor_ids_.end(), m.slave_index) ==
@@ -685,8 +685,6 @@ void MYACTUA::print_motors_info(void){
         if (m.step == MotorStep::FAULT) color_code = "\033[31m";
         if (m.step == MotorStep::STOPPED) color_code = "\033[35m";
         if (m.step == MotorStep::MODE_SWITCHING) color_code = "\033[33m";
-        char cw_hex[9] = {};
-        std::snprintf(cw_hex, sizeof(cw_hex), "0x%04X", static_cast<unsigned>(m.tx.control_word));
 
         const char* step_name = "UNKNOWN";
         switch (m.step) {
@@ -727,7 +725,29 @@ void MYACTUA::print_motors_info(void){
             default: break;
         }
 
-        printf("M %-4d | %-10u | %s%-16s\033[0m | %s%-22s\033[0m | %-8s | %-8s | %-7s | %-8s | %-11lld | %-11lld | %-6s | %-6s | %-10s\n",
+        const double rx_pos_rad = static_cast<double>(m.rx.pos) * kRawPosToRad;
+        const double rx_pos_deg = rx_pos_rad * kRadToDeg;
+        const double rx_vel_rpm = static_cast<double>(m.rx.vel) * kRawVelToRpm;
+        char tx_target_info[32] = {};
+        switch (m.tx.op_mode) {
+            case ControlMode::CSP:
+                std::snprintf(tx_target_info, sizeof(tx_target_info), "%.6f rad",
+                    static_cast<double>(m.tx.target_pos) * kRawPosToRad);
+                break;
+            case ControlMode::CSV:
+                std::snprintf(tx_target_info, sizeof(tx_target_info), "%.3f rpm",
+                    static_cast<double>(m.tx.target_vel) * kRawVelToRpm);
+                break;
+            case ControlMode::CST:
+                std::snprintf(tx_target_info, sizeof(tx_target_info), "%d raw",
+                    static_cast<int>(m.tx.target_torque));
+                break;
+            default:
+                std::snprintf(tx_target_info, sizeof(tx_target_info), "N/A");
+                break;
+        }
+
+        printf("M %-4d | %-10u | %s%-16s\033[0m | %s%-22s\033[0m | %-8s | %-8s | %-7s | %-16s | %-14.6f | %-14.3f | %-12.3f\n",
             m.slave_index,
             static_cast<unsigned int>(m.comm_offline_total_count),
             color_code,
@@ -737,12 +757,10 @@ void MYACTUA::print_motors_info(void){
             mode_name,
             tx_mode_name,
             m.desired.enabled ? "Y" : "N",
-            cw_hex,
-            static_cast<long long>(m.rx.pos),
-            static_cast<long long>(m.rx.vel),
-            m.observed.operation_enabled ? "Y" : "N",
-            m.observed.switched_on ? "Y" : "N",
-            m.observed.ready_to_switch_on ? "Y" : "N");
+            tx_target_info,
+            rx_pos_rad,
+            rx_pos_deg,
+            rx_vel_rpm);
     }
     printf("\033[1;36m=================================================================================\033[0m\n");
     
