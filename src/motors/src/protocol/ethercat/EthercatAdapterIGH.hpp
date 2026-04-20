@@ -38,6 +38,8 @@ inline constexpr std::array<uint16_t, 12> kSlavePositions = {
 
 inline constexpr std::size_t kNumSlaves = kSlavePositions.size();
 
+
+/* 继承 class EthercatAdapter */
 class EthercatAdapterIGH : public EthercatAdapter {
 private:
     struct SlaveOffsets
@@ -79,15 +81,19 @@ private:
     bool is_initialized = false;
     
     std::vector<SlaveOffsets> slave_offsets;
+
+
     std::thread rt_thread;             // 独立的发包线程
     std::atomic<bool> keep_running;    // 线程运行标志
     void rt_loop();                    // 线程循环函数
+
 
     // 修复并发覆盖: 应用线程只写 shadow，EtherCAT 线程统一落盘到 domain1_pd
     std::array<TxPDO, kNumSlaves> tx_shadow = {};
     std::mutex tx_shadow_mutex;
     void write_txpdo_to_domain(std::size_t index, const TxPDO& pdo);
 
+    
     // 诊断: 仅用于验证时序问题，不改变控制路径
     bool diag_enabled = false;
     uint64_t diag_interval_cycles = 500;
