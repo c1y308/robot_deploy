@@ -1,6 +1,5 @@
 #include "imu_reader.hpp"
 #include <iostream>
-#include <csignal>
 #include <unistd.h>
 
 namespace imu {
@@ -17,43 +16,43 @@ IMUReader::~IMUReader() {
 }
 
 
-bool IMUReader::initialize(const Config_t& config) {
+bool IMUReader::start(const Config_t& config) {
+    if (running_.load()) {
+        return true;
+    }
+
     config_ = config;
-    
     print_configuration();
-    
+
+    parser_->reset();
     if (!serial_port_->open(config_.device, config_.baudrate)) {
         return false;
     }
-    
-    running_ = true;
+
+    running_.store(true);
+    worker_thread_ = std::thread(&IMUReader::read_loop, this);
+    std::cout << "[INFO] IMU reader thread started." << std::endl;
     return true;
 }
 
 
-void IMUReader::run() {
-    if (!running_) {
-        std::cerr << "[ERROR] IMUReader not initialized" << std::endl;
-        return;
-    }
-    
+void IMUReader::read_loop() {
     constexpr size_t READ_BUFFER_SIZE = 256;
     uint8_t read_buffer[READ_BUFFER_SIZE];
-    
+
     std::cout << "[INFO] Starting IMU data acquisition..." << std::endl;
-    std::cout << "[INFO] Press Ctrl+C to exit." << std::endl << std::endl;
-    
+
     uint64_t last_stats_frame = 0;
-    
-    while (running_) {
+
+    while (running_.load()) {
         int bytes_read = serial_port_->read(read_buffer, READ_BUFFER_SIZE);
-        
+
         if (bytes_read > 0) {
             parser_->feed(read_buffer, bytes_read);
-            
+
             IMUData_t imu_data;
             AHRSData_t ahrs_data;
-            
+
             if (config_.print_imu && parser_->get_imu_data(imu_data)) {
                 IMUParser::print_imu_data(imu_data);
             }
@@ -71,19 +70,25 @@ void IMUReader::run() {
                 last_stats_frame = stats.total_frames;
             }
         }
-        
+
         usleep(1000);
     }
-    
-    std::cout << std::endl << "[INFO] Final Statistics:" << std::endl;
+
+    std::cout << "[INFO] Final Statistics:" << std::endl;
     print_statistics();
 }
 
 
 void IMUReader::stop() {
-    if (running_) {
-        running_ = false;
+    const bool was_running = running_.exchange(false);
+    if (was_running) {
         std::cout << "[INFO] Stopping IMU reader..." << std::endl;
+    }
+    if (worker_thread_.joinable()) {
+        worker_thread_.join();
+    }
+    if (serial_port_->is_open()) {
+        serial_port_->close();
     }
 }
 

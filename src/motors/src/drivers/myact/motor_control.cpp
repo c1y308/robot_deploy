@@ -19,19 +19,6 @@ constexpr double kRpmToRadPerSec = (2.0 * kPi) / 60.0;
 constexpr double kRadToDeg = 180.0 / kPi;
 }
 
-static struct timespec timespec_add(struct timespec time1, struct timespec time2)
-{
-    struct timespec result;
-    if ((time1.tv_nsec + time2.tv_nsec) >= NSEC_PER_SEC) {
-        result.tv_sec = time1.tv_sec + time2.tv_sec + 1;
-        result.tv_nsec = time1.tv_nsec + time2.tv_nsec - NSEC_PER_SEC;
-    } else {
-        result.tv_sec = time1.tv_sec + time2.tv_sec;
-        result.tv_nsec = time1.tv_nsec + time2.tv_nsec;
-    }
-    return result;
-}
-
 /* 电机控制器构造函数 */
 MYACTUA::MYACTUA(std::shared_ptr<EthercatAdapter> adapter, int num_motors) : _adapter(adapter)
 {

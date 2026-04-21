@@ -40,8 +40,8 @@ int main() {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    std::cout << "[MOTORS_TEST] 3/4 send zero command to motor 0" << std::endl;
-    if (!robot.apply_action(std::vector<double>{314, 314})) {
+    std::cout << "[MOTORS_TEST] 3/4 send zero-position command in rad" << std::endl;
+    if (!robot.apply_action(std::vector<double>(cfg.num_motors, 0.0))) {
         std::cerr << "[MOTORS_TEST] apply_action failed." << std::endl;
         robot.deinit_motors();
         return -1;

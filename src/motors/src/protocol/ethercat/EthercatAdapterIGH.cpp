@@ -108,7 +108,7 @@ ec_sync_info_t EthercatAdapterIGH::device_syncs[] = {
     {1, EC_DIR_INPUT, 0, NULL, EC_WD_DISABLE},
     {2, EC_DIR_OUTPUT, 1, &EthercatAdapterIGH::device_pdos[0], EC_WD_ENABLE},
     {3, EC_DIR_INPUT, 1, &EthercatAdapterIGH::device_pdos[1], EC_WD_DISABLE},
-    {0xff}
+    {0xff, EC_DIR_INVALID, 0, nullptr, EC_WD_DEFAULT}
 };    
 
 
@@ -139,6 +139,7 @@ EthercatAdapterIGH::~EthercatAdapterIGH() {
 
 bool EthercatAdapterIGH::init(const char* ifname) 
 {
+    (void)ifname;
     master = ecrt_request_master(0);    // 请求主站控制权
     if (!master) 
     {
@@ -187,20 +188,20 @@ bool EthercatAdapterIGH::init(const char* ifname)
         unsigned int *bit_pos;位偏移指针 (Pointer to bit position)
         */
         ec_pdo_entry_reg_t reg[] ={
-            {0, position, VID_PID, 0x6040, 0, &slave_offsets[i].off_ctrl_word},
-            {0, position, VID_PID, 0x607A, 0, &slave_offsets[i].off_target_pos},
-            {0, position, VID_PID, 0x60FF, 0, &slave_offsets[i].off_target_vel},
-            {0, position, VID_PID, 0x6071, 0, &slave_offsets[i].off_target_torque},
-            {0, position, VID_PID, 0x6072, 0, &slave_offsets[i].off_max_torque},
-            {0, position, VID_PID, 0x6060, 0, &slave_offsets[i].off_mode_of_op},
+            {0, position, VID_PID, 0x6040, 0, &slave_offsets[i].off_ctrl_word, nullptr},
+            {0, position, VID_PID, 0x607A, 0, &slave_offsets[i].off_target_pos, nullptr},
+            {0, position, VID_PID, 0x60FF, 0, &slave_offsets[i].off_target_vel, nullptr},
+            {0, position, VID_PID, 0x6071, 0, &slave_offsets[i].off_target_torque, nullptr},
+            {0, position, VID_PID, 0x6072, 0, &slave_offsets[i].off_max_torque, nullptr},
+            {0, position, VID_PID, 0x6060, 0, &slave_offsets[i].off_mode_of_op, nullptr},
 
-            {0, position, VID_PID, 0x6041, 0, &slave_offsets[i].off_status_word},
-            {0, position, VID_PID, 0x6064, 0, &slave_offsets[i].off_pos},
-            {0, position, VID_PID, 0x606C, 0, &slave_offsets[i].off_vel},
-            {0, position, VID_PID, 0x6077, 0, &slave_offsets[i].off_torque},
-            {0, position, VID_PID, 0x603F, 0, &slave_offsets[i].off_error},
-            {0, position, VID_PID, 0x6061, 0, &slave_offsets[i].off_mode_disp},
-            {} // 结束标志
+            {0, position, VID_PID, 0x6041, 0, &slave_offsets[i].off_status_word, nullptr},
+            {0, position, VID_PID, 0x6064, 0, &slave_offsets[i].off_pos, nullptr},
+            {0, position, VID_PID, 0x606C, 0, &slave_offsets[i].off_vel, nullptr},
+            {0, position, VID_PID, 0x6077, 0, &slave_offsets[i].off_torque, nullptr},
+            {0, position, VID_PID, 0x603F, 0, &slave_offsets[i].off_error, nullptr},
+            {0, position, VID_PID, 0x6061, 0, &slave_offsets[i].off_mode_disp, nullptr},
+            {0, 0, 0, 0, 0, 0, nullptr, nullptr} // 结束标志
         };
 
         if (ecrt_domain_reg_pdo_entry_list(domain1, reg)) 
@@ -360,7 +361,7 @@ void EthercatAdapterIGH::write_txpdo_to_domain(std::size_t index, const TxPDO& p
 
 void EthercatAdapterIGH::send(int index, const TxPDO& pdo)
 {
-    if(index < 0 || index >= slave_offsets.size()) return;
+    if (index < 0 || static_cast<std::size_t>(index) >= slave_offsets.size()) return;
 
     if (diag_enabled) {
         diag_last_send_cw[index].store(pdo.control_word, std::memory_order_relaxed);
@@ -375,7 +376,7 @@ void EthercatAdapterIGH::send(int index, const TxPDO& pdo)
 RxPDO EthercatAdapterIGH::receive(int index)
 {
     RxPDO pdo = {};
-    if(index < 0 || index >= slave_offsets.size()) return pdo;
+    if (index < 0 || static_cast<std::size_t>(index) >= slave_offsets.size()) return pdo;
 
     SlaveOffsets& off = slave_offsets[index];
     pdo.status_word = EC_READ_U16(domain1_pd + off.off_status_word);

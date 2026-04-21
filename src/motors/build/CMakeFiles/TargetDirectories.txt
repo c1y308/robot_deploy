@@ -1,8 +1,0 @@
-/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles/MYACTUA_EtherCat.dir
-/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles/simple_test.dir
-/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles/ID_test.dir
-/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles/linear_test.dir
-/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles/squat_stand.dir
-/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles/stop_read_status.dir
-/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles/edit_cache.dir
-/home/cat/Myactua_Ethercat/src/motors/build/CMakeFiles/rebuild_cache.dir

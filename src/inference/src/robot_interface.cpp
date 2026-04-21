@@ -12,6 +12,7 @@ RobotInterface::RobotInterface(RobotInterfaceConfig config)
     : config_(std::move(config)) {}
 
 RobotInterface::~RobotInterface() {
+    deinit_imu();
     deinit_motors();
 }
 
@@ -60,19 +61,13 @@ bool RobotInterface::initial_start_imu_reader() {
         quat_[3] = static_cast<double>(data.qz);
     });
 
-    /* 调用 imu class的初始化函数 */
-    if (!imu_reader_->initialize(imu_cfg)) {
-        std::cerr << "[RobotInterface] IMU initialize failed.\n";
+    if (!imu_reader_->start(imu_cfg)) {
+        std::cerr << "[RobotInterface] IMU start failed.\n";
         imu_reader_.reset();
         imu_initialized_.store(false);
         return false;
     }
 
-    imu_thread_ = std::thread([this]() {
-        if (imu_reader_) {
-            imu_reader_->run();
-        }
-    });
     imu_initialized_.store(true);
     return true;
 }
@@ -81,9 +76,6 @@ bool RobotInterface::initial_start_imu_reader() {
 void RobotInterface::stop_imu_reader() {
     if (imu_reader_) {
         imu_reader_->stop();
-    }
-    if (imu_thread_.joinable()) {
-        imu_thread_.join();
     }
     imu_reader_.reset();
     imu_initialized_.store(false);
@@ -122,9 +114,9 @@ bool RobotInterface::initial_and_start_motors() {
     /* 设置电机控制模式 */
     for (int i = 0; i < config_.num_motors; ++i) {
         controller_->send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE,
-                                                          i,
-                                                          {},
-                                                          myactua::ControlMode::CSP));
+                                                             i,
+                                                            {},
+                                                               myactua::ControlMode::CSP));
     }
 
     /* 根据配置决定是否打印电机信息 */
@@ -185,8 +177,6 @@ bool RobotInterface::wait_all_slaves_ready() const {
 
 
 void RobotInterface::deinit_motors() {
-    stop_imu_reader();
-
     if (motors_initialized_.load() && controller_) {
         stop_motors(-1);
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -196,7 +186,6 @@ void RobotInterface::deinit_motors() {
     controller_.reset();
     adapter_.reset();
     motors_initialized_.store(false);
-    imu_initialized_.store(false);
     motion_enabled_.store(false);
 }
 
@@ -319,7 +308,12 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_rad) {
 
 
 bool RobotInterface::reset_joints() {
-    if (!motors_initialized_.load()) {
+    if (!motors_initialized_.load() || !controller_) {
+        return false;
+    }
+    if (!motion_enabled_.load()) {
+        std::cerr << "[RobotInterface] reset_joints rejected: motors are stopped. "
+                  << "Call restart_motors(-1) first.\n";
         return false;
     }
 

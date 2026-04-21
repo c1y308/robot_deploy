@@ -18,6 +18,7 @@ public:
     ~IMUParser() = default;
     
     void feed(const uint8_t* data, int len);
+    void reset();
     
     bool get_imu_data(IMUData_t& imu);
     bool get_ahrs_data(AHRSData_t& ahrs);

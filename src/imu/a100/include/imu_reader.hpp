@@ -3,9 +3,10 @@
 
 #include "serial_port.hpp"
 #include "imu_parser.hpp"
-#include <string>
 #include <atomic>
 #include <memory>
+#include <string>
+#include <thread>
 
 namespace imu {
     
@@ -33,9 +34,9 @@ public:
     IMUReader(const IMUReader&) = delete;
     IMUReader& operator=(const IMUReader&) = delete;
     
-    bool initialize(const Config_t& config);
-    void run();
+    bool start(const Config_t& config);
     void stop();
+    bool is_running() const { return running_.load(); }
     
     const ParserInfo_t& get_info() const;
     
@@ -43,12 +44,14 @@ public:
     void set_ahrs_callback(IMUParser::AHRSCallback_t callback);
 
 private:
+    void read_loop();
     void print_configuration() const;
     void print_statistics() const;
     
     Config_t config_;
     std::unique_ptr<SerialPort> serial_port_;
     std::unique_ptr<IMUParser> parser_;
+    std::thread worker_thread_;
     std::atomic<bool> running_;
 };
 

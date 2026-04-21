@@ -1,4 +1,5 @@
 #include "imu_parser.hpp"
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <iomanip>
@@ -19,6 +20,21 @@ IMUParser::IMUParser()
 
 void IMUParser::reset_info() {
     stats_ = ParserInfo_t();
+}
+
+
+void IMUParser::reset() {
+    rx_index_ = 0;
+    frame_length_ = 0;
+    last_byte_ = 0;
+    parsing_state_ = false;
+    imu_ready_ = false;
+    ahrs_ready_ = false;
+    imu_data_ = IMUData_t();
+    ahrs_data_ = AHRSData_t();
+    stats_ = ParserInfo_t();
+    std::fill(rx_buffer_.begin(), rx_buffer_.end(), 0);
+    std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0);
 }
 
 
