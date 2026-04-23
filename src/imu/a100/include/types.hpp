@@ -12,10 +12,10 @@ constexpr uint8_t TYPE_IMU = 0x40;
 constexpr uint8_t TYPE_AHRS = 0x41;
 constexpr uint8_t TYPE_UNKNOWN = 0xf0;
 // 数据长度
-constexpr uint8_t IMU_LEN = 0x3C;
-constexpr uint8_t AHRS_LEN = 0x38;
+constexpr uint8_t IMU_LEN  = 56;
+constexpr uint8_t AHRS_LEN = 48;
 // 帧大小
-constexpr std::size_t IMU_FRAME_SIZE = 64;
+constexpr std::size_t IMU_FRAME_SIZE  = 64;
 constexpr std::size_t AHRS_FRAME_SIZE = 56;
 
 

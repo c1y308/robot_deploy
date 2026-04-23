@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/stop_read_status.dir/examples/stop_read_status.cpp.o -o stop_read_status   -L/home/cat/ethercat/lib  -L/opt/etherlab/lib  -Wl,-rpath,/home/cat/ethercat/lib:/opt/etherlab/lib libMYACTUA_EtherCat.a -lethercat -lpthread -lrt 

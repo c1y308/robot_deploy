@@ -37,10 +37,6 @@ target_link_libraries(robot_interface
     pthread
 )
 
-add_executable(basic_stand_test
-    examples/basic_stand_test.cpp
-)
-target_link_libraries(basic_stand_test PRIVATE robot_interface)
 
 add_executable(imu_only_test
     examples/imu_test.cpp

@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/imu_only_test.dir/examples/imu_test.cpp.o -o imu_only_test  librobot_interface.a motors_build/libMYACTUA_EtherCat.a -lethercat -lrt libimu_a100_core.a -lm -lpthread 

@@ -61,7 +61,7 @@ public:
         return motors_initialized_.load() && imu_initialized_.load();
     }
 
-    /* 电机生命周期与 IMU 生命周期相互独立 */
+
     bool initial_and_start_motors();
     void deinit_motors();
     bool stop_motors(int slave_index = -1);
@@ -76,7 +76,8 @@ public:
     std::vector<double> get_joint_vel() const;  // rad/s
     std::vector<double> get_joint_tau() const;  // raw driver unit
 
-    /* 电机生命周期与 IMU 生命周期相互独立 */
+
+    
     bool initial_and_start_imu();
     void deinit_imu();
     bool is_imu_initialized() const { return imu_initialized_.load(); }

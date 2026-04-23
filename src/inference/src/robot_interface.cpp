@@ -48,7 +48,6 @@ bool RobotInterface::initial_start_imu_reader() {
         ang_vel_[0] = static_cast<double>(data.gyroscope_x);
         ang_vel_[1] = static_cast<double>(data.gyroscope_y);
         ang_vel_[2] = static_cast<double>(data.gyroscope_z);
-        // 当前 parser 仅提供 IMU 帧，不含四元数。先保持单位四元数占位。
     });
     imu_reader_->set_ahrs_callback([this](const imu::AHRSData_t& data) {
         std::lock_guard<std::mutex> lock(imu_mutex_);
