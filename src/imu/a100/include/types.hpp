@@ -2,31 +2,21 @@
 #define __TYPES_HPP__
 
 #include <cstdint>
-#include <string>
 
 namespace imu {
 //  起始标志、结束标志
 constexpr uint8_t FRAME_HEAD = 0xFC;
 constexpr uint8_t FRAME_END = 0xFD;
+
 constexpr uint8_t TYPE_IMU = 0x40;
 constexpr uint8_t TYPE_AHRS = 0x41;
-constexpr uint8_t TYPE_INSGPS = 0x42;
+constexpr uint8_t TYPE_UNKNOWN = 0xf0;
 // 数据长度
 constexpr uint8_t IMU_LEN = 0x3C;
 constexpr uint8_t AHRS_LEN = 0x38;
-constexpr uint8_t INSGPS_LEN = 0x50;
 // 帧大小
-constexpr size_t IMU_FRAME_SIZE = 64;
-constexpr size_t AHRS_FRAME_SIZE = 56;
-constexpr size_t INSGPS_FRAME_SIZE = 80;
-
-/* 定义帧的数据类型 */
-enum class DataType_e {
-    NONE = 0,
-    IMU,
-    AHRS,
-    INSGPS
-};
+constexpr std::size_t IMU_FRAME_SIZE = 64;
+constexpr std::size_t AHRS_FRAME_SIZE = 56;
 
 
 struct IMUData_t {
@@ -73,25 +63,6 @@ struct AHRSData_t {
                    roll(0), pitch(0), heading(0),
                    qw(0), qx(0), qy(0), qz(0),
                    timestamp(0) {}
-};
-
-
-struct INSGPSData_t {
-    double latitude;
-    double longitude;
-    double altitude;
-    float north_velocity;
-    float east_velocity;
-    float ground_velocity;
-    float azimuth;
-    float pitch;
-    float roll;
-    uint64_t timestamp;
-    
-    INSGPSData_t() : latitude(0), longitude(0), altitude(0),
-                     north_velocity(0), east_velocity(0), ground_velocity(0),
-                     azimuth(0), pitch(0), roll(0),
-                     timestamp(0) {}
 };
 
 

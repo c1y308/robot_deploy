@@ -38,55 +38,6 @@ void IMUParser::reset() {
 }
 
 
-float IMUParser::data_to_float(uint8_t d1, uint8_t d2, uint8_t d3, uint8_t d4) {
-    union {
-        uint8_t bytes[4];
-        float value;
-    } converter;
-    
-    converter.bytes[0] = d1;
-    converter.bytes[1] = d2;
-    converter.bytes[2] = d3;
-    converter.bytes[3] = d4;
-    
-    return converter.value;
-}
-
-
-double IMUParser::data_to_double(uint8_t d1, uint8_t d2, uint8_t d3, uint8_t d4,
-                                  uint8_t d5, uint8_t d6, uint8_t d7, uint8_t d8) {
-    union {
-        uint8_t bytes[8];
-        double value;
-    } converter;
-    
-    converter.bytes[0] = d1;
-    converter.bytes[1] = d2;
-    converter.bytes[2] = d3;
-    converter.bytes[3] = d4;
-    converter.bytes[4] = d5;
-    converter.bytes[5] = d6;
-    converter.bytes[6] = d7;
-    converter.bytes[7] = d8;
-    
-    return converter.value;
-}
-
-
-uint32_t IMUParser::data_to_u32(uint8_t d1, uint8_t d2, uint8_t d3, uint8_t d4) {
-    return ((uint32_t)d4 << 24) | ((uint32_t)d3 << 16) | 
-           ((uint32_t)d2 << 8) | (uint32_t)d1;
-}
-
-
-uint64_t IMUParser::data_to_u64(uint8_t d1, uint8_t d2, uint8_t d3, uint8_t d4,
-                                 uint8_t d5, uint8_t d6, uint8_t d7, uint8_t d8) {
-    return ((uint64_t)d8 << 56) | ((uint64_t)d7 << 48) | 
-           ((uint64_t)d6 << 40) | ((uint64_t)d5 << 32) |
-           ((uint64_t)d4 << 24) | ((uint64_t)d3 << 16) | 
-           ((uint64_t)d2 << 8) | (uint64_t)d1;
-}
-
 
 /* 数据入口 */
 void IMUParser::feed(const uint8_t* data, int len) {
@@ -119,6 +70,10 @@ void IMUParser::feed(const uint8_t* data, int len) {
                     case TYPE_AHRS:  // AHRS帧
                         frame_length_ = AHRS_FRAME_SIZE;
                         break;
+                    case TYPE_UNKNOWN:  // 未知帧
+                        parsing_state_ = false;
+                        rx_index_ = 0;
+                        break;
                     default:  // 错误的类型
                         parsing_state_ = false;
                         rx_index_ = 0;
@@ -128,6 +83,25 @@ void IMUParser::feed(const uint8_t* data, int len) {
                         break;
                 }
             }
+
+            /* 进行CRC8校验 */
+            if(rx_index_ == 5){
+                std::vector<uint8_t> crc8_data(rx_buffer_.begin(), rx_buffer_.begin() + 4);
+                uint8_t calculated_crc8 = CRC8_Table(crc8_data);
+                uint8_t received_crc8 = rx_buffer_[4];
+                
+                if (calculated_crc8 != received_crc8) {
+                    parsing_state_ = false;
+                    rx_index_ = 0;
+                    stats_.error_frames++;
+                    std::cerr << "[PROTOCOL ERROR] CRC8 mismatch: calculated=0x" 
+                              << std::hex << (int)calculated_crc8 
+                              << ", received=0x" << (int)received_crc8 
+                              << std::dec << std::endl;
+                }           
+            }
+
+
             /* 接受到帧尾 */
             if (frame_length_ > 0 && rx_index_ >= frame_length_) {
                 if (rx_buffer_[rx_index_ - 1] == FRAME_END) {
@@ -286,6 +260,65 @@ void IMUParser::print_ahrs_data(const AHRSData_t& ahrs) {
               << ahrs.qz << "]" << std::endl;
     std::cout << "Timestamp: " << ahrs.timestamp << " us" << std::endl;
     std::cout << "=============================" << std::endl << std::endl;
+}
+
+
+float IMUParser::data_to_float(uint8_t d1, uint8_t d2, uint8_t d3, uint8_t d4) {
+    union {
+        uint8_t bytes[4];
+        float value;
+    } converter;
+    
+    converter.bytes[0] = d1;
+    converter.bytes[1] = d2;
+    converter.bytes[2] = d3;
+    converter.bytes[3] = d4;
+    
+    return converter.value;
+}
+
+
+double IMUParser::data_to_double(uint8_t d1, uint8_t d2, uint8_t d3, uint8_t d4,
+                                  uint8_t d5, uint8_t d6, uint8_t d7, uint8_t d8) {
+    union {
+        uint8_t bytes[8];
+        double value;
+    } converter;
+    
+    converter.bytes[0] = d1;
+    converter.bytes[1] = d2;
+    converter.bytes[2] = d3;
+    converter.bytes[3] = d4;
+    converter.bytes[4] = d5;
+    converter.bytes[5] = d6;
+    converter.bytes[6] = d7;
+    converter.bytes[7] = d8;
+    
+    return converter.value;
+}
+
+
+uint32_t IMUParser::data_to_u32(uint8_t d1, uint8_t d2, uint8_t d3, uint8_t d4) {
+    return ((uint32_t)d4 << 24) | ((uint32_t)d3 << 16) | 
+           ((uint32_t)d2 << 8) | (uint32_t)d1;
+}
+
+
+uint64_t IMUParser::data_to_u64(uint8_t d1, uint8_t d2, uint8_t d3, uint8_t d4,
+                                 uint8_t d5, uint8_t d6, uint8_t d7, uint8_t d8) {
+    return ((uint64_t)d8 << 56) | ((uint64_t)d7 << 48) | 
+           ((uint64_t)d6 << 40) | ((uint64_t)d5 << 32) |
+           ((uint64_t)d4 << 24) | ((uint64_t)d3 << 16) | 
+           ((uint64_t)d2 << 8) | (uint64_t)d1;
+}
+
+
+uint8_t IMUParser::CRC8_Table(const std::vector<uint8_t>& data) {
+    uint8_t crc8 = 0x00;
+    for (uint8_t value : data) {
+        crc8 = CRC8Table[crc8 ^ value];
+    }
+    return crc8;
 }
 
 }
