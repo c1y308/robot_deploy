@@ -1,0 +1,20 @@
+# CMake build directories
+build/
+cmake-build-*/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# Editor and language-server caches
+.cache/
+
+# Compiled objects and binaries
+*.o
+*.o.d
+*.a
+*.so
+*.out
+*.exe

@@ -3,7 +3,6 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
-#include <cstring>
 #include <iostream>
 #include <mutex>
 #include <thread>
@@ -37,23 +36,15 @@ void print_latest_summary(SharedState& state, const imu::ParserInfo_t& info) {
               << " err=" << info.error_frames << "\n";
 
     if (state.has_imu) {
-        const auto& imu = state.latest_imu;
-        std::cout << "  IMU gyro(rad/s)=[" << imu.gyroscope_x << ", "
-                  << imu.gyroscope_y << ", " << imu.gyroscope_z << "]"
-                  << " accel(m/s^2)=[" << imu.accelerometer_x << ", "
-                  << imu.accelerometer_y << ", " << imu.accelerometer_z << "]"
-                  << " updates=" << state.imu_updates << "\n";
+        std::cout << "[A100_TEST] latest IMU updates=" << state.imu_updates << "\n";
+        imu::IMUParser::print_imu_data(state.latest_imu);
     } else {
         std::cout << "  IMU waiting for data...\n";
     }
 
     if (state.has_ahrs) {
-        const auto& ahrs = state.latest_ahrs;
-        std::cout << "  AHRS quat[wxyz]=[" << ahrs.qw << ", " << ahrs.qx << ", "
-                  << ahrs.qy << ", " << ahrs.qz << "]"
-                  << " rpy(rad)=[" << ahrs.roll << ", " << ahrs.pitch << ", "
-                  << ahrs.heading << "]"
-                  << " updates=" << state.ahrs_updates << "\n";
+        std::cout << "[A100_TEST] latest AHRS updates=" << state.ahrs_updates << "\n";
+        imu::IMUParser::print_ahrs_data(state.latest_ahrs);
     } else {
         std::cout << "  AHRS waiting for data...\n";
     }
@@ -90,7 +81,7 @@ int main() {
 
     std::cout << "[A100_TEST] Running. Press Ctrl+C to stop.\n";
     while (g_running.load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
         print_latest_summary(state, reader.get_info());
     }
 

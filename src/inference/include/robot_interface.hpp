@@ -29,23 +29,24 @@ struct RobotInterfaceConfig {
     std::string ethercat_ifname = "enp8s0";
     /* 等待所有从站就绪的超时和轮询时间 */
     int wait_all_slaves_timeout_ms = 20000;
-    int wait_all_slaves_poll_ms = 100;
+    int wait_all_slaves_poll_ms    = 100;
     /* 是否在终端打印电机信息 */
-    bool print_motors_info = true;  // false则将 print_motor_ids 清零
-    std::vector<int> print_motor_ids = {0, 1};  // 仅打印这些ID的电机信息，ID从0开始，-1表示全部
+    bool print_motors_info = false;  // false将 print_motor_ids 清零
+    std::vector<int> print_motor_ids = {-1};  // 仅打印这些ID的电机信息，ID从0开始，-1表示全部
     /* 电机转动角度限制 */
     std::vector<double> joint_min_rad;
     std::vector<double> joint_max_rad;
     /* 初始姿态各电机的角度值 */
-    std::vector<double> stand_pose_rad;
+    std::vector<double> stand_pose_rad = {};
 
 
 
     /* IMU 配置 */
     std::string imu_device = "/dev/ttyUSB0";
     int imu_baudrate       = 921600;
+
     bool imu_print_imu     = false;
-    bool imu_print_ahrs    = true;
+    bool imu_print_ahrs    = false;
     bool imu_print_stats   = false;
 };
 
@@ -63,14 +64,15 @@ public:
 
 
     bool initial_and_start_motors();
-    void deinit_motors();
     bool stop_motors(int slave_index = -1);
     bool restart_motors(int slave_index = -1);
+    void deinit_motors();
 
     /* 关节目标输入单位为 rad */
     bool apply_action(const std::vector<double>& target_q_rad);
     /* 将关节缓慢复位到 stand_pose_rad，输入/配置单位为 rad */
     bool reset_joints();
+
     bool is_motors_initialized() const { return motors_initialized_.load(); }
     std::vector<double> get_joint_q() const;    // rad
     std::vector<double> get_joint_vel() const;  // rad/s
@@ -91,9 +93,8 @@ private:
 
     /* 以太网适配器 */
     std::shared_ptr<myactua::EthercatAdapterIGH> adapter_;
-    /* 电机控制器 智能指针 */
-    std::unique_ptr<myactua::MYACTUA> controller_;
-    bool wait_all_slaves_ready() const;
+    std::unique_ptr<myactua::MYACTUA> controller_;  // 电机控制器指针
+    bool wait_all_slaves_ready() const;  // 等待电机初始化完成
 
 
     std::atomic<bool> motors_initialized_{false};
@@ -104,8 +105,6 @@ private:
     /* IMU 读取器 智能指针 */
     std::unique_ptr<imu::IMUReader> imu_reader_;
     std::atomic<bool> imu_initialized_{false};
-    bool initial_start_imu_reader();
-    void stop_imu_reader();
 
     mutable std::mutex imu_mutex_;
     std::array<double, 4> quat_{1.0, 0.0, 0.0, 0.0};

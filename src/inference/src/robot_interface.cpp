@@ -20,17 +20,6 @@ RobotInterface::~RobotInterface() {
 
 
 bool RobotInterface::initial_and_start_imu() {
-    return initial_start_imu_reader();
-}
-
-
-void RobotInterface::deinit_imu() {
-    stop_imu_reader();
-}
-
-
-/* 初始化并启动 IMU 读取器 */
-bool RobotInterface::initial_start_imu_reader() {
     if (imu_initialized_.load()) {
         return true;
     }
@@ -71,8 +60,8 @@ bool RobotInterface::initial_start_imu_reader() {
     return true;
 }
 
-/* 停止 IMU 读取器 */
-void RobotInterface::stop_imu_reader() {
+
+void RobotInterface::deinit_imu() {
     if (imu_reader_) {
         imu_reader_->stop();
     }
@@ -80,8 +69,17 @@ void RobotInterface::stop_imu_reader() {
     imu_initialized_.store(false);
 }
 
+/* 获取IMU角度(从AHRS帧得到) */
+std::array<double, 4> RobotInterface::get_quat() const {
+    std::lock_guard<std::mutex> lock(imu_mutex_);
+    return quat_;
+}
 
-
+//** 获取角速度(从AHRS帧得到) */
+std::array<double, 3> RobotInterface::get_ang_vel() const {
+    std::lock_guard<std::mutex> lock(imu_mutex_);
+    return ang_vel_;
+}
 
 
 /* 初始化并启动电机 */
@@ -189,52 +187,6 @@ void RobotInterface::deinit_motors() {
 }
 
 
-
-
-
-
-std::vector<double> RobotInterface::get_joint_q() const {
-    std::vector<double> q(config_.num_motors, 0.0);
-    if (!controller_) {
-        return q;
-    }
-    q = controller_->get_joint_q_rad();
-    return q;
-}
-
-
-std::vector<double> RobotInterface::get_joint_vel() const {
-    std::vector<double> dq(config_.num_motors, 0.0);
-    if (!controller_) {
-        return dq;
-    }
-    dq = controller_->get_joint_vel_rad_s();
-    return dq;
-}
-
-
-std::vector<double> RobotInterface::get_joint_tau() const {
-    std::vector<double> tau(config_.num_motors, 0.0);
-    if (!controller_) {
-        return tau;
-    }
-    tau = controller_->get_joint_tau_raw();
-    return tau;
-}
-
-
-std::array<double, 4> RobotInterface::get_quat() const {
-    std::lock_guard<std::mutex> lock(imu_mutex_);
-    return quat_;
-}
-
-
-std::array<double, 3> RobotInterface::get_ang_vel() const {
-    std::lock_guard<std::mutex> lock(imu_mutex_);
-    return ang_vel_;
-}
-
-
 bool RobotInterface::stop_motors(int slave_index) {
     if (!motors_initialized_.load() || !controller_) {
         return false;
@@ -306,6 +258,36 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_rad) {
 }
 
 
+std::vector<double> RobotInterface::get_joint_q() const {
+    std::vector<double> q(config_.num_motors, 0.0);
+    if (!controller_) {
+        return q;
+    }
+    q = controller_->get_joint_q_rad();
+    return q;
+}
+
+
+std::vector<double> RobotInterface::get_joint_vel() const {
+    std::vector<double> dq(config_.num_motors, 0.0);
+    if (!controller_) {
+        return dq;
+    }
+    dq = controller_->get_joint_vel_rad_s();
+    return dq;
+}
+
+
+std::vector<double> RobotInterface::get_joint_tau() const {
+    std::vector<double> tau(config_.num_motors, 0.0);
+    if (!controller_) {
+        return tau;
+    }
+    tau = controller_->get_joint_tau_raw();
+    return tau;
+}
+
+/* 恢复到初始姿态 */
 bool RobotInterface::reset_joints() {
     if (!motors_initialized_.load() || !controller_) {
         return false;
