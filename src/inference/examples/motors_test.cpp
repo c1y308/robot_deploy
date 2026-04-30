@@ -22,7 +22,6 @@ int main() {
     std::signal(SIGTERM, signal_handler);
 
     inference::RobotInterfaceConfig cfg;
-    cfg.num_motors = 2;
 
     inference::RobotInterface robot(cfg);
 

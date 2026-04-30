@@ -62,21 +62,6 @@ const char* wc_state_to_string(ec_wc_state_t state)
 
 } // namespace
 
-struct timespec timespec_add(struct timespec time1, struct timespec time2)
-{
-    struct timespec result;
-
-    if ((time1.tv_nsec + time2.tv_nsec) >= NSEC_PER_SEC) {
-        result.tv_sec = time1.tv_sec + time2.tv_sec + 1;
-        result.tv_nsec = time1.tv_nsec + time2.tv_nsec - NSEC_PER_SEC;
-    } else {
-        result.tv_sec = time1.tv_sec + time2.tv_sec;
-        result.tv_nsec = time1.tv_nsec + time2.tv_nsec;
-    }
-
-    return result;
-}
-
 // ---定义静态配置模板---
 ec_pdo_entry_info_t EthercatAdapterIGH::device_pdo_entries[] = {
     {0x6040, 0x00, 16},  // 控制字
@@ -128,12 +113,9 @@ EthercatAdapterIGH::EthercatAdapterIGH() {
         tx_shadow[i].reserved = 0;
     }
     is_initialized = false;
-    keep_running = false;
 }    
 
 EthercatAdapterIGH::~EthercatAdapterIGH() {
-    keep_running = false;
-    if (rt_thread.joinable()) rt_thread.join();
     if (master) ecrt_release_master(master);
 }
 
@@ -199,8 +181,8 @@ bool EthercatAdapterIGH::init(const char* ifname)
             {0, position, VID_PID, 0x6064, 0, &slave_offsets[i].off_pos, nullptr},
             {0, position, VID_PID, 0x606C, 0, &slave_offsets[i].off_vel, nullptr},
             {0, position, VID_PID, 0x6077, 0, &slave_offsets[i].off_torque, nullptr},
-            {0, position, VID_PID, 0x603F, 0, &slave_offsets[i].off_error, nullptr},
-            {0, position, VID_PID, 0x6061, 0, &slave_offsets[i].off_mode_disp, nullptr},
+            {0, position,VID_PID, 0x603F, 0, &slave_offsets[i].off_error, nullptr},
+            {0, position,VID_PID, 0x6061, 0, &slave_offsets[i].off_mode_disp, nullptr},
             {0, 0, 0, 0, 0, 0, nullptr, nullptr} // 结束标志
         };
 
@@ -231,118 +213,7 @@ bool EthercatAdapterIGH::init(const char* ifname)
               << " (env: MYACTUA_ECAT_DIAG / MYACTUA_ECAT_DIAG_INTERVAL)" << std::endl;
 
     is_initialized = true;
-    keep_running = true;
-    rt_thread = std::thread(&EthercatAdapterIGH::rt_loop, this);
     return true;    
-}
-
-void EthercatAdapterIGH::rt_loop() 
-{
-    struct sched_param param;
-    param.sched_priority = sched_get_priority_max(SCHED_FIFO);
-    if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &param) != 0) {
-        perror("设置实时优先级失败");
-    }
-    struct timespec wakeup_time,time;   // 定义时间结构体
-    clock_gettime(CLOCK_TO_USE,&wakeup_time); // 获取当前时间
-    // 周期时间
-    const struct timespec cycle_time = {0, 1000000}; // 1ms = 1e6 ns
-    while (keep_running)
-    {
-        const uint64_t cycle = diag_cycle_counter.fetch_add(1, std::memory_order_relaxed) + 1;
-        const bool sample_diag = diag_enabled &&
-                                 (diag_interval_cycles > 0) &&
-                                 (cycle % diag_interval_cycles == 0);
-        std::array<uint16_t, kNumSlaves> cw_after_process = {};
-        std::array<uint16_t, kNumSlaves> cw_pre_queue = {};
-        std::array<uint16_t, kNumSlaves> sw_snapshot = {};
-        std::array<uint16_t, kNumSlaves> err_snapshot = {};
-        std::array<int8_t, kNumSlaves> op_snapshot = {};
-
-        wakeup_time = timespec_add(wakeup_time, cycle_time); // 1ms周期
-        clock_nanosleep(CLOCK_TO_USE, TIMER_ABSTIME, &wakeup_time, nullptr); // 精确睡眠到下一个周期,TIMER_ABSTIME(绝对时间)
-        ecrt_master_application_time(master, TIMESPEC2NS(wakeup_time)); // 更新主站应用时间（用于从站同步插补）
-        /*EtherCAT 从站（如电机驱动器）内部有 DC 时钟
-        从站根据主站给的应用时间（Application Time）计算插补值
-        你每 1ms 发一次目标位置，从站用应用时间计算当前时刻位置*/
-        
-        ecrt_master_receive(master); // 接收从站 PDO 数据
-        ecrt_domain_process(domain1); // 处理域数据
-
-        if (sample_diag && domain1_pd) {
-            for (std::size_t i = 0; i < kNumSlaves; ++i) {
-                const SlaveOffsets& off = slave_offsets[i];
-                cw_after_process[i] = EC_READ_U16(domain1_pd + off.off_ctrl_word);
-                sw_snapshot[i] = EC_READ_U16(domain1_pd + off.off_status_word);
-                err_snapshot[i] = EC_READ_U16(domain1_pd + off.off_error);
-                op_snapshot[i] = EC_READ_S8(domain1_pd + off.off_mode_disp);
-            }
-        }
-
-        // 关键修复: process 后将应用线程写入的 shadow 覆盖到域内存
-        std::array<TxPDO, kNumSlaves> tx_snapshot = {};
-        {
-            std::lock_guard<std::mutex> lock(tx_shadow_mutex);
-            tx_snapshot = tx_shadow;
-        }
-        for (std::size_t i = 0; i < kNumSlaves; ++i) {
-            write_txpdo_to_domain(i, tx_snapshot[i]);
-        }
-
-        for (std::size_t i = 0; i < kNumSlaves; ++i) {
-            ecrt_slave_config_state(sc[i], &sc_state[i]);
-            const bool ok = sc_state[i].online && sc_state[i].operational;
-            slave_configured[i].store(ok, std::memory_order_relaxed);
-        }
-
-        if (sync_ref_counter) {
-            sync_ref_counter--;
-        } else {
-            sync_ref_counter = 1; // sync every cycle
-
-            clock_gettime(CLOCK_TO_USE, &time); // 获取当前时间
-            ecrt_master_sync_reference_clock_to(master, TIMESPEC2NS(time)); //同步时钟
-        }
-        ecrt_master_sync_slave_clocks(master); // 同步从站时钟
-
-        if (sample_diag && domain1_pd) {
-            for (std::size_t i = 0; i < kNumSlaves; ++i) {
-                const SlaveOffsets& off = slave_offsets[i];
-                cw_pre_queue[i] = EC_READ_U16(domain1_pd + off.off_ctrl_word);
-            }
-
-            if (ecrt_domain_state(domain1, &domain1_state) < 0) {
-                std::printf("[ECAT_DIAG] cycle=%llu ecrt_domain_state failed\n",
-                            static_cast<unsigned long long>(cycle));
-            } else {
-                std::printf("[ECAT_DIAG] cycle=%llu wc=%u wc_state=%s\n",
-                            static_cast<unsigned long long>(cycle),
-                            domain1_state.working_counter,
-                            wc_state_to_string(domain1_state.wc_state));
-            }
-
-            for (std::size_t i = 0; i < kNumSlaves; ++i) {
-                const uint16_t app_cw = diag_last_send_cw[i].load(std::memory_order_relaxed);
-                const uint32_t app_send_cnt = diag_send_counter[i].load(std::memory_order_relaxed);
-                std::printf(
-                    "  M%zu send_cw=0x%04X send_cnt=%u pd_after_process=0x%04X pd_pre_queue=0x%04X"
-                    " status=0x%04X err=0x%04X op=%d cfg=%d\n",
-                    i,
-                    static_cast<unsigned>(app_cw),
-                    static_cast<unsigned>(app_send_cnt),
-                    static_cast<unsigned>(cw_after_process[i]),
-                    static_cast<unsigned>(cw_pre_queue[i]),
-                    static_cast<unsigned>(sw_snapshot[i]),
-                    static_cast<unsigned>(err_snapshot[i]),
-                    static_cast<int>(op_snapshot[i]),
-                    slave_configured[i].load(std::memory_order_relaxed) ? 1 : 0);
-            }
-            std::fflush(stdout);
-        }
-
-        ecrt_domain_queue(domain1); // 队列域数据准备发送
-        ecrt_master_send(master); // 发送 PDO 数据到从站
-    }
 }
 
 void EthercatAdapterIGH::write_txpdo_to_domain(std::size_t index, const TxPDO& pdo)
@@ -390,10 +261,93 @@ RxPDO EthercatAdapterIGH::receive(int index)
 }
 
 void EthercatAdapterIGH::receivePhysical() {
+    if (!is_initialized || !master || !domain1 || !domain1_pd) {
+        return;
+    }
+
+    struct timespec time;
+    clock_gettime(CLOCK_TO_USE, &time);
+    ecrt_master_application_time(master, TIMESPEC2NS(time));
+
+    diag_cycle_counter.fetch_add(1, std::memory_order_relaxed);
+
+    ecrt_master_receive(master);
+    ecrt_domain_process(domain1);
+
+    for (std::size_t i = 0; i < kNumSlaves; ++i) {
+        ecrt_slave_config_state(sc[i], &sc_state[i]);
+        const bool ok = sc_state[i].online && sc_state[i].operational;
+        slave_configured[i].store(ok, std::memory_order_relaxed);
+    }
 }
 
 
 void EthercatAdapterIGH::sendPhysical() {
+    if (!is_initialized || !master || !domain1 || !domain1_pd) {
+        return;
+    }
+
+    std::array<TxPDO, kNumSlaves> tx_snapshot = {};
+    {
+        std::lock_guard<std::mutex> lock(tx_shadow_mutex);
+        tx_snapshot = tx_shadow;
+    }
+
+    for (std::size_t i = 0; i < kNumSlaves; ++i) {
+        write_txpdo_to_domain(i, tx_snapshot[i]);
+    }
+
+    if (sync_ref_counter) {
+        sync_ref_counter--;
+    } else {
+        sync_ref_counter = 1;
+        struct timespec time;
+        clock_gettime(CLOCK_TO_USE, &time);
+        ecrt_master_sync_reference_clock_to(master, TIMESPEC2NS(time));
+    }
+    ecrt_master_sync_slave_clocks(master);
+
+    const uint64_t cycle = diag_cycle_counter.load(std::memory_order_relaxed);
+    const bool sample_diag = diag_enabled &&
+                             (cycle > 0) &&
+                             (diag_interval_cycles > 0) &&
+                             (cycle % diag_interval_cycles == 0);
+    if (sample_diag) {
+        if (ecrt_domain_state(domain1, &domain1_state) < 0) {
+            std::printf("[ECAT_DIAG] cycle=%llu ecrt_domain_state failed\n",
+                        static_cast<unsigned long long>(cycle));
+        } else {
+            std::printf("[ECAT_DIAG] cycle=%llu wc=%u wc_state=%s\n",
+                        static_cast<unsigned long long>(cycle),
+                        domain1_state.working_counter,
+                        wc_state_to_string(domain1_state.wc_state));
+        }
+
+        for (std::size_t i = 0; i < kNumSlaves; ++i) {
+            const SlaveOffsets& off = slave_offsets[i];
+            const uint16_t app_cw = diag_last_send_cw[i].load(std::memory_order_relaxed);
+            const uint32_t app_send_cnt = diag_send_counter[i].load(std::memory_order_relaxed);
+            const uint16_t pd_cw = EC_READ_U16(domain1_pd + off.off_ctrl_word);
+            const uint16_t sw = EC_READ_U16(domain1_pd + off.off_status_word);
+            const uint16_t err = EC_READ_U16(domain1_pd + off.off_error);
+            const int8_t op = EC_READ_S8(domain1_pd + off.off_mode_disp);
+            std::printf(
+                "  M%zu send_cw=0x%04X send_cnt=%u pd_cw=0x%04X"
+                " status=0x%04X err=0x%04X op=%d cfg=%d\n",
+                i,
+                static_cast<unsigned>(app_cw),
+                static_cast<unsigned>(app_send_cnt),
+                static_cast<unsigned>(pd_cw),
+                static_cast<unsigned>(sw),
+                static_cast<unsigned>(err),
+                static_cast<int>(op),
+                slave_configured[i].load(std::memory_order_relaxed) ? 1 : 0);
+        }
+        std::fflush(stdout);
+    }
+
+    ecrt_domain_queue(domain1);
+    ecrt_master_send(master);
 }
 
 // 检查特定从站的配置状态

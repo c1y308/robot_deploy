@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
-#include <thread>
 #include <atomic>
 #include <mutex>
 
@@ -30,10 +29,13 @@ namespace myactua {
 inline constexpr std::array<uint16_t, 2> kSlavePositions = {
     0, 1
 };
+
+#define MYACTUA_NO_FORWARDERS_MOTORS_NUM 2
 #else
 inline constexpr std::array<uint16_t, 12> kSlavePositions = {
     1, 2, 3, 4, 5, 6, 8, 9, 10, 11,12, 13
 };
+#define MYACTUA_FORWARDERS_MOTORS_NUM 12
 #endif
 
 inline constexpr std::size_t kNumSlaves = kSlavePositions.size();
@@ -61,16 +63,15 @@ private:
     };
 
     // 定义映射模板
-    static ec_pdo_entry_info_t device_pdo_entries[];
-    static ec_pdo_info_t device_pdos[];
-    static ec_sync_info_t device_syncs[];
+    static ec_pdo_entry_info_t  device_pdo_entries[];
+    static ec_pdo_info_t        device_pdos[];
+    static ec_sync_info_t       device_syncs[];
 
     ec_master_t *master = NULL;
     ec_master_state_t master_state = {};
 
     ec_domain_t *domain1 = NULL;
     ec_domain_state_t domain1_state = {};
-
     uint8_t *domain1_pd = nullptr; 
 
     std::array<ec_slave_config_t *, kNumSlaves> sc = {};
@@ -83,12 +84,7 @@ private:
     std::vector<SlaveOffsets> slave_offsets;
 
 
-    std::thread rt_thread;             // 独立的发包线程
-    std::atomic<bool> keep_running;    // 线程运行标志
-    void rt_loop();                    // 线程循环函数
-
-
-    // 修复并发覆盖: 应用线程只写 shadow，EtherCAT 线程统一落盘到 domain1_pd
+    // 应用层先写 shadow，sendPhysical() 在控制主循环内统一落盘到 domain1_pd
     std::array<TxPDO, kNumSlaves> tx_shadow = {};
     std::mutex tx_shadow_mutex;
     void write_txpdo_to_domain(std::size_t index, const TxPDO& pdo);
@@ -105,8 +101,8 @@ public:
     EthercatAdapterIGH();
     ~EthercatAdapterIGH() override;
 
-    bool init(const char* ifname) override;
-    void send(int index, const TxPDO& pdo) override;
+    bool  init(const char* ifname) override;
+    void  send(int index, const TxPDO& pdo) override;
     RxPDO receive(int index) override;
 
     void receivePhysical() override;

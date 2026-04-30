@@ -52,10 +52,14 @@ void signal_handler(int)
 
 bool wait_all_slaves_ready(const std::shared_ptr<myactua::EthercatAdapterIGH>& adapter)
 {
-    const int max_tries =
-        (kWaitReadyTimeoutMs + kWaitReadyPollMs - 1) / kWaitReadyPollMs;
+    const auto start_time = Clock::now();
+    const auto deadline = start_time + std::chrono::milliseconds(kWaitReadyTimeoutMs);
+    auto next_log_time = start_time;
 
-    for (int t = 0; t < max_tries && !g_should_stop; ++t) {
+    while (Clock::now() < deadline && !g_should_stop) {
+        adapter->receivePhysical();
+        adapter->sendPhysical();
+
         int ready_count = 0;
         for (int i = 0; i < kNumMotors; ++i) {
             if (adapter->isConfigured(i)) {
@@ -68,9 +72,13 @@ bool wait_all_slaves_ready(const std::shared_ptr<myactua::EthercatAdapterIGH>& a
             return true;
         }
 
-        std::cout << "[ready] " << ready_count << "/" << kNumMotors << " slaves ready"
-                  << std::endl;
-        std::this_thread::sleep_for(std::chrono::milliseconds(kWaitReadyPollMs));
+        const auto now = Clock::now();
+        if (now >= next_log_time) {
+            std::cout << "[ready] " << ready_count << "/" << kNumMotors << " slaves ready"
+                      << std::endl;
+            next_log_time = now + std::chrono::milliseconds(kWaitReadyPollMs);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     return false;

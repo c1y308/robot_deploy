@@ -38,9 +38,14 @@ bool wait_all_slaves_ready(const std::shared_ptr<myactua::EthercatAdapterIGH>& a
                            int timeout_ms = 20000,
                            int poll_ms = 100)
 {
-    const int max_tries = (timeout_ms + poll_ms - 1) / poll_ms;
+    const auto start_time = std::chrono::steady_clock::now();
+    const auto deadline = start_time + std::chrono::milliseconds(timeout_ms);
+    auto next_log_time = start_time;
 
-    for (int t = 0; t < max_tries; ++t) {
+    while (std::chrono::steady_clock::now() < deadline) {
+        adapter->receivePhysical();
+        adapter->sendPhysical();
+
         int ready_count = 0;
         for (int i = 0; i < num_motors; ++i) {
             if (adapter->isConfigured(i)) {
@@ -48,13 +53,17 @@ bool wait_all_slaves_ready(const std::shared_ptr<myactua::EthercatAdapterIGH>& a
             }
         }
 
-        std::cout << "[连接检查] EtherCAT ready: "
-                  << ready_count << "/" << num_motors << std::endl;
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= next_log_time) {
+            std::cout << "[连接检查] EtherCAT ready: "
+                      << ready_count << "/" << num_motors << std::endl;
+            next_log_time = now + std::chrono::milliseconds(poll_ms);
+        }
         if (ready_count == num_motors) {
             return true;
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(poll_ms));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     return false;
@@ -179,6 +188,8 @@ private:
             next_period += std::chrono::milliseconds(1);
             const bool stop_mode = _stop_mode.load();
 
+            _adapter->receivePhysical();
+
             for (std::size_t i = 0; i < _motors.size(); ++i) {
                 _motors[i].comm_ok = _adapter->isConfigured(_motors[i].slave_index);
                 if (!_motors[i].comm_ok) {
@@ -193,6 +204,8 @@ private:
                 }
                 _adapter->send(_motors[i].slave_index, _motors[i].tx);
             }
+
+            _adapter->sendPhysical();
 
             if (++print_count >= 500) {
                 print_count = 0;

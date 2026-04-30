@@ -53,17 +53,21 @@ void MYACTUA::rt_thread_func()
     const long period_ns = 1000000;
 
     while (running_) {
-        // 1.处理控制命令
+        // 1. 收取本周期 EtherCAT 输入
+        _adapter->receivePhysical();
+        // 2.处理控制命令
         process_commands();
-        // 2.执行控制周期
+        // 3.执行控制周期
         update({});
-        // 3.更新电机状态快照
+        // 4. 发送本周期 EtherCAT 输出
+        _adapter->sendPhysical();
+        // 5.更新电机状态快照
         update_status_snapshot();
-        // 4.调用回调函数
+        // 6.调用回调函数
         if (status_callback_) {
             status_callback_(status_snapshot_);
         }
-        // 5.等待下一个周期
+        // 7.等待下一个周期
         next_period.tv_nsec += period_ns;
         if (next_period.tv_nsec >= NSEC_PER_SEC) {
             next_period.tv_nsec -= NSEC_PER_SEC;

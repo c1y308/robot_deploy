@@ -7,7 +7,7 @@
 #include <chrono>
 
 int main() {
-    int motors_nums = 12;
+    int motors_nums = MYACTUA_NO_FORWARDERS_MOTORS_NUM;
     auto adapter = std::make_shared<myactua::EthercatAdapterIGH>();
     // 实例化控制类，与适配器关联
     myactua::MYACTUA controller(adapter, motors_nums);
@@ -19,10 +19,16 @@ int main() {
     }
 
     std::cout << "[2/4] 等待 " << motors_nums << " 个从站进入 OP..." << std::endl;
-    constexpr int kWaitCycles = 300; // 10s timeout (100 * 100ms)
+    constexpr int kTimeoutMs = 30000;
+    constexpr int kPollMs = 100;
     bool all_ready = false;
     const auto ready_wait_start = std::chrono::steady_clock::now();
-    for (int t = 0; t < kWaitCycles; ++t) {
+    const auto deadline = ready_wait_start + std::chrono::milliseconds(kTimeoutMs);
+    auto next_log_time = ready_wait_start;
+    while (std::chrono::steady_clock::now() < deadline) {
+        adapter->receivePhysical();
+        adapter->sendPhysical();
+
         int ready_count = 0;
         for (int i = 0; i < motors_nums; ++i) {
             if (adapter->isConfigured(i)) {
@@ -36,14 +42,19 @@ int main() {
             std::cout << "[ready] 全部从站就绪，耗时 " << elapsed_ms << " ms" << std::endl;
             break;
         }
-        std::cout << "  已就绪: " << ready_count << "/" << motors_nums << std::endl;
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= next_log_time) {
+            std::cout << "  已就绪: " << ready_count << "/" << motors_nums << std::endl;
+            next_log_time = now + std::chrono::milliseconds(kPollMs);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     if (!all_ready) {
         const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - ready_wait_start).count();
         std::cerr << "[ready] 等待耗时 " << elapsed_ms << " ms" << std::endl;
-        std::cerr << "[错误] 从站未在 10s 内全部就绪，请检查接线/供电/物理位置映射。" << std::endl;
+        std::cerr << "[错误] 从站未在 " << (kTimeoutMs / 1000.0)
+                  << "s 内全部就绪，请检查接线/供电/物理位置映射。" << std::endl;
         return -1;
     }
 

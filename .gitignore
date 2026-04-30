@@ -11,6 +11,9 @@ compile_commands.json
 # Editor and language-server caches
 .cache/
 
+# Local third-party SDKs
+src/inference/third_party/
+
 # Compiled objects and binaries
 *.o
 *.o.d
