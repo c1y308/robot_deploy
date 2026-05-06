@@ -286,12 +286,12 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_rad) {
     std::vector<double> target_deg(config_.num_motors, 0.0);
     for (int i = 0; i < config_.num_motors; ++i) {
         double q = target_q_rad[i];
-        // if (config_.joint_min_rad.size() == static_cast<size_t>(config_.num_motors)) {
-        //     q = std::max(q, config_.joint_min_rad[i]);
-        // }
-        // if (config_.joint_max_rad.size() == static_cast<size_t>(config_.num_motors)) {
-        //     q = std::min(q, config_.joint_max_rad[i]);
-        // }
+        if (config_.joint_min_rad.size() == static_cast<size_t>(config_.num_motors)) {
+            q = std::max(q, config_.joint_min_rad[i]);
+        }
+        if (config_.joint_max_rad.size() == static_cast<size_t>(config_.num_motors)) {
+            q = std::min(q, config_.joint_max_rad[i]);
+        }
         target_deg[i] = myactua::MYACTUA::rad_to_deg(q);
     }
 
@@ -510,10 +510,11 @@ bool RobotInterface::policy_step(double vx, double vy, double yaw_rate) {
         // 模型输出先按训练约定截断/缩放，再叠加站立姿态并进入硬限位。
         const double clipped_action =
             std::max(-config_.action_clip,
-                     std::min(config_.action_clip,
-                              static_cast<double>(raw_action[model_index])));
-        const double target =
-            config_.stand_pose_rad[motor_index] + clipped_action * config_.action_scale;
+                     std::min(config_.action_clip, static_cast<double>(raw_action[model_index])));
+
+        const double target = config_.stand_pose_rad[motor_index] + 
+                              clipped_action * config_.action_scale;
+                              
         target_q_rad[motor_index] =
             std::max(config_.joint_min_rad[motor_index],
                      std::min(config_.joint_max_rad[motor_index], target));

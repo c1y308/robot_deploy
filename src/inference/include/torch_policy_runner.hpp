@@ -28,7 +28,7 @@ public:
     const std::string& last_error() const { return last_error_; }
 
 private:
-    struct Impl;
+    struct Impl;  // std::unique_ptr<torch::jit::script::Module> module;
 
     bool dry_run_and_validate_output();
     void set_error(const std::string& message);

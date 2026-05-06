@@ -37,10 +37,10 @@ struct RobotInterfaceConfig {
     /* 是否在终端打印电机信息 */
     bool print_motors_info = false;  // false将 print_motor_ids 清零
     std::vector<int> print_motor_ids = {-1};  // 仅打印这些ID的电机信息，ID从0开始，-1表示全部
-    /* 电机转动角度限制 */
+    /* 电机转动弧度限制 */
     std::vector<double> joint_min_rad;
     std::vector<double> joint_max_rad;
-    /* 初始姿态各电机的角度值 */
+    /* 初始姿态各电机的弧度值 */
     std::vector<double> stand_pose_rad = {};
 
 

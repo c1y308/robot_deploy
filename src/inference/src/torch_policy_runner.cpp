@@ -48,6 +48,7 @@ TorchPolicyRunner::~TorchPolicyRunner()
     unload();
 }
 
+/* 加载模型 */
 bool TorchPolicyRunner::load(const std::string& model_path)
 {
     unload();
@@ -75,6 +76,50 @@ bool TorchPolicyRunner::load(const std::string& model_path)
     }
 
     return true;
+}
+
+/* 检查模型与输入类型和维度是否正确 */
+bool TorchPolicyRunner::dry_run_and_validate_output()
+{
+    if (!loaded_ || !impl_->module) {
+        set_error("TorchScript policy is not loaded");
+        return false;
+    }
+
+    try {
+        torch::NoGradGuard no_grad;
+        // 使用全零观测验证 forward 入口；这里不关心数值，只关心类型和维度。
+        torch::Tensor input = torch::zeros(
+            {1, static_cast<int64_t>(kInputSize)},
+            torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU));
+
+        torch::jit::IValue output_value = impl_->module->forward({input});
+        if (!output_value.isTensor()) {
+            set_error("TorchScript policy output must be a tensor");
+            return false;
+        }
+
+        std::string output_error;
+        if (!tensor_is_valid_policy_output(output_value.toTensor(),
+                                           kOutputSize,
+                                           output_error)) {
+            set_error(output_error);
+            return false;
+        }
+    } catch (const c10::Error& e) {
+        set_error("TorchScript dry-run failed: " + std::string(e.what()));
+        return false;
+    } catch (const std::exception& e) {
+        set_error("TorchScript dry-run failed: " + std::string(e.what()));
+        return false;
+    }
+
+    return true;
+}
+
+void TorchPolicyRunner::set_error(const std::string& message)
+{
+    last_error_ = message;
 }
 
 void TorchPolicyRunner::unload()
@@ -129,47 +174,5 @@ bool TorchPolicyRunner::infer(const std::array<float, kInputSize>& observation,
     return true;
 }
 
-bool TorchPolicyRunner::dry_run_and_validate_output()
-{
-    if (!loaded_ || !impl_->module) {
-        set_error("TorchScript policy is not loaded");
-        return false;
-    }
-
-    try {
-        torch::NoGradGuard no_grad;
-        // 使用全零观测验证 forward 入口；这里不关心数值，只关心类型和维度。
-        torch::Tensor input = torch::zeros(
-            {1, static_cast<int64_t>(kInputSize)},
-            torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU));
-
-        torch::jit::IValue output_value = impl_->module->forward({input});
-        if (!output_value.isTensor()) {
-            set_error("TorchScript policy output must be a tensor");
-            return false;
-        }
-
-        std::string output_error;
-        if (!tensor_is_valid_policy_output(output_value.toTensor(),
-                                           kOutputSize,
-                                           output_error)) {
-            set_error(output_error);
-            return false;
-        }
-    } catch (const c10::Error& e) {
-        set_error("TorchScript dry-run failed: " + std::string(e.what()));
-        return false;
-    } catch (const std::exception& e) {
-        set_error("TorchScript dry-run failed: " + std::string(e.what()));
-        return false;
-    }
-
-    return true;
-}
-
-void TorchPolicyRunner::set_error(const std::string& message)
-{
-    last_error_ = message;
-}
 
 }  // namespace inference

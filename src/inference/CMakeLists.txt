@@ -85,3 +85,8 @@ add_executable(motors_test
     examples/motors_test.cpp
 )
 target_link_libraries(motors_test PRIVATE robot_interface)
+
+add_executable(policy_test
+    examples/policy_test.cpp
+)
+target_link_libraries(policy_test PRIVATE robot_interface)
