@@ -63,10 +63,10 @@ struct RobotInterfaceConfig {
     /* 网络原始输出动作的截断范围：[-action_clip, action_clip] */
     double action_clip = 18.0;
     /* 截断后的动作缩放系数：target_q = stand_pose_rad + clipped_action * action_scale */
-    double action_scale = 0.25;
+    double action_scale = 1;
 
     /* 步态相位周期，单位 s；phase = fmod(elapsed / policy_cycle_time_s, 1) */
-    double policy_cycle_time_s = 0.0;
+    double policy_cycle_time_s = 0.02;
     /* DOF Pos 缩放，长度必须为 12；输入使用 (q - stand_pose_rad) * dof_pos_scale */
     std::vector<double> dof_pos_scale;
     /* DOF Vel 缩放，长度必须为 12；输入使用 dq * dof_vel_scale */

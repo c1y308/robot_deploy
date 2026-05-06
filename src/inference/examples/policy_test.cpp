@@ -49,15 +49,15 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.policy_model_path = kPolicyModelPath;
     cfg.model_to_motor_index = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 
-    cfg.action_clip = 18.0;
+    cfg.action_clip = 1;
     cfg.action_scale = 0.25;
-    cfg.policy_cycle_time_s = 0.64;
+    cfg.policy_cycle_time_s = 0.02;
 
     cfg.stand_pose_rad.assign(12, 0.0);
     cfg.joint_min_rad.assign(12, -3.14);
-    cfg.joint_max_rad.assign(12, 3.14);
+    cfg.joint_max_rad.assign(12,  3.14);
     cfg.dof_pos_scale.assign(12, 1.0);
-    cfg.dof_vel_scale.assign(12, 1.0);
+    cfg.dof_vel_scale.assign(12, 0.05);
     cfg.command_scale = {1.0, 1.0, 1.0};
     cfg.body_ang_vel_scale = {1.0, 1.0, 1.0};
     cfg.euler_scale = {1.0, 1.0, 1.0};
