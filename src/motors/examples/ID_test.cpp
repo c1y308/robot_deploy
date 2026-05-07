@@ -7,7 +7,7 @@
 #include <chrono>
 
 int main() {
-    int motors_nums = MYACTUA_NO_FORWARDERS_MOTORS_NUM;
+    int motors_nums = 12;
     auto adapter = std::make_shared<myactua::EthercatAdapterIGH>();
     // 实例化控制类，与适配器关联
     myactua::MYACTUA controller(adapter, motors_nums);

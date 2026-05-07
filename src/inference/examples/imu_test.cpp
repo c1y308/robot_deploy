@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <iomanip>
 #include <iostream>
 #include <thread>
 
@@ -29,6 +30,18 @@ int main() {
 
     std::cout << "[IMU_TEST] Running. Press Ctrl+C to stop." << std::endl;
     while (g_running.load()) {
+        const auto euler = robot.get_euler();
+        const auto body_ang_vel = robot.get_body_ang_vel();
+
+        std::cout << std::fixed << std::setprecision(6)
+                  << "[IMU_TEST] euler[roll,pitch,heading]=["
+                  << euler[0] << ", "
+                  << euler[1] << ", "
+                  << euler[2] << "] rad, body_ang_vel[roll,pitch,heading]=["
+                  << body_ang_vel[0] << ", "
+                  << body_ang_vel[1] << ", "
+                  << body_ang_vel[2] << "] rad/s\n";
+
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 

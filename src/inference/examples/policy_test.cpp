@@ -14,7 +14,7 @@
 
 namespace {
 
-constexpr const char* kPolicyModelPath = "../model/policy.pt";
+constexpr const char* kPolicyModelPath = "../model/policy_v3.pt";
 constexpr const char* kEthercatIfname = "enp8s0";
 constexpr const char* kImuDevice = "/dev/ttyUSB0";
 constexpr int kImuBaudrate = 921600;
@@ -47,10 +47,11 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.imu_baudrate    = kImuBaudrate;
 
     cfg.policy_model_path = kPolicyModelPath;
-    cfg.model_to_motor_index = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    //cfg.model_to_motor_index = {0, 6, 1, 7, 2, 8, 3, 9, 4, 11, 5, 10};
+    cfg.model_to_motor_index = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 10};
 
     cfg.action_clip = 1;
-    cfg.action_scale = 0.25;
+    cfg.action_scale = 0.5;
     cfg.policy_cycle_time_s = 0.02;
 
     cfg.stand_pose_rad.assign(12, 0.0);
@@ -58,8 +59,9 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.joint_max_rad.assign(12,  3.14);
     cfg.dof_pos_scale.assign(12, 1.0);
     cfg.dof_vel_scale.assign(12, 0.05);
-    cfg.command_scale = {1.0, 1.0, 1.0};
-    cfg.body_ang_vel_scale = {1.0, 1.0, 1.0};
+
+    cfg.command_scale = {0.1, 0.1, 0.1};
+    cfg.body_ang_vel_scale = {0.2, 0.2, 0.2};
     cfg.euler_scale = {1.0, 1.0, 1.0};
 
     return cfg;

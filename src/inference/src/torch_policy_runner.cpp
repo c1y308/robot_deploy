@@ -140,7 +140,7 @@ bool TorchPolicyRunner::infer(const std::array<float, kInputSize>& observation,
 
     try {
         torch::NoGradGuard no_grad;
-        // 模型训练/导出约定为单输入 float32 tensor，形状固定为 [1, 47]。
+        // 模型训练/导出约定为单输入 float32 tensor，形状固定为 [1, 705]。
         torch::Tensor input = torch::from_blob(
             const_cast<float*>(observation.data()),
             {1, static_cast<int64_t>(observation.size())},

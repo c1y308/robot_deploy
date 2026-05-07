@@ -6,7 +6,6 @@
 #include <array>
 #include <atomic>
 #include <chrono>
-#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -32,7 +31,7 @@ struct RobotInterfaceConfig {
     int num_motors = 12;
     std::string ethercat_ifname = "enp8s0";
     /* 等待所有从站就绪的超时和轮询时间 */
-    int wait_all_slaves_timeout_ms = 20000;
+    int wait_all_slaves_timeout_ms = 30000;
     int wait_all_slaves_poll_ms    = 100;
     /* 是否在终端打印电机信息 */
     bool print_motors_info = false;  // false将 print_motor_ids 清零
@@ -59,11 +58,10 @@ struct RobotInterfaceConfig {
     std::string policy_model_path;
     /* 模型关节维度到电机逻辑索引的映射，长度必须为 12 且不可重复 */
     std::vector<int> model_to_motor_index;
-
     /* 网络原始输出动作的截断范围：[-action_clip, action_clip] */
-    double action_clip = 18.0;
+    double action_clip = 1.0;
     /* 截断后的动作缩放系数：target_q = stand_pose_rad + clipped_action * action_scale */
-    double action_scale = 1;
+    double action_scale = 0.5;
 
     /* 步态相位周期，单位 s；phase = fmod(elapsed / policy_cycle_time_s, 1) */
     double policy_cycle_time_s = 0.02;
@@ -73,21 +71,21 @@ struct RobotInterfaceConfig {
     std::vector<double> dof_vel_scale;
     /* 速度指令缩放，对应 vx、vy、yaw_rate */
     std::array<double, 3> command_scale = {
-        std::numeric_limits<double>::quiet_NaN(),
-        std::numeric_limits<double>::quiet_NaN(),
-        std::numeric_limits<double>::quiet_NaN()
+        0.1,
+        0.1,
+        0.1
     };
     /* 机身角速度缩放，对应 AHRS roll_speed、pitch_speed、heading_speed */
     std::array<double, 3> body_ang_vel_scale = {
-        std::numeric_limits<double>::quiet_NaN(),
-        std::numeric_limits<double>::quiet_NaN(),
-        std::numeric_limits<double>::quiet_NaN()
+        0.2,
+        0.2,
+        0.2
     };
     /* 机身欧拉角缩放，对应 AHRS roll、pitch、heading */
     std::array<double, 3> euler_scale = {
-        std::numeric_limits<double>::quiet_NaN(),
-        std::numeric_limits<double>::quiet_NaN(),
-        std::numeric_limits<double>::quiet_NaN()
+        1,
+        1,
+        1
     };
 };
 
@@ -124,6 +122,8 @@ public:
     bool is_imu_initialized() const { return imu_initialized_.load(); }
     std::array<double, 4> get_quat() const;     // [w, x, y, z]
     std::array<double, 3> get_ang_vel() const;  // [wx, wy, wz], rad/s
+    std::array<double, 3> get_body_ang_vel() const;  // [roll_speed, pitch_speed, heading_speed], rad/s
+    std::array<double, 3> get_euler() const;          // [roll, pitch, heading], rad
 
 
 
@@ -136,7 +136,10 @@ public:
 
 private:
     static constexpr int kPolicyDof = 12;  // 模型输出的动作维度，必须与电机数量一致
-    static constexpr int kPolicyObservationSize = 47;  // 模型观测维度
+    static constexpr int kPolicySingleObservationSize = 47;  // 单帧模型观测维度
+    static constexpr int kPolicyFrameStack = 15;             // 模型输入使用 15 帧观测
+    static constexpr int kPolicyObservationSize =
+        kPolicySingleObservationSize * kPolicyFrameStack;
 
     /* 机器人接口配置 */
     RobotInterfaceConfig config_;
@@ -168,13 +171,15 @@ private:
     std::unique_ptr<TorchPolicyRunner> policy_runner_;
     mutable std::mutex policy_mutex_;
     std::array<float, kPolicyDof> last_action_raw_{};  // 记录上一周期动作值
+    std::array<float, kPolicyObservationSize> observation_history_{};
+    bool observation_history_ready_ = false;
     std::chrono::steady_clock::time_point policy_start_time_{};
 
     bool validate_policy_config() const;
     bool build_policy_observation(double vx,
                                   double vy,
                                   double yaw_rate,
-                                  std::array<float, kPolicyObservationSize>& observation) const;
+                                  std::array<float, kPolicyObservationSize>& observation);
     bool handle_policy_step_failure(const std::string& message);
 };
 

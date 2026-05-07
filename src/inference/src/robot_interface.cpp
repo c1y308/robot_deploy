@@ -68,9 +68,11 @@ bool RobotInterface::initial_and_start_imu() {
         ang_vel_[1] = static_cast<double>(data.pitch_speed);
         ang_vel_[2] = static_cast<double>(data.heading_speed);
         body_ang_vel_ = ang_vel_;
+
         euler_[0] = static_cast<double>(data.roll);
         euler_[1] = static_cast<double>(data.pitch);
         euler_[2] = static_cast<double>(data.heading);
+        
         quat_[0] = static_cast<double>(data.qw);
         quat_[1] = static_cast<double>(data.qx);
         quat_[2] = static_cast<double>(data.qy);
@@ -109,6 +111,16 @@ std::array<double, 4> RobotInterface::get_quat() const {
 std::array<double, 3> RobotInterface::get_ang_vel() const {
     std::lock_guard<std::mutex> lock(imu_mutex_);
     return ang_vel_;
+}
+
+std::array<double, 3> RobotInterface::get_body_ang_vel() const {
+    std::lock_guard<std::mutex> lock(imu_mutex_);
+    return body_ang_vel_;
+}
+
+std::array<double, 3> RobotInterface::get_euler() const {
+    std::lock_guard<std::mutex> lock(imu_mutex_);
+    return euler_;
 }
 
 
@@ -373,6 +385,8 @@ bool RobotInterface::load_policy() {
     // 加载前先清掉旧 runner 和上一周期动作，避免失败后残留旧策略状态。
     policy_runner_.reset();
     last_action_raw_.fill(0.0F);
+    observation_history_.fill(0.0F);
+    observation_history_ready_ = false;
     policy_start_time_ = std::chrono::steady_clock::now();
 
     if (!validate_policy_config()) {
@@ -473,12 +487,16 @@ void RobotInterface::unload_policy() {
     std::lock_guard<std::mutex> lock(policy_mutex_);
     policy_runner_.reset();
     last_action_raw_.fill(0.0F);
+    observation_history_.fill(0.0F);
+    observation_history_ready_ = false;
 }
 
 
 void RobotInterface::reset_policy_state() {
     std::lock_guard<std::mutex> lock(policy_mutex_);
     last_action_raw_.fill(0.0F);
+    observation_history_.fill(0.0F);
+    observation_history_ready_ = false;
     policy_start_time_ = std::chrono::steady_clock::now();
 }
 
@@ -490,7 +508,7 @@ bool RobotInterface::policy_step(double vx, double vy, double yaw_rate) {
         return handle_policy_step_failure("policy is not loaded");
     }
 
-    // 单次策略闭环：状态采样 -> 47 维观测 -> 模型推理 -> 目标关节角 -> CSP 下发。
+    // 单次策略闭环：状态采样 -> 15 帧观测 -> 模型推理 -> 目标关节角 -> CSP 下发。
     std::array<float, kPolicyObservationSize> observation = {};
     if (!build_policy_observation(vx, vy, yaw_rate, observation)) {
         return handle_policy_step_failure("failed to build policy observation");
@@ -532,7 +550,7 @@ bool RobotInterface::build_policy_observation(
     double vx,
     double vy,
     double yaw_rate,
-    std::array<float, kPolicyObservationSize>& observation) const {
+    std::array<float, kPolicyObservationSize>& observation) {
 
     if (!motors_initialized_.load() || !controller_) {
         std::cerr << "[RobotInterface] policy observation rejected: motors are not initialized\n";
@@ -577,39 +595,57 @@ bool RobotInterface::build_policy_observation(
     const double elapsed_s =
         std::chrono::duration<double>(now - policy_start_time_).count();
     // 相位只由策略启动后的时间和训练周期决定，输入为 sin/cos 避免 0/1 跳变。
-    double phase = std::fmod(elapsed_s / config_.policy_cycle_time_s, 1.0);
+    double phase = std::fmod(elapsed_s * 0.1 / config_.policy_cycle_time_s, 1.0);
     if (phase < 0.0) {
         phase += 1.0;
     }
 
-    // 观测顺序必须和训练完全一致：phase、command、q、dq、last_action、IMU。
-    observation.fill(0.0F);
-    observation[0] = static_cast<float>(std::sin(2.0 * kPi * phase));
-    observation[1] = static_cast<float>(std::cos(2.0 * kPi * phase));
+    // 单帧观测顺序必须和训练完全一致：phase、command、q、dq、last_action、IMU。
+    std::array<float, kPolicySingleObservationSize> current_observation = {};
+    current_observation[0] = static_cast<float>(std::sin(2.0 * kPi * phase));
+    current_observation[1] = static_cast<float>(std::cos(2.0 * kPi * phase));
 
-    observation[2] = static_cast<float>(vx * config_.command_scale[0]);
-    observation[3] = static_cast<float>(vy * config_.command_scale[1]);
-    observation[4] = static_cast<float>(yaw_rate * config_.command_scale[2]);
+    current_observation[2] = static_cast<float>(vx * config_.command_scale[0]);
+    current_observation[3] = static_cast<float>(vy * config_.command_scale[1]);
+    current_observation[4] = static_cast<float>(yaw_rate * config_.command_scale[2]);
 
     for (int model_index = 0; model_index < kPolicyDof; ++model_index) {
         const int motor_index = config_.model_to_motor_index[model_index];
         // 按模型关节顺序取电机状态；位置使用相对站立姿态，不使用绝对角。
-        observation[5 + model_index]  =
+        current_observation[5 + model_index]  =
             static_cast<float>((q_rad[motor_index] - config_.stand_pose_rad[motor_index]) *
                                config_.dof_pos_scale[model_index]);
-        observation[17 + model_index] =
+        current_observation[17 + model_index] =
             static_cast<float>(dq_rad_s[motor_index] *
                                config_.dof_vel_scale[model_index]);
-        observation[29 + model_index] = last_action_raw_[model_index];
+        current_observation[29 + model_index] = last_action_raw_[model_index];
     }
 
     for (int i = 0; i < 3; ++i) {
-        observation[41 + i] =
+        current_observation[41 + i] =
             static_cast<float>(body_ang_vel[i] * config_.body_ang_vel_scale[i]);
-        observation[44 + i] =
+        current_observation[44 + i] =
             static_cast<float>(euler[i] * config_.euler_scale[i]);
     }
 
+    if (!observation_history_ready_) {
+        for (int frame = 0; frame < kPolicyFrameStack; ++frame) {
+            std::copy(current_observation.begin(),
+                      current_observation.end(),
+                      observation_history_.begin() +
+                          frame * kPolicySingleObservationSize);
+        }
+        observation_history_ready_ = true;
+    } else {
+        std::copy(observation_history_.begin() + kPolicySingleObservationSize,
+                  observation_history_.end(),
+                  observation_history_.begin());
+        std::copy(current_observation.begin(),
+                  current_observation.end(),
+                  observation_history_.end() - kPolicySingleObservationSize);
+    }
+
+    observation = observation_history_;
     return true;
 }
 

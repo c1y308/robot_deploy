@@ -29,10 +29,10 @@ constexpr int kWaitReadyPollMs = 100;       // 检查从站状态的轮询周期
 constexpr int kWarmupMs = 1000;             // 停机后等待控制状态稳定的时间
 constexpr int kModeSwitchWaitMs = 1000;     // 切换到 CSP 模式后等待模式生效的时间
 constexpr int kRestartWaitMs = 1000;        // RESTART 后等待电机完成使能的时间
-constexpr int kCommandPeriodMs = 10;        // 插值轨迹下发周期
-constexpr int kSquatDurationMs = 300;      // 从站立到下蹲的轨迹时长
+constexpr int kCommandPeriodMs = 1;        // 插值轨迹下发周期
+constexpr int kSquatDurationMs = 1000;      // 从站立到下蹲的轨迹时长
 constexpr int kHoldBottomMs = 2000;         // 下蹲到底后保持不动的时间
-constexpr int kStandDurationMs = 300;      // 从下蹲恢复到站立的轨迹时长
+constexpr int kStandDurationMs = 1000;      // 从下蹲恢复到站立的轨迹时长
 constexpr char kErrorLogFile[] = "squat_stand_interp_error.txt";
 
 // “机器人蹲下最终时刻”12 个电机位置，单位为 deg。
@@ -41,8 +41,8 @@ constexpr char kErrorLogFile[] = "squat_stand_interp_error.txt";
 
 // };
 constexpr std::array<double, kNumMotors> kSquatTargetDeg = {
-    8.6, 21.745, -12.8, 50, 90, -94,
-    0.0, -17, -1, -50, 0, 0
+    0.0, 0, 0, 0, 0, 0,
+    0.0, 0,  0, -0, 0, 0
 };
 
 void signal_handler(int)
