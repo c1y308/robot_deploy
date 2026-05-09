@@ -4,6 +4,12 @@ project(robot_inference_hw_interface CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+option(POLICY_V3 "Build policy_test with policy_v3.pt input layout" ON)
+if(POLICY_V3)
+    set(POLICY_V3_VALUE 1)
+else()
+    set(POLICY_V3_VALUE 0)
+endif()
 
 set(LOCAL_LIBTORCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libtorch)
 set(LOCAL_PYTORCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/python_torch/torch)
@@ -60,6 +66,7 @@ add_library(robot_interface STATIC
     src/robot_interface.cpp
     src/torch_policy_runner.cpp
 )
+target_compile_definitions(robot_interface PUBLIC POLICY_V3=${POLICY_V3_VALUE})
 target_include_directories(robot_interface PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include

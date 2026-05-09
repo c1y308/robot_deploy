@@ -418,9 +418,11 @@ bool RobotInterface::validate_policy_config() const {
     if (config_.policy_model_path.empty()) {
         return fail("policy_model_path is empty");
     }
+#if POLICY_V3
     if (!std::isfinite(config_.policy_cycle_time_s) || config_.policy_cycle_time_s <= 0.0) {
         return fail("policy_cycle_time_s must be finite and > 0");
     }
+#endif
     if (!std::isfinite(config_.action_clip) || config_.action_clip <= 0.0) {
         return fail("action_clip must be finite and > 0");
     }
@@ -508,7 +510,7 @@ bool RobotInterface::policy_step(double vx, double vy, double yaw_rate) {
         return handle_policy_step_failure("policy is not loaded");
     }
 
-    // 单次策略闭环：状态采样 -> 15 帧观测 -> 模型推理 -> 目标关节角 -> CSP 下发。
+    // 单次策略闭环：状态采样 -> 帧观测 -> 模型推理 -> 目标关节角 -> CSP 下发。
     std::array<float, kPolicyObservationSize> observation = {};
     if (!build_policy_observation(vx, vy, yaw_rate, observation)) {
         return handle_policy_step_failure("failed to build policy observation");
@@ -591,15 +593,14 @@ bool RobotInterface::build_policy_observation(
         return false;
     }
 
+#if POLICY_V3
     const auto now = std::chrono::steady_clock::now();
     const double elapsed_s =
         std::chrono::duration<double>(now - policy_start_time_).count();
-    // 相位只由策略启动后的时间和训练周期决定，输入为 sin/cos 避免 0/1 跳变。
     double phase = std::fmod(elapsed_s * 0.1 / config_.policy_cycle_time_s, 1.0);
     if (phase < 0.0) {
         phase += 1.0;
     }
-
     // 单帧观测顺序必须和训练完全一致：phase、command、q、dq、last_action、IMU。
     std::array<float, kPolicySingleObservationSize> current_observation = {};
     current_observation[0] = static_cast<float>(std::sin(2.0 * kPi * phase));
@@ -610,8 +611,8 @@ bool RobotInterface::build_policy_observation(
     current_observation[4] = static_cast<float>(yaw_rate * config_.command_scale[2]);
 
     for (int model_index = 0; model_index < kPolicyDof; ++model_index) {
+        /* 电机关节映射转换 */
         const int motor_index = config_.model_to_motor_index[model_index];
-        // 按模型关节顺序取电机状态；位置使用相对站立姿态，不使用绝对角。
         current_observation[5 + model_index]  =
             static_cast<float>((q_rad[motor_index] - config_.stand_pose_rad[motor_index]) *
                                config_.dof_pos_scale[model_index]);
@@ -628,14 +629,64 @@ bool RobotInterface::build_policy_observation(
             static_cast<float>(euler[i] * config_.euler_scale[i]);
     }
 
+    /* 填充观测历史，首次填充用当前观测值来填满 */
+    if (!observation_history_ready_) {
+        for (int frame = 0; frame < kPolicyFrameStack; ++frame) {
+            std::copy(current_observation.begin(),
+                       current_observation.end(),
+                     observation_history_.begin() + frame * kPolicySingleObservationSize);
+        }
+        observation_history_ready_ = true;
+    } 
+    /* 之后把当前观测帧添加到末尾 */
+    else {
+        std::copy(observation_history_.begin() + kPolicySingleObservationSize,
+                   observation_history_.end(),
+                 observation_history_.begin());
+        std::copy(current_observation.begin(),
+                   current_observation.end(),
+                 observation_history_.end() - kPolicySingleObservationSize);
+    }
+
+    observation = observation_history_;
+    return true;
+
+#else
+    // 旧版本模型输入没有 phase
+    std::array<float, kPolicySingleObservationSize> current_observation = {};
+
+    current_observation[0] = static_cast<float>(vx * config_.command_scale[0]);
+    current_observation[1] = static_cast<float>(vy * config_.command_scale[1]);
+    current_observation[2] = static_cast<float>(yaw_rate * config_.command_scale[2]);
+
+    for (int model_index = 0; model_index < kPolicyDof; ++model_index) {
+        /* 电机关节映射转换 */
+        const int motor_index = config_.model_to_motor_index[model_index];
+        current_observation[3 + model_index]  =
+            static_cast<float>((q_rad[motor_index] - config_.stand_pose_rad[motor_index]) *
+                               config_.dof_pos_scale[model_index]);
+        current_observation[15 + model_index] =
+            static_cast<float>(dq_rad_s[motor_index] *
+                               config_.dof_vel_scale[model_index]);
+        current_observation[27 + model_index] = last_action_raw_[model_index];
+    }
+
+    for (int i = 0; i < 3; ++i) {
+        current_observation[39 + i] =
+            static_cast<float>(body_ang_vel[i] * config_.body_ang_vel_scale[i]);
+        current_observation[42 + i] =
+            static_cast<float>(euler[i] * config_.euler_scale[i]);
+    }
+
+    /* 首次填充用当前观测值来填满 */
     if (!observation_history_ready_) {
         for (int frame = 0; frame < kPolicyFrameStack; ++frame) {
             std::copy(current_observation.begin(),
                       current_observation.end(),
-                      observation_history_.begin() +
-                          frame * kPolicySingleObservationSize);
+                      observation_history_.begin() + frame * kPolicySingleObservationSize);
         }
         observation_history_ready_ = true;
+    /* 之后把当前观测帧添加到末尾 */
     } else {
         std::copy(observation_history_.begin() + kPolicySingleObservationSize,
                   observation_history_.end(),
@@ -647,6 +698,8 @@ bool RobotInterface::build_policy_observation(
 
     observation = observation_history_;
     return true;
+
+#endif
 }
 
 

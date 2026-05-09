@@ -9,7 +9,11 @@ namespace inference {
 
 class TorchPolicyRunner {
 public:
+#if POLICY_V3
     static constexpr std::size_t kInputSize  = 47 * 15;
+#else
+    static constexpr std::size_t kInputSize  = 45 * 5;
+#endif
     static constexpr std::size_t kOutputSize = 12;
 
     TorchPolicyRunner();

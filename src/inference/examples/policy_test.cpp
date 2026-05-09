@@ -14,7 +14,12 @@
 
 namespace {
 
+#if POLICY_V3
 constexpr const char* kPolicyModelPath = "../model/policy_v3.pt";
+#else
+constexpr const char* kPolicyModelPath = "../model/policy.pt";
+#endif
+
 constexpr const char* kEthercatIfname = "enp8s0";
 constexpr const char* kImuDevice = "/dev/ttyUSB0";
 constexpr int kImuBaudrate = 921600;
@@ -47,8 +52,14 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.imu_baudrate    = kImuBaudrate;
 
     cfg.policy_model_path = kPolicyModelPath;
-    //cfg.model_to_motor_index = {0, 6, 1, 7, 2, 8, 3, 9, 4, 11, 5, 10};
-    cfg.model_to_motor_index = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 10};
+
+#if POLICY_V3
+    cfg.model_to_motor_index = {0, 1, 2, 3, 4, 5,
+                                6, 7, 8, 9, 11, 10};
+#else
+    cfg.model_to_motor_index = {0, 6, 1, 7, 2, 8,
+                                3, 9, 4, 11, 5, 10};
+#endif
 
     cfg.action_clip = 1;
     cfg.action_scale = 0.5;

@@ -39,7 +39,6 @@ add_executable(ID_test examples/ID_test.cpp)
 add_executable(linear_test examples/linear_test.cpp)
 add_executable(raw_pos_test examples/raw_pos_test.cpp)
 add_executable(squat_stand examples/squat_stand.cpp)
-add_executable(stop_read_status examples/stop_read_status.cpp)
 
 # 链接库
 target_link_libraries(simple_test MYACTUA_EtherCat)
@@ -47,6 +46,5 @@ target_link_libraries(ID_test MYACTUA_EtherCat)
 target_link_libraries(linear_test MYACTUA_EtherCat)
 target_link_libraries(raw_pos_test MYACTUA_EtherCat)
 target_link_libraries(squat_stand MYACTUA_EtherCat)
-target_link_libraries(stop_read_status MYACTUA_EtherCat)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

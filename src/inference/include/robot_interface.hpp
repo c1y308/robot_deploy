@@ -62,7 +62,6 @@ struct RobotInterfaceConfig {
     double action_clip = 1.0;
     /* 截断后的动作缩放系数：target_q = stand_pose_rad + clipped_action * action_scale */
     double action_scale = 0.5;
-
     /* 步态相位周期，单位 s；phase = fmod(elapsed / policy_cycle_time_s, 1) */
     double policy_cycle_time_s = 0.02;
     /* DOF Pos 缩放，长度必须为 12；输入使用 (q - stand_pose_rad) * dof_pos_scale */
@@ -136,8 +135,13 @@ public:
 
 private:
     static constexpr int kPolicyDof = 12;  // 模型输出的动作维度，必须与电机数量一致
+#if POLICY_V3
     static constexpr int kPolicySingleObservationSize = 47;  // 单帧模型观测维度
     static constexpr int kPolicyFrameStack = 15;             // 模型输入使用 15 帧观测
+#else
+    static constexpr int kPolicySingleObservationSize = 45;  // 单帧模型观测维度
+    static constexpr int kPolicyFrameStack = 5;              // 模型输入使用 5 帧观测
+#endif
     static constexpr int kPolicyObservationSize =
         kPolicySingleObservationSize * kPolicyFrameStack;
 
