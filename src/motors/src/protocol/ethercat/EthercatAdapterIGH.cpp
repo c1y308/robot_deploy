@@ -68,9 +68,10 @@ ec_pdo_entry_info_t EthercatAdapterIGH::device_pdo_entries[] = {
     {0x607a, 0x00, 32},  // 目标位置
     {0x60ff, 0x00, 32},  // 目标转速
     {0x6071, 0x00, 16},  // 目标扭矩
-    {0x6072, 0x00, 16},  // 最大扭矩
+    {0x2000, 0x00, 32},  // PVT_KP
+    {0x2001, 0x00, 32},  // PVT_KD
     {0x6060, 0x00, 8},   // 设置运行模式
-    {0x5ffe, 0x00, 8},   // 填充字节
+    {0x2ffd, 0x00, 8},   // 填充字节
     /* ========== RxPDO (主站从从站接收) ========== */
     {0x6041, 0x00, 16},   // 状态字
     {0x6064, 0x00, 32},   // 实际位置
@@ -78,14 +79,14 @@ ec_pdo_entry_info_t EthercatAdapterIGH::device_pdo_entries[] = {
     {0x6077, 0x00, 16},  // 实际扭矩
     {0x603f, 0x00, 16},  // 错误码
     {0x6061, 0x00, 8},   // 运行模式
-    {0x5ffe, 0x00, 8},   // 填充字节
+    {0x2ffe, 0x00, 8},   // 填充字节
 };
 
 ec_pdo_info_t EthercatAdapterIGH::device_pdos[] = {
     // RX 主站发送
-    {0x1600, 7, &EthercatAdapterIGH::device_pdo_entries[0]},
+    {0x1601, 8, &EthercatAdapterIGH::device_pdo_entries[0]},
     // TX 主站接收
-    {0x1a00, 7, &EthercatAdapterIGH::device_pdo_entries[7]},
+    {0x1a00, 7, &EthercatAdapterIGH::device_pdo_entries[8]},
 };
 
 ec_sync_info_t EthercatAdapterIGH::device_syncs[] = {
@@ -108,7 +109,8 @@ EthercatAdapterIGH::EthercatAdapterIGH() {
         tx_shadow[i].target_pos = 0;
         tx_shadow[i].target_vel = 0;
         tx_shadow[i].target_torque = 0;
-        tx_shadow[i].max_torque = 0;
+        tx_shadow[i].pvt_kp = 0;
+        tx_shadow[i].pvt_kd = 0;
         tx_shadow[i].op_mode = ControlMode::NONE;
         tx_shadow[i].reserved = 0;
     }
@@ -174,7 +176,8 @@ bool EthercatAdapterIGH::init(const char* ifname)
             {0, position, VID_PID, 0x607A, 0, &slave_offsets[i].off_target_pos, nullptr},
             {0, position, VID_PID, 0x60FF, 0, &slave_offsets[i].off_target_vel, nullptr},
             {0, position, VID_PID, 0x6071, 0, &slave_offsets[i].off_target_torque, nullptr},
-            {0, position, VID_PID, 0x6072, 0, &slave_offsets[i].off_max_torque, nullptr},
+            {0, position, VID_PID, 0x2000, 0, &slave_offsets[i].off_pvt_kp, nullptr},
+            {0, position, VID_PID, 0x2001, 0, &slave_offsets[i].off_pvt_kd, nullptr},
             {0, position, VID_PID, 0x6060, 0, &slave_offsets[i].off_mode_of_op, nullptr},
 
             {0, position, VID_PID, 0x6041, 0, &slave_offsets[i].off_status_word, nullptr},
@@ -226,7 +229,8 @@ void EthercatAdapterIGH::write_txpdo_to_domain(std::size_t index, const TxPDO& p
     EC_WRITE_S32(domain1_pd + off.off_target_pos, pdo.target_pos);
     EC_WRITE_S32(domain1_pd + off.off_target_vel, pdo.target_vel);
     EC_WRITE_S16(domain1_pd + off.off_target_torque, pdo.target_torque);
-    EC_WRITE_U16(domain1_pd + off.off_max_torque, pdo.max_torque);
+    EC_WRITE_S32(domain1_pd + off.off_pvt_kp, pdo.pvt_kp);
+    EC_WRITE_S32(domain1_pd + off.off_pvt_kd, pdo.pvt_kd);
     EC_WRITE_S8(domain1_pd + off.off_mode_of_op, pdo.op_mode);
 }
 

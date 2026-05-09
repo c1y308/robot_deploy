@@ -35,9 +35,11 @@ public:
         bool enabled;
         ControlMode mode;
         double setpoint;
+        MitSetpoint mit_setpoint;
 
         DesiredState()
-            : enabled(false), mode(ControlMode::CSP), setpoint(0.0) {}
+            : enabled(false), mode(ControlMode::CSP), setpoint(0.0),
+              mit_setpoint() {}
     };
 
     struct ObservedState {

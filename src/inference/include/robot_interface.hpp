@@ -41,6 +41,11 @@ struct RobotInterfaceConfig {
     std::vector<double> joint_max_rad;
     /* 初始姿态各电机的弧度值 */
     std::vector<double> stand_pose_rad = {};
+    /* 默认使用 MIT/PVT 模式；若改为 CSP，apply_action 将沿用位置指令路径 */
+    myactua::ControlMode motor_control_mode = myactua::ControlMode::PVT;
+    /* MIT/PVT 模式刚度/阻尼，必须由调用侧显式配置 */
+    std::vector<double> mit_kp;
+    std::vector<double> mit_kd;
 
 
 
@@ -151,6 +156,7 @@ private:
     /* 以太网适配器 智能指针 */
     std::shared_ptr<myactua::EthercatAdapterIGH> adapter_;
     std::unique_ptr<myactua::MYACTUA> controller_;  // 电机控制器指针
+    bool validate_motor_config() const;
     bool wait_all_slaves_ready() const;  // 等待电机初始化完成
 
 

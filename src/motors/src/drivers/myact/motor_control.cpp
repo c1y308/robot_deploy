@@ -1,6 +1,8 @@
 #include "motor_control.hpp"
 #include <algorithm>
+#include <cmath>
 #include <iostream>
+#include <limits>
 #include <time.h>
 #include <pthread.h>
 #include <sched.h>
@@ -16,7 +18,28 @@ constexpr double kPosPlusPerRev = 131072.0;
 constexpr double kRawPosToRad = (2.0 * kPi) / kPosPlusPerRev;
 constexpr double kRawVelToRpm = 60.0 / kPosPlusPerRev;
 constexpr double kRpmToRadPerSec = (2.0 * kPi) / 60.0;
+constexpr double kRawVelToRadPerSec = kRawVelToRpm * kRpmToRadPerSec;
 constexpr double kRadToDeg = 180.0 / kPi;
+
+int32_t double_to_i32(double value)
+{
+    if (!std::isfinite(value)) {
+        return 0;
+    }
+    const double lo = static_cast<double>(std::numeric_limits<int32_t>::min());
+    const double hi = static_cast<double>(std::numeric_limits<int32_t>::max());
+    return static_cast<int32_t>(std::llround(std::max(lo, std::min(hi, value))));
+}
+
+int16_t double_to_i16(double value)
+{
+    if (!std::isfinite(value)) {
+        return 0;
+    }
+    const double lo = static_cast<double>(std::numeric_limits<int16_t>::min());
+    const double hi = static_cast<double>(std::numeric_limits<int16_t>::max());
+    return static_cast<int16_t>(std::llround(std::max(lo, std::min(hi, value))));
+}
 }
 
 /* 电机控制器构造函数 */
@@ -87,6 +110,17 @@ void MYACTUA::process_commands()
             case CommandType::SET_SETPOINTS:
                 for (size_t i = 0; i < cmd.values.size() && i < _motors.size(); i++) {
                     _motors[i].desired.setpoint = cmd.values[i];
+                }
+                break;
+
+            case CommandType::SET_MIT_SETPOINTS:
+                if (cmd.slave_index < 0) {
+                    for (size_t i = 0; i < cmd.mit_setpoints.size() && i < _motors.size(); i++) {
+                        _motors[i].desired.mit_setpoint = cmd.mit_setpoints[i];
+                    }
+                } else if (cmd.slave_index < static_cast<int>(_motors.size()) &&
+                           !cmd.mit_setpoints.empty()) {
+                    _motors[cmd.slave_index].desired.mit_setpoint = cmd.mit_setpoints.front();
                 }
                 break;
                 
@@ -329,6 +363,7 @@ void MYACTUA::apply_discrete_command_to_motor(int motor_index, const DiscreteCom
             }
             break;
         case CommandType::SET_SETPOINTS:
+        case CommandType::SET_MIT_SETPOINTS:
             break;
     }
 }
@@ -349,6 +384,7 @@ bool MYACTUA::is_discrete_command_satisfied(const MotorState& motor, const Discr
         case CommandType::SET_MODE:
             return observed.mode == cmd.mode;
         case CommandType::SET_SETPOINTS:
+        case CommandType::SET_MIT_SETPOINTS:
             return true;
     }
     return false;
@@ -370,6 +406,8 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
         motor.tx.target_pos = motor.rx.pos;
         motor.tx.target_vel = 0;
         motor.tx.target_torque = 0;
+        motor.tx.pvt_kp = 0;
+        motor.tx.pvt_kd = 0;
         return;
     }
 
@@ -382,6 +420,8 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
         motor.tx.target_vel = 0;
         motor.tx.target_pos = motor.rx.pos;
         motor.tx.target_torque = 0;
+        motor.tx.pvt_kp = 0;
+        motor.tx.pvt_kd = 0;
         return;
     }
 
@@ -393,6 +433,8 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
         motor.tx.target_pos = motor.rx.pos;
         motor.tx.target_vel = 0;
         motor.tx.target_torque = 0;
+        motor.tx.pvt_kp = 0;
+        motor.tx.pvt_kd = 0;
         return;
     }
 
@@ -411,7 +453,8 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
 
     if (observed.operation_enabled) {
         motor.step = MotorStep::RUNNING;
-        motor.tx.max_torque = 5000;
+        motor.tx.pvt_kp = 0;
+        motor.tx.pvt_kd = 0;
         switch (desired.mode) {
             case ControlMode::CSV:  // rpm
                 motor.tx.target_vel = static_cast<int32_t>(setvalue / kRawVelToRpm);
@@ -422,6 +465,15 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
             case ControlMode::CST:  // 电流百分比
                 motor.tx.target_torque = static_cast<int16_t>(setvalue);
                 break;
+            case ControlMode::PVT: {
+                const MitSetpoint& mit = desired.mit_setpoint;
+                motor.tx.target_pos = double_to_i32(mit.position_rad / kRawPosToRad);
+                motor.tx.target_vel = double_to_i32(mit.velocity_rad_s / kRawVelToRadPerSec);
+                motor.tx.target_torque = double_to_i16(mit.torque_ff_permille);
+                motor.tx.pvt_kp = double_to_i32(mit.kp * 1000.0);
+                motor.tx.pvt_kd = double_to_i32(mit.kd * 1000.0);
+                break;
+            }
             default:
                 break;
         }
@@ -430,6 +482,8 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
         motor.tx.target_pos = motor.rx.pos;
         motor.tx.target_vel = 0;
         motor.tx.target_torque = 0;
+        motor.tx.pvt_kp = 0;
+        motor.tx.pvt_kd = 0;
     }
 }
 
@@ -447,7 +501,8 @@ void MYACTUA::handle_mode_switching(MotorState& motor)
     motor.tx.target_pos = motor.rx.pos;
     motor.tx.target_vel = 0;
     motor.tx.target_torque = 0;
-    motor.tx.max_torque = 5000;
+    motor.tx.pvt_kp = 0;
+    motor.tx.pvt_kd = 0;
 
     switch (motor.mode_switch_step)
     {
@@ -580,7 +635,7 @@ double MYACTUA::rad_to_deg(double rad)
 
 double MYACTUA::raw_vel_to_rad_s(double raw_vel)
 {
-    return raw_vel * kRawVelToRpm * kRpmToRadPerSec;
+    return raw_vel * kRawVelToRadPerSec;
 }
 
 
@@ -701,6 +756,7 @@ void MYACTUA::print_motors_info(void){
         const char* mode_name = "UNKNOWN";
         switch (m.rx.op_mode) {
             case ControlMode::NONE: mode_name = "NONE"; break;
+            case ControlMode::PVT: mode_name = "PVT"; break;
             case ControlMode::CSP: mode_name = "CSP"; break;
             case ControlMode::CSV: mode_name = "CSV"; break;
             case ControlMode::CST: mode_name = "CST"; break;
@@ -710,6 +766,7 @@ void MYACTUA::print_motors_info(void){
         const char* tx_mode_name = "UNKNOWN";
         switch (m.tx.op_mode) {
             case ControlMode::NONE: tx_mode_name = "NONE"; break;
+            case ControlMode::PVT: tx_mode_name = "PVT"; break;
             case ControlMode::CSP: tx_mode_name = "CSP"; break;
             case ControlMode::CSV: tx_mode_name = "CSV"; break;
             case ControlMode::CST: tx_mode_name = "CST"; break;
@@ -719,8 +776,14 @@ void MYACTUA::print_motors_info(void){
         const double rx_pos_rad = static_cast<double>(m.rx.pos) * kRawPosToRad;
         const double rx_pos_deg = rx_pos_rad * kRadToDeg;
         const double rx_vel_rpm = static_cast<double>(m.rx.vel) * kRawVelToRpm;
-        char tx_target_info[32] = {};
+        char tx_target_info[64] = {};
         switch (m.tx.op_mode) {
+            case ControlMode::PVT:
+                std::snprintf(tx_target_info, sizeof(tx_target_info), "p=%.6f kp=%.3f kd=%.3f",
+                    static_cast<double>(m.tx.target_pos) * kRawPosToRad,
+                    static_cast<double>(m.tx.pvt_kp) * 0.001,
+                    static_cast<double>(m.tx.pvt_kd) * 0.001);
+                break;
             case ControlMode::CSP:
                 std::snprintf(tx_target_info, sizeof(tx_target_info), "%.6f rad",
                     static_cast<double>(m.tx.target_pos) * kRawPosToRad);

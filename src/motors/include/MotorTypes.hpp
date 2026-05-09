@@ -7,10 +7,11 @@ constexpr uint32_t TX_CONTROL_WORD_OFFSET = 0;  // 2 bytes
 constexpr uint32_t TX_TARGET_POS_OFFSET   = 2;  // 4 bytes
 constexpr uint32_t TX_TARGET_VEL_OFFSET   = 6;  // 4 bytes
 constexpr uint32_t TX_TARGET_TORQUE_OFFSET= 10; // 2 bytes
-constexpr uint32_t TX_MAX_TORQUE_OFFSET   = 12; // 2 bytes
-constexpr uint32_t TX_MODE_OF_OP_OFFSET   = 14; // 1 bytes   
-constexpr uint32_t TX_RESERVED_OFFSET     = 15; // 1 bytes
-constexpr uint32_t TX_PDO_SIZE = 16;
+constexpr uint32_t TX_PVT_KP_OFFSET       = 12; // 4 bytes
+constexpr uint32_t TX_PVT_KD_OFFSET       = 16; // 4 bytes
+constexpr uint32_t TX_MODE_OF_OP_OFFSET   = 20; // 1 bytes
+constexpr uint32_t TX_RESERVED_OFFSET     = 21; // 1 bytes
+constexpr uint32_t TX_PDO_SIZE = 22;
 
 constexpr uint32_t RX_STATUS_WORD_OFFSET  = 0;   // 2 bytes
 constexpr uint32_t RX_POS_OFFSET          = 2;   // 4 bytes
@@ -25,6 +26,8 @@ constexpr uint32_t RX_PDO_SIZE = 16;
 /* 运行模式:0x6060 */
 enum ControlMode : int8_t{
     NONE = 0,
+    PVT  = 0x05,  // PVT/MIT 混合控制模式
+    MIT  = PVT,   // MIT 模式别名
     CSP  = 0x08,  // 周期同步位置模式
     CSV  = 0x09,  // 周期同步速度模式
     CST  = 0x0A,  // 周期同步扭矩模式
@@ -104,12 +107,13 @@ enum class ModeSwitchStep {
 struct TxPDO
 {
     uint16_t control_word;         // 0x6040:控制字
-    int32_t  target_pos;           // 0x607A:目标位置(周期同步位置模式)
-    int32_t  target_vel;           // 0x60FF:目标转速(周期同步速度模式)
-    int16_t  target_torque;        // 0x6071:目标扭矩(周期同步扭矩模式)
-    uint16_t max_torque;           // 0x6072:
+    int32_t  target_pos;           // 0x607A:目标位置/PVT期望位置
+    int32_t  target_vel;           // 0x60FF:目标转速/PVT期望速度
+    int16_t  target_torque;        // 0x6071:目标扭矩/PVT力矩前馈
+    int32_t  pvt_kp;               // 0x2000:PVT_KP，实际Kp的1000倍
+    int32_t  pvt_kd;               // 0x2001:PVT_KD，实际Kd的1000倍
     int8_t   op_mode;              // 0x6060:设置运行模式
-    uint8_t  reserved;             // 0x5FFE (1字节填充)
+    uint8_t  reserved;             // 0x2FFD (1字节填充)
 }__attribute__((packed));
 /* RxPD0主站接受从站数据 */   
 struct RxPDO
@@ -120,7 +124,7 @@ struct RxPDO
     int16_t torque;           // 0x6077:电机实际扭矩
     uint16_t error;           // 0x603F
     int8_t op_mode;           // 0x6061:显示运行模式
-    uint8_t reserved;         // 0x5FFE (1字节填充)
+    uint8_t reserved;         // 0x2FFE (1字节填充)
 }__attribute__((packed));
 #pragma pack(pop)
 

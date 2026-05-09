@@ -8,9 +8,31 @@ namespace myactua {
 
 enum class CommandType {
     SET_SETPOINTS,  // 设置目标值
+    SET_MIT_SETPOINTS,  // 设置MIT/PVT目标值
     STOP,           // 停止电机
     RESTART,        // 启动电机
     SET_MODE        // 设置电机模式
+};
+
+/* MIT/PVT 模式单轴目标值，外部使用 SI 单位 */
+struct MitSetpoint {
+    double position_rad;         // 0x607A, rad -> increments
+    double velocity_rad_s;       // 0x60FF, rad/s -> increments/s
+    double torque_ff_permille;   // 0x6071, 千分之一额定力矩
+    double kp;                   // 0x2000, 写入 kp * 1000
+    double kd;                   // 0x2001, 写入 kd * 1000
+
+    MitSetpoint()
+        : position_rad(0.0), velocity_rad_s(0.0), torque_ff_permille(0.0),
+          kp(0.0), kd(0.0) {}
+
+    MitSetpoint(double pos_rad,
+                double vel_rad_s,
+                double torque_ff,
+                double kp_value,
+                double kd_value)
+        : position_rad(pos_rad), velocity_rad_s(vel_rad_s),
+          torque_ff_permille(torque_ff), kp(kp_value), kd(kd_value) {}
 };
 
 
@@ -19,6 +41,7 @@ struct ControlCommand {
     CommandType type;            // 控制命令类型
     int slave_index;             // 电机索引
     std::vector<double> values;  // 目标值 (仅在 SET_SETPOINTS 命令中有效)
+    std::vector<MitSetpoint> mit_setpoints;  // MIT/PVT目标值
     ControlMode mode;            // 电机模式（仅在 SET_MODE 命令中有效）
 
     ControlCommand() : type(CommandType::STOP), slave_index(-1), mode(ControlMode::NONE) {}
@@ -28,6 +51,12 @@ struct ControlCommand {
                     const std::vector<double>& vals = {},
                     ControlMode m = ControlMode::NONE)
                     : type(t), slave_index(idx), values(vals), mode(m) {}
+
+    ControlCommand(CommandType t,
+                   int idx,
+                   const std::vector<MitSetpoint>& mit_vals)
+        : type(t), slave_index(idx), mit_setpoints(mit_vals),
+          mode(ControlMode::NONE) {}
 };
 
 

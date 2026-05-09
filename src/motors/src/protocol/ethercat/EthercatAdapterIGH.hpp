@@ -50,16 +50,17 @@ private:
         unsigned int off_target_pos;    // 0x607A:00
         unsigned int off_target_vel;    // 0x60FF:00
         unsigned int off_target_torque; // 0x6071:00
-        unsigned int off_max_torque;    // 0x6072:00
+        unsigned int off_pvt_kp;        // 0x2000:00
+        unsigned int off_pvt_kd;        // 0x2001:00
         unsigned int off_mode_of_op;    // 0x6060:00
-        unsigned int off_reserved_tx;   // 0x5FFE:00
+        unsigned int off_reserved_tx;   // 0x2FFD:00
         unsigned int off_status_word;   // 0x6041:00
         unsigned int off_pos;           // 0x6064:00
         unsigned int off_vel;           // 0x606C:00
         unsigned int off_torque;        // 0x6077:00
         unsigned int off_error;         // 0x603F:00
         unsigned int off_mode_disp;     // 0x6061:00
-        unsigned int off_reserved_rx;   // 0x5FFE:00
+        unsigned int off_reserved_rx;   // 0x2FFE:00
     };
 
     // 定义映射模板

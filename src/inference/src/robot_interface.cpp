@@ -30,6 +30,11 @@ bool finite_vector(const std::vector<double>& values)
     });
 }
 
+bool is_mit_mode(myactua::ControlMode mode)
+{
+    return mode == myactua::ControlMode::PVT;
+}
+
 }  // namespace
 
 RobotInterface::RobotInterface(RobotInterfaceConfig config)
@@ -131,6 +136,10 @@ bool RobotInterface::initial_and_start_motors() {
         return true;
     }
 
+    if (!validate_motor_config()) {
+        return false;
+    }
+
     adapter_    = std::make_shared<myactua::EthercatAdapterIGH>();
     controller_ = std::make_unique<myactua::MYACTUA>(adapter_, config_.num_motors);
 
@@ -156,7 +165,7 @@ bool RobotInterface::initial_and_start_motors() {
         controller_->send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE,
                                                              i,
                                                             {},
-                                                               myactua::ControlMode::CSP));
+                                                               config_.motor_control_mode));
     }
 
     /* 根据配置决定是否打印电机信息 */
@@ -172,6 +181,35 @@ bool RobotInterface::initial_and_start_motors() {
     controller_->send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
     motors_initialized_.store(true);
     motion_enabled_.store(false);
+
+    return true;
+}
+
+
+bool RobotInterface::validate_motor_config() const {
+    if (config_.num_motors <= 0) {
+        std::cerr << "[RobotInterface] num_motors must be positive\n";
+        return false;
+    }
+
+    if (is_mit_mode(config_.motor_control_mode)) {
+        if (static_cast<int>(config_.mit_kp.size()) != config_.num_motors) {
+            std::cerr << "[RobotInterface] MIT mode requires mit_kp size="
+                      << config_.num_motors << ", got=" << config_.mit_kp.size()
+                      << "\n";
+            return false;
+        }
+        if (static_cast<int>(config_.mit_kd.size()) != config_.num_motors) {
+            std::cerr << "[RobotInterface] MIT mode requires mit_kd size="
+                      << config_.num_motors << ", got=" << config_.mit_kd.size()
+                      << "\n";
+            return false;
+        }
+        if (!finite_vector(config_.mit_kp) || !finite_vector(config_.mit_kd)) {
+            std::cerr << "[RobotInterface] MIT mode requires finite mit_kp/mit_kd values\n";
+            return false;
+        }
+    }
 
     return true;
 }
@@ -295,7 +333,7 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_rad) {
         return false;
     }
 
-    std::vector<double> target_deg(config_.num_motors, 0.0);
+    std::vector<double> target_rad(config_.num_motors, 0.0);
     for (int i = 0; i < config_.num_motors; ++i) {
         double q = target_q_rad[i];
         if (config_.joint_min_rad.size() == static_cast<size_t>(config_.num_motors)) {
@@ -304,7 +342,31 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_rad) {
         if (config_.joint_max_rad.size() == static_cast<size_t>(config_.num_motors)) {
             q = std::min(q, config_.joint_max_rad[i]);
         }
-        target_deg[i] = myactua::MYACTUA::rad_to_deg(q);
+        target_rad[i] = q;
+    }
+
+    if (is_mit_mode(config_.motor_control_mode)) {
+        std::vector<myactua::MitSetpoint> mit_setpoints(config_.num_motors);
+        for (int i = 0; i < config_.num_motors; ++i) {
+            mit_setpoints[i] = myactua::MitSetpoint(target_rad[i],
+                                                    0.0,
+                                                    0.0,
+                                                    config_.mit_kp[i],
+                                                    config_.mit_kd[i]);
+        }
+        controller_->send_command(myactua::ControlCommand(
+            myactua::CommandType::SET_MIT_SETPOINTS, -1, mit_setpoints));
+        return true;
+    }
+
+    if (config_.motor_control_mode != myactua::ControlMode::CSP) {
+        std::cerr << "[RobotInterface] apply_action supports only MIT/PVT or CSP mode\n";
+        return false;
+    }
+
+    std::vector<double> target_deg(config_.num_motors, 0.0);
+    for (int i = 0; i < config_.num_motors; ++i) {
+        target_deg[i] = myactua::MYACTUA::rad_to_deg(target_rad[i]);
     }
 
     controller_->send_command(myactua::ControlCommand(myactua::CommandType::SET_SETPOINTS,
