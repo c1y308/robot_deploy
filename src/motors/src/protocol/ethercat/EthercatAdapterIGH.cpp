@@ -8,6 +8,9 @@
 #include <time.h>
 
 #define NSEC_PER_SEC (1000000000L)
+#define FREQUENCY 1000
+#define PERIOD_NS (NSEC_PER_SEC / FREQUENCY) /*本次设置周期PERIOD_NS为1ms*/
+
 #define CLOCK_TO_USE CLOCK_MONOTONIC  // 使用单调时钟
 #define VID_PID          0x00202008,0x00000000   /*Vendor ID, product code	厂商ID和产品代码*/
 #define TIMESPEC2NS(T) ((uint64_t) (T).tv_sec * NSEC_PER_SEC + (T).tv_nsec)
@@ -142,6 +145,7 @@ bool EthercatAdapterIGH::init(const char* ifname)
     for (std::size_t i = 0; i < kNumSlaves; i++) 
     {
         const uint16_t position = kSlavePositions[i];
+        /* 配置从站索引 */
         sc[i] = ecrt_master_slave_config(master, 0, position, VID_PID);
         if(!sc[i]) 
         {
@@ -150,45 +154,35 @@ bool EthercatAdapterIGH::init(const char* ifname)
             return false;
         }
         
+        /* 配置从站 PDO */
         if (ecrt_slave_config_pdos(sc[i], EC_END, device_syncs)) 
         {
             std::cerr << "配置从站 PDO 失败，逻辑索引 " << i
                       << "，物理位置 " << position << "\n";
             return false;
         }
-                                                                                    // sync0_shift 4400000(4.4ms)
-        ecrt_slave_config_dc(sc[i], 0x0300, 1000000, 100000, 0, 0); // 配置 DC 时钟
+
+        /* 配置从站DC时钟 */
+        ecrt_slave_config_dc(sc[i], 0x0300, PERIOD_NS, PERIOD_NS / 2, 0, 0);
 
         // 注册 PDO 条目到 Domain
-        /*
-        ec_pdo_entry_reg_t
-        uint16_t alias;       从站别名 (Alias)
-        uint16_t position;    从站物理位置 (Position)
-        uint32_t vendor_id;   厂家 ID (Vendor ID)
-        uint32_t product_code;产品代码 (Product Code)
-        uint16_t index;       对象字典索引 (Index)
-        uint8_t subindex;     对象字典子索引 (Subindex)
-        unsigned int *offset; 偏移量变量的指针 (Pointer to offset variable)
-        unsigned int *bit_pos;位偏移指针 (Pointer to bit position)
-        */
         ec_pdo_entry_reg_t reg[] ={
-            {0, position, VID_PID, 0x6040, 0, &slave_offsets[i].off_ctrl_word, nullptr},
-            {0, position, VID_PID, 0x607A, 0, &slave_offsets[i].off_target_pos, nullptr},
-            {0, position, VID_PID, 0x60FF, 0, &slave_offsets[i].off_target_vel, nullptr},
-            {0, position, VID_PID, 0x6071, 0, &slave_offsets[i].off_target_torque, nullptr},
-            {0, position, VID_PID, 0x2000, 0, &slave_offsets[i].off_pvt_kp, nullptr},
-            {0, position, VID_PID, 0x2001, 0, &slave_offsets[i].off_pvt_kd, nullptr},
-            {0, position, VID_PID, 0x6060, 0, &slave_offsets[i].off_mode_of_op, nullptr},
+            { 0, position, VID_PID, 0x6040, 0, &slave_offsets[i].off_ctrl_word, nullptr},
+            { 0, position, VID_PID, 0x607A, 0, &slave_offsets[i].off_target_pos, nullptr},
+            { 0, position, VID_PID, 0x60FF, 0, &slave_offsets[i].off_target_vel, nullptr},
+            { 0, position, VID_PID, 0x6071, 0, &slave_offsets[i].off_target_torque, nullptr},
+            { 0, position, VID_PID, 0x2000, 0, &slave_offsets[i].off_pvt_kp, nullptr},
+            { 0, position, VID_PID, 0x2001, 0, &slave_offsets[i].off_pvt_kd, nullptr},
+            { 0, position, VID_PID, 0x6060, 0, &slave_offsets[i].off_mode_of_op, nullptr},
 
-            {0, position, VID_PID, 0x6041, 0, &slave_offsets[i].off_status_word, nullptr},
-            {0, position, VID_PID, 0x6064, 0, &slave_offsets[i].off_pos, nullptr},
-            {0, position, VID_PID, 0x606C, 0, &slave_offsets[i].off_vel, nullptr},
+            { 0, position, VID_PID, 0x6041, 0, &slave_offsets[i].off_status_word, nullptr},
+            { 0, position, VID_PID, 0x6064, 0, &slave_offsets[i].off_pos, nullptr},
+            { 0, position, VID_PID, 0x606C, 0, &slave_offsets[i].off_vel, nullptr},
             {0, position, VID_PID, 0x6077, 0, &slave_offsets[i].off_torque, nullptr},
-            {0, position,VID_PID, 0x603F, 0, &slave_offsets[i].off_error, nullptr},
-            {0, position,VID_PID, 0x6061, 0, &slave_offsets[i].off_mode_disp, nullptr},
+            {0, position, VID_PID, 0x603F, 0, &slave_offsets[i].off_error, nullptr},
+            {0, position, VID_PID, 0x6061, 0, &slave_offsets[i].off_mode_disp, nullptr},
             {0, 0, 0, 0, 0, 0, nullptr, nullptr} // 结束标志
         };
-
         if (ecrt_domain_reg_pdo_entry_list(domain1, reg)) 
         {
             std::cerr << "注册从站 PDO 条目失败，逻辑索引 " << i
