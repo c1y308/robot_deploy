@@ -87,6 +87,10 @@ public:
     void send_command(const ControlCommand& cmd);   // 异步发送控制命令
 
     bool connect(const char* ifname);
+    bool wait_all_slaves_ready(
+        int timeout_ms = 30000,
+        int poll_ms = 100,
+        const std::function<bool()>& should_stop = {}) const;
     void start();  // 启动实时线程
     void shutdown();  // 关闭实时线程
 

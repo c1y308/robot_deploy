@@ -15,7 +15,7 @@ namespace myactua {
  * 1: 无转发站版本（仅电机从站）
  */
 #ifndef MYACTUA_ECAT_NO_FORWARDERS
-#define MYACTUA_ECAT_NO_FORWARDERS 0
+#define MYACTUA_ECAT_NO_FORWARDERS 1
 #endif
 
 /*
@@ -26,11 +26,11 @@ namespace myactua {
  * 使用“无转发站，仅电机从站”的连续映射
  */
 #if MYACTUA_ECAT_NO_FORWARDERS
-inline constexpr std::array<uint16_t, 2> kSlavePositions = {
-    0, 1
+#define MYACTUA_NO_FORWARDERS_MOTORS_NUM 1
+inline constexpr std::array<uint16_t, MYACTUA_NO_FORWARDERS_MOTORS_NUM> kSlavePositions = {
+    0
 };
 
-#define MYACTUA_NO_FORWARDERS_MOTORS_NUM 2
 #else
 inline constexpr std::array<uint16_t, 12> kSlavePositions = {
     1, 2, 3, 4, 5, 6, 8, 9, 10, 11,12, 13

@@ -1,8 +1,10 @@
 #include "motor_control.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <thread>
 #include <time.h>
 #include <pthread.h>
 #include <sched.h>
@@ -67,6 +69,77 @@ bool MYACTUA::connect(const char* ifname)
         return true;
     return false;
 }
+
+
+/* 等待所有 EtherCAT 从站进入 OP */
+bool MYACTUA::wait_all_slaves_ready(
+    int timeout_ms,
+    int poll_ms,
+    const std::function<bool()>& should_stop) const
+{
+    if (!_adapter) {
+        std::cerr << "[MYACTUA] EtherCAT adapter is null." << std::endl;
+        return false;
+    }
+
+    using Clock = std::chrono::steady_clock;
+    const int effective_timeout_ms = std::max(0, timeout_ms);
+    const int effective_poll_ms = std::max(1, poll_ms);
+    const auto start_time = Clock::now();
+    const auto deadline = start_time + std::chrono::milliseconds(effective_timeout_ms);
+    auto next_log_time = start_time;
+    bool first_check = true;
+
+    while (first_check || (effective_timeout_ms > 0 && Clock::now() < deadline)) {
+        first_check = false;
+
+        if (should_stop && should_stop()) {
+            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                Clock::now() - start_time).count();
+            std::cout << "[MYACTUA] wait_all_slaves_ready interrupted after "
+                      << elapsed_ms << " ms" << std::endl;
+            return false;
+        }
+
+        _adapter->receivePhysical();
+        _adapter->sendPhysical();
+
+        int ready_count = 0;
+        for (int i = 0; i < static_cast<int>(_motors.size()); ++i) {
+            if (_adapter->isConfigured(i)) {
+                ++ready_count;
+            }
+        }
+
+        if (ready_count == static_cast<int>(_motors.size())) {
+            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                Clock::now() - start_time).count();
+            std::cout << "[MYACTUA] All slaves ready in "
+                      << elapsed_ms << " ms" << std::endl;
+            return true;
+        }
+
+        const auto now = Clock::now();
+        if (now >= next_log_time) {
+            std::cout << "[MYACTUA] EtherCAT ready: "
+                      << ready_count << "/" << _motors.size() << std::endl;
+            next_log_time = now + std::chrono::milliseconds(effective_poll_ms);
+        }
+
+        if (effective_timeout_ms == 0) {
+            break;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        Clock::now() - start_time).count();
+    std::cout << "[MYACTUA] wait_all_slaves_ready timeout after "
+              << elapsed_ms << " ms" << std::endl;
+    return false;
+}
+
 
 /* 电机实时控制线程 */
 void MYACTUA::rt_thread_func()

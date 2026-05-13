@@ -153,7 +153,8 @@ bool RobotInterface::initial_and_start_motors() {
         return false;
     }
 
-    if (!wait_all_slaves_ready()) {
+    if (!controller_->wait_all_slaves_ready(config_.wait_all_slaves_timeout_ms,
+                                            config_.wait_all_slaves_poll_ms)) {
         std::cerr << "[RobotInterface] Not all slaves became ready in timeout.\n";
         controller_.reset();
         adapter_.reset();
@@ -212,58 +213,6 @@ bool RobotInterface::validate_motor_config() const {
     }
 
     return true;
-}
-
-
-/* 等待所有电机从站就绪 */
-bool RobotInterface::wait_all_slaves_ready() const {
-    if (!adapter_) {
-        return false;
-    }
-
-    const auto start_time = std::chrono::steady_clock::now();
-    const int timeout_ms = std::max(0, config_.wait_all_slaves_timeout_ms);
-    const int poll_ms    = std::max(1, config_.wait_all_slaves_poll_ms);
-    const auto deadline = start_time + std::chrono::milliseconds(timeout_ms);
-    auto next_log_time = start_time;
-
-    while (timeout_ms == 0 || std::chrono::steady_clock::now() < deadline) {
-        adapter_->receivePhysical();
-        adapter_->sendPhysical();
-
-        int ready_count = 0;
-        for (int i = 0; i < config_.num_motors; ++i) {
-            if (adapter_->isConfigured(i)) {
-                ++ready_count;
-            }
-        }
-        if (ready_count == config_.num_motors) {
-            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - start_time).count();
-            std::cout << "[RobotInterface] All slaves ready in "
-                      << elapsed_ms << " ms\n";
-            return true;
-        }
-
-        const auto now = std::chrono::steady_clock::now();
-        if (now >= next_log_time) {
-            std::cout << "[RobotInterface] EtherCAT ready: "
-                      << ready_count << "/" << config_.num_motors << "\n";
-            next_log_time = now + std::chrono::milliseconds(poll_ms);
-        }
-
-        if (timeout_ms == 0) {
-            break;
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-
-    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - start_time).count();
-    std::cout << "[RobotInterface] wait_all_slaves_ready timeout after "
-              << elapsed_ms << " ms\n";
-    return false;
 }
 
 

@@ -157,7 +157,6 @@ private:
     std::shared_ptr<myactua::EthercatAdapterIGH> adapter_;
     std::unique_ptr<myactua::MYACTUA> controller_;  // 电机控制器指针
     bool validate_motor_config() const;
-    bool wait_all_slaves_ready() const;  // 等待电机初始化完成
 
 
     std::atomic<bool> motors_initialized_{false};

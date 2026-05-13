@@ -8,54 +8,17 @@
 
 int main() {
     auto adapter = std::make_shared<myactua::EthercatAdapterIGH>();
-    myactua::MYACTUA controller(adapter, 2);
+    myactua::MYACTUA controller(adapter, 1);
 
     std::cout << "正在初始化网卡..." << std::endl;
     if (!controller.connect("enp8s0")) {
         std::cerr << "[错误] 无法连接到 EtherCAT 网络！" << std::endl;
         return -1;
     }
-    const auto start_time = std::chrono::steady_clock::now();
-    const int timeout_ms = 20000;
-    const int poll_ms    = 100;
-    const auto deadline = start_time + std::chrono::milliseconds(timeout_ms);
-    auto next_log_time = start_time;
-    bool all_ready = false;
-    while (std::chrono::steady_clock::now() < deadline) {
-        adapter->receivePhysical();
-        adapter->sendPhysical();
 
-        int ready_count = 0;
-        for (int i = 0; i < 12; ++i) {
-            if (adapter->isConfigured(i)) {
-                ++ready_count;
-            }
-        }
-        if (ready_count == 12) {
-            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - start_time).count();
-            std::cout << "[RobotInterface] All slaves ready in "
-                      << elapsed_ms << " ms\n";
-            all_ready = true;
-            break;
-        }
-
-        const auto now = std::chrono::steady_clock::now();
-        if (now >= next_log_time) {
-            std::cout << "[RobotInterface] EtherCAT ready: "
-                      << ready_count << "/" << 12 << "\n";
-            next_log_time = now + std::chrono::milliseconds(poll_ms);
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    if (!all_ready) {
-        const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - start_time).count();
-        std::cout << "[RobotInterface] wait_all_slaves_ready timeout after "
-                  << elapsed_ms << " ms\n";
+    if (!controller.wait_all_slaves_ready(20000, 100)) {
         return -1;
     }
-
 
     std::cout << "启动实时控制线程..." << std::endl;
     controller.start();
@@ -87,7 +50,7 @@ int main() {
     std::cout << "电机以位置模式运行复位..." << std::endl;
     controller.send_command(myactua::ControlCommand(myactua::CommandType::RESTART, -1));
     controller.send_command(myactua::ControlCommand(
-    myactua::CommandType::SET_SETPOINTS, -1, {0, 0}));
+    myactua::CommandType::SET_SETPOINTS, -1, std::vector<double>{0}));
     std::this_thread::sleep_for(std::chrono::seconds(5));
 
     // 3. 停止

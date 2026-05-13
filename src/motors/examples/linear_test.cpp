@@ -52,40 +52,6 @@ bool contains_motor(int motor_id)
            kActiveMotorIds.end();
 }
 
-bool wait_all_slaves_ready(const std::shared_ptr<myactua::EthercatAdapterIGH>& adapter)
-{
-    const auto start_time = Clock::now();
-    const auto deadline = start_time + std::chrono::milliseconds(kWaitReadyTimeoutMs);
-    auto next_log_time = start_time;
-
-    while (Clock::now() < deadline && !g_should_stop) {
-        adapter->receivePhysical();
-        adapter->sendPhysical();
-
-        int ready_count = 0;
-        for (int i = 0; i < kNumMotors; ++i) {
-            if (adapter->isConfigured(i)) {
-                ++ready_count;
-            }
-        }
-
-        if (ready_count == kNumMotors) {
-            std::cout << "[ready] all " << kNumMotors << " slaves are in OP" << std::endl;
-            return true;
-        }
-
-        const auto now = Clock::now();
-        if (now >= next_log_time) {
-            std::cout << "[ready] " << ready_count << "/" << kNumMotors << " slaves ready"
-                      << std::endl;
-            next_log_time = now + std::chrono::milliseconds(kWaitReadyPollMs);
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-
-    return false;
-}
-
 void send_mode_all(myactua::MYACTUA& controller, myactua::ControlMode mode)
 {
     // 统一切换全部电机模式，避免不同轴处于不同控制模式。
@@ -178,7 +144,8 @@ int main()
         return -1;
     }
 
-    if (!wait_all_slaves_ready(adapter)) {
+    if (!controller.wait_all_slaves_ready(
+            kWaitReadyTimeoutMs, kWaitReadyPollMs, [] { return g_should_stop != 0; })) {
         std::cerr << "[error] not all slaves reached OP within "
                   << kWaitReadyTimeoutMs << " ms" << std::endl;
         return -1;
