@@ -297,7 +297,7 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_rad) {
     if (is_mit_mode(config_.motor_control_mode)) {
         std::vector<myactua::MitSetpoint> mit_setpoints(config_.num_motors);
         for (int i = 0; i < config_.num_motors; ++i) {
-            mit_setpoints[i] = myactua::MitSetpoint(target_rad[i],
+            mit_setpoints[i] = myactua::MitSetpoint(myactua::MYACTUA::rad_to_deg(target_rad[i]),
                                                     0.0,
                                                     0.0,
                                                     config_.mit_kp[i],

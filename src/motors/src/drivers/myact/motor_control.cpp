@@ -540,7 +540,7 @@ void MYACTUA::process_single_motor(MotorState& motor, double setvalue)
                 break;
             case ControlMode::PVT: {
                 const MitSetpoint& mit = desired.mit_setpoint;
-                motor.tx.target_pos = double_to_i32(mit.position_rad / kRawPosToRad);
+                motor.tx.target_pos = double_to_i32((mit.position_deg / kRadToDeg) / kRawPosToRad);
                 motor.tx.target_vel = double_to_i32(mit.velocity_rad_s / kRawVelToRadPerSec);
                 motor.tx.target_torque = double_to_i16(mit.torque_ff_permille);
                 motor.tx.pvt_kp = double_to_i32(mit.kp * 1000.0);

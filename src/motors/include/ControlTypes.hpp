@@ -14,24 +14,24 @@ enum class CommandType {
     SET_MODE        // 设置电机模式
 };
 
-/* MIT/PVT 模式单轴目标值，外部使用 SI 单位 */
+/* MIT/PVT 模式单轴目标值，外部使用角度制(deg) */
 struct MitSetpoint {
-    double position_rad;         // 0x607A, rad -> increments
+    double position_deg;         // 0x607A, 单位: 度(deg), 底层自动转为 rad
     double velocity_rad_s;       // 0x60FF, rad/s -> increments/s
     double torque_ff_permille;   // 0x6071, 千分之一额定力矩
     double kp;                   // 0x2000, 写入 kp * 1000
     double kd;                   // 0x2001, 写入 kd * 1000
 
     MitSetpoint()
-        : position_rad(0.0), velocity_rad_s(0.0), torque_ff_permille(0.0),
+        : position_deg(0.0), velocity_rad_s(0.0), torque_ff_permille(0.0),
           kp(0.0), kd(0.0) {}
 
-    MitSetpoint(double pos_rad,
+    MitSetpoint(double pos_deg,
                 double vel_rad_s,
                 double torque_ff,
                 double kp_value,
                 double kd_value)
-        : position_rad(pos_rad), velocity_rad_s(vel_rad_s),
+        : position_deg(pos_deg), velocity_rad_s(vel_rad_s),
           torque_ff_permille(torque_ff), kp(kp_value), kd(kd_value) {}
 };
 
