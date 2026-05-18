@@ -16,7 +16,7 @@ enum class CommandType {
 
 /* MIT/PVT 模式单轴目标值，外部使用角度制(deg) */
 struct MitSetpoint {
-    double position_deg;         // 0x607A, 单位: 度(deg), 底层自动转为 rad
+    double position_deg;         // 0x607A, 单位: 度(deg), 底层自动转为 increments
     double velocity_rad_s;       // 0x60FF, rad/s -> increments/s
     double torque_ff_permille;   // 0x6071, 千分之一额定力矩
     double kp;                   // 0x2000, 写入 kp * 1000
