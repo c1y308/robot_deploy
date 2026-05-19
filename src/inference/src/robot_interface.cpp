@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cmath>
 #include <iostream>
 #include <thread>
@@ -23,11 +24,83 @@ bool finite_array3(const std::array<double, 3>& values)
            std::isfinite(values[2]);
 }
 
+bool finite_array4(const std::array<double, 4>& values)
+{
+    return std::isfinite(values[0]) &&
+           std::isfinite(values[1]) &&
+           std::isfinite(values[2]) &&
+           std::isfinite(values[3]);
+}
+
 bool finite_vector(const std::vector<double>& values)
 {
     return std::all_of(values.begin(), values.end(), [](double value) {
         return std::isfinite(value);
     });
+}
+
+bool compute_projected_gravity(const std::array<double, 4>& quat,
+                               std::array<double, 3>& projected_gravity)
+{
+    if (!finite_array4(quat)) {
+        return false;
+    }
+
+    const double norm_sq = quat[0] * quat[0] +
+                           quat[1] * quat[1] +
+                           quat[2] * quat[2] +
+                           quat[3] * quat[3];
+    if (!std::isfinite(norm_sq) || norm_sq <= 1.0e-12) {
+        return false;
+    }
+
+    const double inv_norm = 1.0 / std::sqrt(norm_sq);
+    const double w = quat[0] * inv_norm;
+    const double x = quat[1] * inv_norm;
+    const double y = quat[2] * inv_norm;
+    const double z = quat[3] * inv_norm;
+
+    // IsaacLab quat_rotate_inverse(q, [0, 0, -1]): world gravity in body frame.
+    constexpr std::array<double, 3> gravity{0.0, 0.0, -1.0};
+    const double cross_x = y * gravity[2] - z * gravity[1];
+    const double cross_y = z * gravity[0] - x * gravity[2];
+    const double cross_z = x * gravity[1] - y * gravity[0];
+    const double dot = x * gravity[0] + y * gravity[1] + z * gravity[2];
+    const double a_scale = 2.0 * w * w - 1.0;
+
+    projected_gravity[0] = gravity[0] * a_scale - 2.0 * w * cross_x + 2.0 * x * dot;
+    projected_gravity[1] = gravity[1] * a_scale - 2.0 * w * cross_y + 2.0 * y * dot;
+    projected_gravity[2] = gravity[2] * a_scale - 2.0 * w * cross_z + 2.0 * z * dot;
+
+    return finite_array3(projected_gravity);
+}
+
+template <std::size_t TermSize, std::size_t ObservationSize>
+void fill_term_history(std::array<float, ObservationSize>& history,
+                       std::size_t offset,
+                       std::size_t frame_stack,
+                       const std::array<float, TermSize>& current_term)
+{
+    for (std::size_t frame = 0; frame < frame_stack; ++frame) {
+        std::copy(current_term.begin(),
+                  current_term.end(),
+                  history.begin() + offset + frame * TermSize);
+    }
+}
+
+template <std::size_t TermSize, std::size_t ObservationSize>
+void append_term_history(std::array<float, ObservationSize>& history,
+                         std::size_t offset,
+                         std::size_t frame_stack,
+                         const std::array<float, TermSize>& current_term)
+{
+    const std::size_t term_history_size = frame_stack * TermSize;
+    std::copy(history.begin() + offset + TermSize,
+              history.begin() + offset + term_history_size,
+              history.begin() + offset);
+    std::copy(current_term.begin(),
+              current_term.end(),
+              history.begin() + offset + term_history_size - TermSize);
 }
 
 bool is_mit_mode(myactua::ControlMode mode)
@@ -67,7 +140,7 @@ bool RobotInterface::initial_and_start_imu() {
         (void)data;
     });
     imu_reader_->set_ahrs_callback([this](const imu::AHRSData_t& data) {
-        // 策略输入使用 AHRS 的角速度和欧拉角原始值；Yaw 不做启动零偏。
+        // 策略输入使用 AHRS 的角速度、欧拉角和四元数原始值；Yaw 不做启动零偏。
         std::lock_guard<std::mutex> lock(imu_mutex_);
         ang_vel_[0] = static_cast<double>(data.roll_speed);
         ang_vel_[1] = static_cast<double>(data.pitch_speed);
@@ -266,8 +339,7 @@ bool RobotInterface::restart_motors(int slave_index) {
     return true;
 }
 
-
-bool RobotInterface::apply_action(const std::vector<double>& target_q_rad) {
+bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad) {
     if (!motors_initialized_.load() || !controller_) {
         return false;
     }
@@ -276,22 +348,40 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_rad) {
                   << "Call restart_motors(-1) first.\n";
         return false;
     }
-    if (static_cast<int>(target_q_rad.size()) != config_.num_motors) {
+    if (static_cast<int>(target_q_model_rad.size()) != config_.num_motors) {
         std::cerr << "[RobotInterface] apply_action size mismatch. expected="
-                  << config_.num_motors << " got=" << target_q_rad.size() << "\n";
+                  << config_.num_motors << " got=" << target_q_model_rad.size() << "\n";
         return false;
     }
 
     std::vector<double> target_rad(config_.num_motors, 0.0);
-    for (int i = 0; i < config_.num_motors; ++i) {
-        double q = target_q_rad[i];
-        if (config_.joint_min_rad.size() == static_cast<size_t>(config_.num_motors)) {
-            q = std::max(q, config_.joint_min_rad[i]);
+    const bool has_model_mapping =
+        static_cast<int>(config_.model_to_motor_index.size()) == config_.num_motors;
+    const bool has_relative_limits =
+        config_.stand_pose_rad.size() == static_cast<size_t>(config_.num_motors) &&
+        config_.joint_min_rad.size() == static_cast<size_t>(config_.num_motors) &&
+        config_.joint_max_rad.size() == static_cast<size_t>(config_.num_motors);
+
+    for (int model_index = 0; model_index < config_.num_motors; ++model_index) {
+        const int motor_index = has_model_mapping
+            ? config_.model_to_motor_index[model_index]
+            : model_index;
+        if (motor_index < 0 || motor_index >= config_.num_motors) {
+            std::cerr << "[RobotInterface] apply_action rejected: "
+                      << "model_to_motor_index contains invalid motor index "
+                      << motor_index << "\n";
+            return false;
         }
-        if (config_.joint_max_rad.size() == static_cast<size_t>(config_.num_motors)) {
-            q = std::min(q, config_.joint_max_rad[i]);
+
+        double q = target_q_model_rad[model_index];
+        if (has_relative_limits) {
+            const double lower_limit =
+                config_.stand_pose_rad[model_index] + config_.joint_min_rad[model_index];
+            const double upper_limit =
+                config_.stand_pose_rad[model_index] + config_.joint_max_rad[model_index];
+            q = std::max(lower_limit, std::min(upper_limit, q));
         }
-        target_rad[i] = q;
+        target_rad[motor_index] = q;
     }
 
     if (is_mit_mode(config_.motor_control_mode)) {
@@ -365,22 +455,38 @@ bool RobotInterface::reset_joints() {
         return false;
     }
 
-    std::vector<double> target(config_.num_motors, 0.0);
+    std::vector<double> target_model(config_.num_motors, 0.0);
     if (static_cast<int>(config_.stand_pose_rad.size()) == config_.num_motors) {
-        target = config_.stand_pose_rad;
+        target_model = config_.stand_pose_rad;
     }
 
-    const std::vector<double> q0 = get_joint_q();
+    const std::vector<double> q0_motor = get_joint_q();
+    std::vector<double> q0_model(config_.num_motors, 0.0);
+    const bool has_model_mapping =
+        static_cast<int>(config_.model_to_motor_index.size()) == config_.num_motors;
+    for (int model_index = 0; model_index < config_.num_motors; ++model_index) {
+        const int motor_index = has_model_mapping
+            ? config_.model_to_motor_index[model_index]
+            : model_index;
+        if (motor_index < 0 || motor_index >= config_.num_motors) {
+            std::cerr << "[RobotInterface] reset_joints rejected: "
+                      << "model_to_motor_index contains invalid motor index "
+                      << motor_index << "\n";
+            return false;
+        }
+        q0_model[model_index] = q0_motor[motor_index];
+    }
+
     const int ramp_steps = 100;
     const auto dt = std::chrono::milliseconds(20);
 
     for (int k = 1; k <= ramp_steps; ++k) {
         const double alpha = static_cast<double>(k) / static_cast<double>(ramp_steps);
-        std::vector<double> q_cmd(config_.num_motors, 0.0);
+        std::vector<double> q_cmd_model(config_.num_motors, 0.0);
         for (int i = 0; i < config_.num_motors; ++i) {
-            q_cmd[i] = q0[i] * (1.0 - alpha) + target[i] * alpha;
+            q_cmd_model[i] = q0_model[i] * (1.0 - alpha) + target_model[i] * alpha;
         }
-        if (!apply_action(q_cmd)) {
+        if (!apply_action(q_cmd_model)) {
             return false;
         }
         std::this_thread::sleep_for(dt);
@@ -437,12 +543,11 @@ bool RobotInterface::validate_policy_config() const {
     if (!std::isfinite(config_.action_clip) || config_.action_clip <= 0.0) {
         return fail("action_clip must be finite and > 0");
     }
-    if (!std::isfinite(config_.action_scale) || config_.action_scale <= 0.0) {
-        return fail("action_scale must be finite and > 0");
-    }
-
     if (config_.stand_pose_rad.size() != static_cast<std::size_t>(kPolicyDof)) {
         return fail("stand_pose_rad must have 12 values");
+    }
+    if (config_.action_scale.size() != static_cast<std::size_t>(kPolicyDof)) {
+        return fail("action_scale must have 12 values");
     }
     if (config_.joint_min_rad.size() != static_cast<std::size_t>(kPolicyDof) ||
         config_.joint_max_rad.size() != static_cast<std::size_t>(kPolicyDof)) {
@@ -457,6 +562,7 @@ bool RobotInterface::validate_policy_config() const {
     }
 
     if (!finite_vector(config_.stand_pose_rad) ||
+        !finite_vector(config_.action_scale) ||
         !finite_vector(config_.joint_min_rad) ||
         !finite_vector(config_.joint_max_rad) ||
         !finite_vector(config_.dof_pos_scale) ||
@@ -464,10 +570,14 @@ bool RobotInterface::validate_policy_config() const {
         return fail("all vector policy values must be finite");
     }
     if (!finite_array3(config_.command_scale) ||
-        !finite_array3(config_.body_ang_vel_scale) ||
-        !finite_array3(config_.euler_scale)) {
+        !finite_array3(config_.body_ang_vel_scale)) {
+        return fail("command/body_ang_vel scales must be finite");
+    }
+#if POLICY_V3
+    if (!finite_array3(config_.euler_scale)) {
         return fail("command/body_ang_vel/euler scales must be finite");
     }
+#endif
 
     // 映射必须是模型 12 个 DOF 到 12 个电机逻辑索引的一一对应关系。
     std::array<bool, kPolicyDof> seen = {};
@@ -483,12 +593,14 @@ bool RobotInterface::validate_policy_config() const {
     }
 
     for (int i = 0; i < kPolicyDof; ++i) {
-        if (config_.joint_min_rad[i] > config_.joint_max_rad[i]) {
-            return fail("joint_min_rad must be <= joint_max_rad for every motor");
+        if (config_.action_scale[i] <= 0.0) {
+            return fail("action_scale must be > 0 for every model DOF");
         }
-        if (config_.stand_pose_rad[i] < config_.joint_min_rad[i] ||
-            config_.stand_pose_rad[i] > config_.joint_max_rad[i]) {
-            return fail("stand_pose_rad must be inside joint limits for every motor");
+        if (config_.joint_min_rad[i] > config_.joint_max_rad[i]) {
+            return fail("joint_min_rad must be <= joint_max_rad for every model DOF");
+        }
+        if (config_.joint_min_rad[i] > 0.0 || config_.joint_max_rad[i] < 0.0) {
+            return fail("relative joint limits must include 0 for every model DOF");
         }
     }
 
@@ -532,26 +644,26 @@ bool RobotInterface::policy_step(double vx, double vy, double yaw_rate) {
         return handle_policy_step_failure(policy_runner_->last_error());
     }
 
-    // last_action_raw_ 保存模型原始输出，下一周期作为观测的 29-40 维输入。
+#if POLICY_V3
+    // last_action_raw_ 保存模型原始输出，下一周期作为 v3 单帧观测的 last_action 输入。
+#else
+    // last_action_raw_ 保存模型原始输出，下一周期进入 policy.pt 观测的 165-224 维。
+#endif
     last_action_raw_ = raw_action;
 
-    std::vector<double> target_q_rad(config_.num_motors, 0.0);
+    std::vector<double> target_q_model_rad(config_.num_motors, 0.0);
     for (int model_index = 0; model_index < kPolicyDof; ++model_index) {
-        const int motor_index = config_.model_to_motor_index[model_index];
-        // 模型输出先按训练约定截断/缩放，再叠加站立姿态并进入硬限位。
+        // 模型输出先按训练约定截断/缩放，再叠加模型顺序的站立姿态。
         const double clipped_action =
             std::max(-config_.action_clip,
                      std::min(config_.action_clip, static_cast<double>(raw_action[model_index])));
 
-        const double target = config_.stand_pose_rad[motor_index] + 
-                              clipped_action * config_.action_scale;
-                              
-        target_q_rad[motor_index] =
-            std::max(config_.joint_min_rad[motor_index],
-                     std::min(config_.joint_max_rad[motor_index], target));
+        target_q_model_rad[model_index] =
+            config_.stand_pose_rad[model_index] +
+            clipped_action * config_.action_scale[model_index];
     }
 
-    if (!apply_action(target_q_rad)) {
+    if (!apply_action(target_q_model_rad)) {
         return handle_policy_step_failure("failed to apply policy target action");
     }
 
@@ -592,19 +704,21 @@ bool RobotInterface::build_policy_observation(
 
     std::array<double, 3> body_ang_vel = {};
     std::array<double, 3> euler = {};
+    std::array<double, 4> quat = {};
     {
         std::lock_guard<std::mutex> lock(imu_mutex_);
         body_ang_vel = body_ang_vel_;
         euler = euler_;
+        quat = quat_;
     }
 
+#if POLICY_V3
     if (!finite_vector(q_rad) || !finite_vector(dq_rad_s) ||
         !finite_array3(body_ang_vel) || !finite_array3(euler)) {
         std::cerr << "[RobotInterface] policy observation rejected: sensor value is not finite\n";
         return false;
     }
 
-#if POLICY_V3
     const auto now = std::chrono::steady_clock::now();
     const double elapsed_s =
         std::chrono::duration<double>(now - policy_start_time_).count();
@@ -625,7 +739,7 @@ bool RobotInterface::build_policy_observation(
         /* 电机关节映射转换 */
         const int motor_index = config_.model_to_motor_index[model_index];
         current_observation[5 + model_index]  =
-            static_cast<float>((q_rad[motor_index] - config_.stand_pose_rad[motor_index]) *
+            static_cast<float>((q_rad[motor_index] - config_.stand_pose_rad[model_index]) *
                                config_.dof_pos_scale[model_index]);
         current_observation[17 + model_index] =
             static_cast<float>(dq_rad_s[motor_index] *
@@ -663,48 +777,78 @@ bool RobotInterface::build_policy_observation(
     return true;
 
 #else
-    // 旧版本模型输入没有 phase
-    std::array<float, kPolicySingleObservationSize> current_observation = {};
+    if (!finite_vector(q_rad) || !finite_vector(dq_rad_s) ||
+        !finite_array3(body_ang_vel) || !finite_array4(quat)) {
+        std::cerr << "[RobotInterface] policy observation rejected: sensor value is not finite\n";
+        return false;
+    }
 
-    current_observation[0] = static_cast<float>(vx * config_.command_scale[0]);
-    current_observation[1] = static_cast<float>(vy * config_.command_scale[1]);
-    current_observation[2] = static_cast<float>(yaw_rate * config_.command_scale[2]);
+    std::array<double, 3> projected_gravity_double = {};
+    if (!compute_projected_gravity(quat, projected_gravity_double)) {
+        std::cerr << "[RobotInterface] policy observation rejected: quaternion is invalid\n";
+        return false;
+    }
 
+    std::array<float, 3> base_ang_vel = {};
+    std::array<float, 3> projected_gravity = {};
+    std::array<float, 3> velocity_commands = {
+        static_cast<float>(vx * config_.command_scale[0]),
+        static_cast<float>(vy * config_.command_scale[1]),
+        static_cast<float>(yaw_rate * config_.command_scale[2])
+    };
+    std::array<float, kPolicyDof> joint_pos_rel = {};
+    std::array<float, kPolicyDof> joint_vel_rel = {};
+
+    for (int i = 0; i < 3; ++i) {
+        base_ang_vel[i] =
+            static_cast<float>(body_ang_vel[i] * config_.body_ang_vel_scale[i]);
+        projected_gravity[i] = static_cast<float>(projected_gravity_double[i]);
+    }
     for (int model_index = 0; model_index < kPolicyDof; ++model_index) {
         /* 电机关节映射转换 */
         const int motor_index = config_.model_to_motor_index[model_index];
-        current_observation[3 + model_index]  =
-            static_cast<float>((q_rad[motor_index] - config_.stand_pose_rad[motor_index]) *
+        joint_pos_rel[model_index] =
+            static_cast<float>((q_rad[motor_index] - config_.stand_pose_rad[model_index]) *
                                config_.dof_pos_scale[model_index]);
-        current_observation[15 + model_index] =
+        joint_vel_rel[model_index] =
             static_cast<float>(dq_rad_s[motor_index] *
                                config_.dof_vel_scale[model_index]);
-        current_observation[27 + model_index] = last_action_raw_[model_index];
     }
 
-    for (int i = 0; i < 3; ++i) {
-        current_observation[39 + i] =
-            static_cast<float>(body_ang_vel[i] * config_.body_ang_vel_scale[i]);
-        current_observation[42 + i] =
-            static_cast<float>(euler[i] * config_.euler_scale[i]);
-    }
+    constexpr std::size_t kBaseAngVelOffset = 0;
+    constexpr std::size_t kProjectedGravityOffset = 15;
+    constexpr std::size_t kVelocityCommandsOffset = 30;
+    constexpr std::size_t kJointPosRelOffset = 45;
+    constexpr std::size_t kJointVelRelOffset = 105;
+    constexpr std::size_t kLastActionOffset = 165;
 
-    /* 首次填充用当前观测值来填满 */
     if (!observation_history_ready_) {
-        for (int frame = 0; frame < kPolicyFrameStack; ++frame) {
-            std::copy(current_observation.begin(),
-                      current_observation.end(),
-                      observation_history_.begin() + frame * kPolicySingleObservationSize);
-        }
+        fill_term_history(observation_history_, kBaseAngVelOffset,
+                          kPolicyFrameStack, base_ang_vel);
+        fill_term_history(observation_history_, kProjectedGravityOffset,
+                          kPolicyFrameStack, projected_gravity);
+        fill_term_history(observation_history_, kVelocityCommandsOffset,
+                          kPolicyFrameStack, velocity_commands);
+        fill_term_history(observation_history_, kJointPosRelOffset,
+                          kPolicyFrameStack, joint_pos_rel);
+        fill_term_history(observation_history_, kJointVelRelOffset,
+                          kPolicyFrameStack, joint_vel_rel);
+        fill_term_history(observation_history_, kLastActionOffset,
+                          kPolicyFrameStack, last_action_raw_);
         observation_history_ready_ = true;
-    /* 之后把当前观测帧添加到末尾 */
     } else {
-        std::copy(observation_history_.begin() + kPolicySingleObservationSize,
-                  observation_history_.end(),
-                  observation_history_.begin());
-        std::copy(current_observation.begin(),
-                  current_observation.end(),
-                  observation_history_.end() - kPolicySingleObservationSize);
+        append_term_history(observation_history_, kBaseAngVelOffset,
+                            kPolicyFrameStack, base_ang_vel);
+        append_term_history(observation_history_, kProjectedGravityOffset,
+                            kPolicyFrameStack, projected_gravity);
+        append_term_history(observation_history_, kVelocityCommandsOffset,
+                            kPolicyFrameStack, velocity_commands);
+        append_term_history(observation_history_, kJointPosRelOffset,
+                            kPolicyFrameStack, joint_pos_rel);
+        append_term_history(observation_history_, kJointVelRelOffset,
+                            kPolicyFrameStack, joint_vel_rel);
+        append_term_history(observation_history_, kLastActionOffset,
+                            kPolicyFrameStack, last_action_raw_);
     }
 
     observation = observation_history_;

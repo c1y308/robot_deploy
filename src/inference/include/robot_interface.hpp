@@ -36,10 +36,10 @@ struct RobotInterfaceConfig {
     /* 是否在终端打印电机信息 */
     bool print_motors_info = false;  // false将 print_motor_ids 清零
     std::vector<int> print_motor_ids = {-1};  // 仅打印这些ID的电机信息，ID从0开始，-1表示全部
-    /* 电机转动弧度限制 */
+    /* 相对 stand_pose_rad 的关节弧度偏移限制，按模型 DOF 序号填写 */
     std::vector<double> joint_min_rad;
     std::vector<double> joint_max_rad;
-    /* 初始姿态各电机的弧度值 */
+    /* 初始姿态关节弧度值，按模型 DOF 序号填写 */
     std::vector<double> stand_pose_rad = {};
     /* 默认使用 MIT/PVT 模式；若改为 CSP，apply_action 将沿用位置指令路径 */
     myactua::ControlMode motor_control_mode = myactua::ControlMode::PVT;
@@ -65,13 +65,13 @@ struct RobotInterfaceConfig {
     std::vector<int> model_to_motor_index;
     /* 网络原始输出动作的截断范围：[-action_clip, action_clip] */
     double action_clip = 1.0;
-    /* 截断后的动作缩放系数：target_q = stand_pose_rad + clipped_action * action_scale */
-    double action_scale = 0.5;
+    /* 截断后的动作缩放系数，长度必须为 12；按模型 DOF 序号使用 */
+    std::vector<double> action_scale;
     /* 步态相位周期，单位 s；phase = fmod(elapsed / policy_cycle_time_s, 1) */
     double policy_cycle_time_s = 0.02;
-    /* DOF Pos 缩放，长度必须为 12；输入使用 (q - stand_pose_rad) * dof_pos_scale */
+    /* DOF Pos 缩放，长度必须为 12；按模型 DOF 序号使用 */
     std::vector<double> dof_pos_scale;
-    /* DOF Vel 缩放，长度必须为 12；输入使用 dq * dof_vel_scale */
+    /* DOF Vel 缩放，长度必须为 12；按模型 DOF 序号使用 */
     std::vector<double> dof_vel_scale;
     /* 速度指令缩放，对应 vx、vy、yaw_rate */
     std::array<double, 3> command_scale = {
@@ -111,8 +111,8 @@ public:
     bool stop_motors(int slave_index = -1);
     bool restart_motors(int slave_index = -1);
     void deinit_motors();
-    bool apply_action(const std::vector<double>& target_q_rad);  // 下发给电机(rad), policy_step中调用
-    bool reset_joints();  // /* 复位到 stand_pose_rad，单位为 rad */
+    bool apply_action(const std::vector<double>& target_q_model_rad);  // 模型 DOF 顺序目标角(rad)
+    bool reset_joints();  // /* 复位到模型 DOF 顺序配置的 stand_pose_rad，单位为 rad */
 
     bool is_motors_initialized() const { return motors_initialized_.load(); }
     std::vector<double> get_joint_q() const;    // rad
@@ -144,8 +144,8 @@ private:
     static constexpr int kPolicySingleObservationSize = 47;  // 单帧模型观测维度
     static constexpr int kPolicyFrameStack = 15;             // 模型输入使用 15 帧观测
 #else
-    static constexpr int kPolicySingleObservationSize = 45;  // 单帧模型观测维度
-    static constexpr int kPolicyFrameStack = 5;              // 模型输入使用 5 帧观测
+    static constexpr int kPolicySingleObservationSize = 45;  // 单周期各 observation term 总维度
+    static constexpr int kPolicyFrameStack = 5;              // policy.pt 每个 term 使用 5 帧历史
 #endif
     static constexpr int kPolicyObservationSize =
         kPolicySingleObservationSize * kPolicyFrameStack;

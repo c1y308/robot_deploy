@@ -62,12 +62,22 @@ inference::RobotInterfaceConfig make_robot_config()
 #endif
 
     cfg.action_clip = 1;
-    cfg.action_scale = 0.5;
     cfg.policy_cycle_time_s = 0.02;
 
-    cfg.stand_pose_rad.assign(12, 0.0);
-    cfg.joint_min_rad.assign(12, -3.14);
-    cfg.joint_max_rad.assign(12,  3.14);
+    // 以下 12 维策略配置均按模型 DOF 序号填写；joint_min/max 是相对 stand_pose_rad 的偏移限位。
+    cfg.stand_pose_rad = {
+    0.0, 0.0, 0.45, -0.45,
+    0.0, 0.0, -0.8, 0.8,
+    0.3, 0.3, 0.0, 0.0
+    };
+
+    cfg.action_scale = {
+    0.08, 0.08, 0.3, 0.3,
+    0.08, 0.08, 0.3, 0.3,
+    0.15, 0.15, 0.08, 0.08
+};
+    cfg.joint_min_rad.assign(12, -1);
+    cfg.joint_max_rad.assign(12,  1);
     cfg.dof_pos_scale.assign(12, 1.0);
     cfg.dof_vel_scale.assign(12, 0.05);
 
@@ -75,6 +85,8 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.body_ang_vel_scale = {0.2, 0.2, 0.2};
     cfg.euler_scale = {1.0, 1.0, 1.0};
 
+    cfg.mit_kp.assign(12, 250);
+    cfg.mit_kd.assign(12, 10);
     return cfg;
 }
 
