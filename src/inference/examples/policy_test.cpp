@@ -58,17 +58,23 @@ inference::RobotInterfaceConfig make_robot_config()
                                 6, 7, 8, 9, 11, 10};
 #else
     cfg.model_to_motor_index = {0, 6, 1, 7, 2, 8,
-                                3, 9, 4, 11, 5, 10};
+                                3, 9, 5, 10, 4, 11};
 #endif
-    cfg.motor_to_model_direction.assign(12, 1);
+    cfg.print_motor_ids = {0, 1, 2, 3, 4, 5,
+                           6, 7, 8, 9, 10, 11};
+                           
+    cfg.motor_to_model_direction = {
+        1, -1,  1, 1,  1, -1,
+        1, 1, 1, -1, -1, 1
+    };
 
     cfg.action_clip = 1;  // 模型原始输出动作的截断范围：[-action_clip, action_clip]
     cfg.policy_cycle_time_s = 0.02;
 
     // 以下 12 维策略配置均按模型 DOF 序号填写；joint_min/max 是相对 stand_pose_rad 的偏移限位。
     cfg.stand_pose_rad = {
-    0.0, 0.0, 0.45, 0.45,
-    0.0, 0.0, 0.8, 0.8,
+    0.0, 0.0, -0.45, -0.45,
+    0.0, 0.0, 0.8,  0.8,
     0.3, 0.3, 0.0, 0.0
     };
 
@@ -187,6 +193,8 @@ int main()
         safe_shutdown(robot);
         return 1;
     }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(10000));
 
     std::cout << "[INFO] Entering policy loop. Press Ctrl+C to stop.\n";
     using Clock = std::chrono::steady_clock;

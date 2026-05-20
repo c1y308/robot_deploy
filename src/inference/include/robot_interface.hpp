@@ -34,7 +34,7 @@ struct RobotInterfaceConfig {
     int wait_all_slaves_timeout_ms = 30000;
     int wait_all_slaves_poll_ms    = 100;
     /* 是否在终端打印电机信息 */
-    bool print_motors_info = false;  // false将 print_motor_ids 清零
+    bool print_motors_info = true;  // false将 print_motor_ids 清零
     std::vector<int> print_motor_ids = {-1};  // 仅打印这些ID的电机信息，ID从0开始，-1表示全部
     /* 相对 stand_pose_rad 的关节弧度偏移限制，按模型 DOF 序号填写 */
     std::vector<double> joint_min_rad;
