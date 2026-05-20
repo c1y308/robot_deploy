@@ -39,6 +39,21 @@ bool finite_vector(const std::vector<double>& values)
     });
 }
 
+bool valid_motor_direction_values(const std::vector<int>& directions)
+{
+    return std::all_of(directions.begin(), directions.end(), [](int direction) {
+        return direction == 1 || direction == -1;
+    });
+}
+
+int direction_for_motor(const RobotInterfaceConfig& config, int motor_index)
+{
+    if (config.motor_to_model_direction.empty()) {
+        return 1;
+    }
+    return config.motor_to_model_direction[motor_index];
+}
+
 bool compute_projected_gravity(const std::array<double, 4>& quat,
                                std::array<double, 3>& projected_gravity)
 {
@@ -266,6 +281,19 @@ bool RobotInterface::validate_motor_config() const {
         return false;
     }
 
+    if (!config_.motor_to_model_direction.empty()) {
+        if (static_cast<int>(config_.motor_to_model_direction.size()) != config_.num_motors) {
+            std::cerr << "[RobotInterface] motor_to_model_direction size must be "
+                      << config_.num_motors << " or empty, got="
+                      << config_.motor_to_model_direction.size() << "\n";
+            return false;
+        }
+        if (!valid_motor_direction_values(config_.motor_to_model_direction)) {
+            std::cerr << "[RobotInterface] motor_to_model_direction values must be 1 or -1\n";
+            return false;
+        }
+    }
+
     if (is_mit_mode(config_.motor_control_mode)) {
         if (static_cast<int>(config_.mit_kp.size()) != config_.num_motors) {
             std::cerr << "[RobotInterface] MIT mode requires mit_kp size="
@@ -339,7 +367,7 @@ bool RobotInterface::restart_motors(int slave_index) {
     return true;
 }
 
-/* 输入的关节目标位置（弧度）按照模型电机索引进行映射；并完成限位检查 */
+/* 输入的关节目标位置（弧度）按照模型电机索引、坐标系; 并完成限位检查; 并完成坐标系反转 */
 bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad) {
     if (!motors_initialized_.load() || !controller_) {
         return false;
@@ -383,7 +411,9 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
                 config_.stand_pose_rad[model_index] + config_.joint_max_rad[model_index];
             q = std::max(lower_limit, std::min(upper_limit, q));
         }
-        target_rad[motor_index] = q;  // 模型索引 -> 电机索引
+        /* 进行坐标系映射 */
+        target_rad[motor_index] =
+            static_cast<double>(direction_for_motor(config_, motor_index)) * q;
     }
 
     if (is_mit_mode(config_.motor_control_mode)) {
@@ -464,8 +494,10 @@ bool RobotInterface::reset_joints() {
 
     const std::vector<double> q0_motor = get_joint_q();
     std::vector<double> q0_model(config_.num_motors, 0.0);
+
     const bool has_model_mapping =
         static_cast<int>(config_.model_to_motor_index.size()) == config_.num_motors;
+
     for (int model_index = 0; model_index < config_.num_motors; ++model_index) {
         const int motor_index = has_model_mapping
             ? config_.model_to_motor_index[model_index]
@@ -476,7 +508,9 @@ bool RobotInterface::reset_joints() {
                       << motor_index << "\n";
             return false;
         }
-        q0_model[model_index] = q0_motor[motor_index];
+        q0_model[model_index] =
+            static_cast<double>(direction_for_motor(config_, motor_index)) *
+            q0_motor[motor_index];
     }
 
     const int ramp_steps = 100;
@@ -558,6 +592,10 @@ bool RobotInterface::validate_policy_config() const {
     if (config_.model_to_motor_index.size() != static_cast<std::size_t>(kPolicyDof)) {
         return fail("model_to_motor_index must have 12 values");
     }
+    if (!config_.motor_to_model_direction.empty() &&
+        config_.motor_to_model_direction.size() != static_cast<std::size_t>(kPolicyDof)) {
+        return fail("motor_to_model_direction must have 12 values or be empty");
+    }
     if (config_.dof_pos_scale.size() != static_cast<std::size_t>(kPolicyDof) ||
         config_.dof_vel_scale.size() != static_cast<std::size_t>(kPolicyDof)) {
         return fail("dof_pos_scale and dof_vel_scale must have 12 values");
@@ -574,6 +612,9 @@ bool RobotInterface::validate_policy_config() const {
     if (!finite_array3(config_.command_scale) ||
         !finite_array3(config_.body_ang_vel_scale)) {
         return fail("command/body_ang_vel scales must be finite");
+    }
+    if (!valid_motor_direction_values(config_.motor_to_model_direction)) {
+        return fail("motor_to_model_direction values must be 1 or -1");
     }
 #if POLICY_V3
     if (!finite_array3(config_.euler_scale)) {
@@ -739,12 +780,15 @@ bool RobotInterface::build_policy_observation(
     for (int model_index = 0; model_index < kPolicyDof; ++model_index) {
         /* 电机关节映射转换 */
         const int motor_index = config_.model_to_motor_index[model_index];
+        const double direction =
+            static_cast<double>(direction_for_motor(config_, motor_index));
+        const double q_model = direction * q_rad[motor_index];
+        const double dq_model = direction * dq_rad_s[motor_index];
         current_observation[5 + model_index]  =
-            static_cast<float>((q_rad[motor_index] - config_.stand_pose_rad[model_index]) *
+            static_cast<float>((q_model - config_.stand_pose_rad[model_index]) *
                                config_.dof_pos_scale[model_index]);
         current_observation[17 + model_index] =
-            static_cast<float>(dq_rad_s[motor_index] *
-                               config_.dof_vel_scale[model_index]);
+            static_cast<float>(dq_model * config_.dof_vel_scale[model_index]);
         current_observation[29 + model_index] = last_action_raw_[model_index];
     }
 
@@ -808,14 +852,18 @@ bool RobotInterface::build_policy_observation(
     for (int model_index = 0; model_index < kPolicyDof; ++model_index) {
         /* 电机关节映射转换 */
         const int motor_index = config_.model_to_motor_index[model_index];
+        /* 完成电机坐标系映射 */
+        const double direction =
+            static_cast<double>(direction_for_motor(config_, motor_index));
+        const double q_model  = direction * q_rad[motor_index];
+        const double dq_model = direction * dq_rad_s[motor_index];
 
         /* 转换得到基于模型索引的关节位置和速度 */
         joint_pos_rel[model_index] =
-            static_cast<float>((q_rad[motor_index] - config_.stand_pose_rad[model_index]) *
+            static_cast<float>((q_model - config_.stand_pose_rad[model_index]) *
                                config_.dof_pos_scale[model_index]);
         joint_vel_rel[model_index] =
-            static_cast<float>(dq_rad_s[motor_index] *
-                               config_.dof_vel_scale[model_index]);
+            static_cast<float>(dq_model * config_.dof_vel_scale[model_index]);
     }
 
     constexpr std::size_t kBaseAngVelOffset = 0;

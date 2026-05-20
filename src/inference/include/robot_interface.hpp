@@ -63,6 +63,8 @@ struct RobotInterfaceConfig {
     std::string policy_model_path;
     /* 模型关节维度到电机逻辑索引的映射，长度必须为 12 且不可重复 */
     std::vector<int> model_to_motor_index;
+    /* 电机物理/控制器 ID 到模型关节方向的符号；1 表示方向一致，-1 表示方向相反；为空时全部按 1 */
+    std::vector<int> motor_to_model_direction;
     /* 网络原始输出动作的截断范围：[-action_clip, action_clip] */
     double action_clip = 1.0;
     /* 截断后的动作缩放系数，长度必须为 12；按模型 DOF 序号使用 */

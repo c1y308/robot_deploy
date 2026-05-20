@@ -60,14 +60,15 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.model_to_motor_index = {0, 6, 1, 7, 2, 8,
                                 3, 9, 4, 11, 5, 10};
 #endif
+    cfg.motor_to_model_direction.assign(12, 1);
 
     cfg.action_clip = 1;  // 模型原始输出动作的截断范围：[-action_clip, action_clip]
     cfg.policy_cycle_time_s = 0.02;
 
     // 以下 12 维策略配置均按模型 DOF 序号填写；joint_min/max 是相对 stand_pose_rad 的偏移限位。
     cfg.stand_pose_rad = {
-    0.0, 0.0, 0.45, -0.45,
-    0.0, 0.0, -0.8, 0.8,
+    0.0, 0.0, 0.45, 0.45,
+    0.0, 0.0, 0.8, 0.8,
     0.3, 0.3, 0.0, 0.0
     };
 
