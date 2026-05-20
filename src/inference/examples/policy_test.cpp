@@ -61,7 +61,7 @@ inference::RobotInterfaceConfig make_robot_config()
                                 3, 9, 4, 11, 5, 10};
 #endif
 
-    cfg.action_clip = 1;
+    cfg.action_clip = 1;  // 模型原始输出动作的截断范围：[-action_clip, action_clip]
     cfg.policy_cycle_time_s = 0.02;
 
     // 以下 12 维策略配置均按模型 DOF 序号填写；joint_min/max 是相对 stand_pose_rad 的偏移限位。
@@ -71,6 +71,9 @@ inference::RobotInterfaceConfig make_robot_config()
     0.3, 0.3, 0.0, 0.0
     };
 
+    cfg.dof_pos_scale.assign(12, 1.0);
+    cfg.dof_vel_scale.assign(12, 0.05);
+
     cfg.action_scale = {
     0.08, 0.08, 0.3, 0.3,
     0.08, 0.08, 0.3, 0.3,
@@ -78,8 +81,8 @@ inference::RobotInterfaceConfig make_robot_config()
 };
     cfg.joint_min_rad.assign(12, -1);
     cfg.joint_max_rad.assign(12,  1);
-    cfg.dof_pos_scale.assign(12, 1.0);
-    cfg.dof_vel_scale.assign(12, 0.05);
+
+    /******************************************************************* */
 
     cfg.command_scale = {0.1, 0.1, 0.1};
     cfg.body_ang_vel_scale = {0.2, 0.2, 0.2};

@@ -339,6 +339,7 @@ bool RobotInterface::restart_motors(int slave_index) {
     return true;
 }
 
+/* 输入的关节目标位置（弧度）按照模型电机索引进行映射；并完成限位检查 */
 bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad) {
     if (!motors_initialized_.load() || !controller_) {
         return false;
@@ -359,8 +360,9 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
         static_cast<int>(config_.model_to_motor_index.size()) == config_.num_motors;
     const bool has_relative_limits =
         config_.stand_pose_rad.size() == static_cast<size_t>(config_.num_motors) &&
-        config_.joint_min_rad.size() == static_cast<size_t>(config_.num_motors) &&
-        config_.joint_max_rad.size() == static_cast<size_t>(config_.num_motors);
+        config_.joint_min_rad.size()  == static_cast<size_t>(config_.num_motors) &&
+        config_.joint_max_rad.size()  == static_cast<size_t>(config_.num_motors);
+
 
     for (int model_index = 0; model_index < config_.num_motors; ++model_index) {
         const int motor_index = has_model_mapping
@@ -381,7 +383,7 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
                 config_.stand_pose_rad[model_index] + config_.joint_max_rad[model_index];
             q = std::max(lower_limit, std::min(upper_limit, q));
         }
-        target_rad[motor_index] = q;
+        target_rad[motor_index] = q;  // 模型索引 -> 电机索引
     }
 
     if (is_mit_mode(config_.motor_control_mode)) {
@@ -659,8 +661,7 @@ bool RobotInterface::policy_step(double vx, double vy, double yaw_rate) {
                      std::min(config_.action_clip, static_cast<double>(raw_action[model_index])));
 
         target_q_model_rad[model_index] =
-            config_.stand_pose_rad[model_index] +
-            clipped_action * config_.action_scale[model_index];
+            config_.stand_pose_rad[model_index] + clipped_action * config_.action_scale[model_index];
     }
 
     if (!apply_action(target_q_model_rad)) {
@@ -807,6 +808,8 @@ bool RobotInterface::build_policy_observation(
     for (int model_index = 0; model_index < kPolicyDof; ++model_index) {
         /* 电机关节映射转换 */
         const int motor_index = config_.model_to_motor_index[model_index];
+
+        /* 转换得到基于模型索引的关节位置和速度 */
         joint_pos_rel[model_index] =
             static_cast<float>((q_rad[motor_index] - config_.stand_pose_rad[model_index]) *
                                config_.dof_pos_scale[model_index]);
