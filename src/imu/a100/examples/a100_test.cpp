@@ -61,12 +61,12 @@ int main() {
 
 
     imu::IMUReader reader;
-    reader.set_imu_callback([&state](const imu::IMUData_t& data) {
-        std::lock_guard<std::mutex> lock(state.mutex);
-        state.latest_imu = data;
-        state.has_imu = true;
-        ++state.imu_updates;
-    });
+    // reader.set_imu_callback([&state](const imu::IMUData_t& data) {
+    //     std::lock_guard<std::mutex> lock(state.mutex);
+    //     state.latest_imu = data;
+    //     state.has_imu = true;
+    //     ++state.imu_updates;
+    // });
     reader.set_ahrs_callback([&state](const imu::AHRSData_t& data) {
         std::lock_guard<std::mutex> lock(state.mutex);
         state.latest_ahrs = data;

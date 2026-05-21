@@ -24,14 +24,6 @@ bool finite_array3(const std::array<double, 3>& values)
            std::isfinite(values[2]);
 }
 
-bool finite_array4(const std::array<double, 4>& values)
-{
-    return std::isfinite(values[0]) &&
-           std::isfinite(values[1]) &&
-           std::isfinite(values[2]) &&
-           std::isfinite(values[3]);
-}
-
 bool finite_vector(const std::vector<double>& values)
 {
     return std::all_of(values.begin(), values.end(), [](double value) {
@@ -52,42 +44,6 @@ int direction_for_motor(const RobotInterfaceConfig& config, int motor_index)
         return 1;
     }
     return config.motor_to_model_direction[motor_index];
-}
-
-bool compute_projected_gravity(const std::array<double, 4>& quat,
-                               std::array<double, 3>& projected_gravity)
-{
-    if (!finite_array4(quat)) {
-        return false;
-    }
-
-    const double norm_sq = quat[0] * quat[0] +
-                           quat[1] * quat[1] +
-                           quat[2] * quat[2] +
-                           quat[3] * quat[3];
-    if (!std::isfinite(norm_sq) || norm_sq <= 1.0e-12) {
-        return false;
-    }
-
-    const double inv_norm = 1.0 / std::sqrt(norm_sq);
-    const double w = quat[0] * inv_norm;
-    const double x = quat[1] * inv_norm;
-    const double y = quat[2] * inv_norm;
-    const double z = quat[3] * inv_norm;
-
-    // IsaacLab quat_rotate_inverse(q, [0, 0, -1]): world gravity in body frame.
-    constexpr std::array<double, 3> gravity{0.0, 0.0, -1.0};
-    const double cross_x = y * gravity[2] - z * gravity[1];
-    const double cross_y = z * gravity[0] - x * gravity[2];
-    const double cross_z = x * gravity[1] - y * gravity[0];
-    const double dot = x * gravity[0] + y * gravity[1] + z * gravity[2];
-    const double a_scale = 2.0 * w * w - 1.0;
-
-    projected_gravity[0] = gravity[0] * a_scale - 2.0 * w * cross_x + 2.0 * x * dot;
-    projected_gravity[1] = gravity[1] * a_scale - 2.0 * w * cross_y + 2.0 * y * dot;
-    projected_gravity[2] = gravity[2] * a_scale - 2.0 * w * cross_z + 2.0 * z * dot;
-
-    return finite_array3(projected_gravity);
 }
 
 template <std::size_t TermSize, std::size_t ObservationSize>
@@ -150,6 +106,7 @@ bool RobotInterface::initial_and_start_imu() {
     imu_cfg.print_stats = config_.imu_print_stats;
 
     ahrs_ready_.store(false);
+    projected_gravity_valid_ = false;
     imu_reader_ = std::make_unique<imu::IMUReader>();
     imu_reader_->set_imu_callback([this](const imu::IMUData_t& data) {
         (void)data;
@@ -170,6 +127,11 @@ bool RobotInterface::initial_and_start_imu() {
         quat_[1] = static_cast<double>(data.qx);
         quat_[2] = static_cast<double>(data.qy);
         quat_[3] = static_cast<double>(data.qz);
+
+        projected_gravity_[0] = static_cast<double>(data.projected_gravity_x);
+        projected_gravity_[1] = static_cast<double>(data.projected_gravity_y);
+        projected_gravity_[2] = static_cast<double>(data.projected_gravity_z);
+        projected_gravity_valid_ = data.projected_gravity_valid;
         ahrs_ready_.store(true);
     });
 
@@ -192,6 +154,7 @@ void RobotInterface::deinit_imu() {
     imu_reader_.reset();
     imu_initialized_.store(false);
     ahrs_ready_.store(false);
+    projected_gravity_valid_ = false;
 }
 
 /* 获取IMU角度(从AHRS帧得到) */
@@ -214,6 +177,14 @@ std::array<double, 3> RobotInterface::get_body_ang_vel() const {
 std::array<double, 3> RobotInterface::get_euler() const {
     std::lock_guard<std::mutex> lock(imu_mutex_);
     return euler_;
+}
+
+std::array<double, 3> RobotInterface::get_projected_gravity() const {
+    std::lock_guard<std::mutex> lock(imu_mutex_);
+    if (!projected_gravity_valid_) {
+        return {0.0, 0.0, 0.0};
+    }
+    return projected_gravity_;
 }
 
 
@@ -746,12 +717,14 @@ bool RobotInterface::build_policy_observation(
 
     std::array<double, 3> body_ang_vel = {};
     std::array<double, 3> euler = {};
-    std::array<double, 4> quat = {};
+    std::array<double, 3> projected_gravity_double = {};
+    bool projected_gravity_valid = false;
     {
         std::lock_guard<std::mutex> lock(imu_mutex_);
         body_ang_vel = body_ang_vel_;
         euler = euler_;
-        quat = quat_;
+        projected_gravity_double = projected_gravity_;
+        projected_gravity_valid = projected_gravity_valid_;
     }
 
 #if POLICY_V3
@@ -823,14 +796,12 @@ bool RobotInterface::build_policy_observation(
 
 #else
     if (!finite_vector(q_rad) || !finite_vector(dq_rad_s) ||
-        !finite_array3(body_ang_vel) || !finite_array4(quat)) {
+        !finite_array3(body_ang_vel) || !finite_array3(projected_gravity_double)) {
         std::cerr << "[RobotInterface] policy observation rejected: sensor value is not finite\n";
         return false;
     }
-
-    std::array<double, 3> projected_gravity_double = {};
-    if (!compute_projected_gravity(quat, projected_gravity_double)) {
-        std::cerr << "[RobotInterface] policy observation rejected: quaternion is invalid\n";
+    if (!projected_gravity_valid) {
+        std::cerr << "[RobotInterface] policy observation rejected: projected gravity is invalid\n";
         return false;
     }
 
@@ -844,24 +815,26 @@ bool RobotInterface::build_policy_observation(
     std::array<float, kPolicyDof> joint_pos_rel = {};
     std::array<float, kPolicyDof> joint_vel_rel = {};
 
+    /* 构建缩放后的 角速度 与 projected_gravity */
     for (int i = 0; i < 3; ++i) {
-        base_ang_vel[i] =
-            static_cast<float>(body_ang_vel[i] * config_.body_ang_vel_scale[i]);
+        base_ang_vel[i] = static_cast<float>(body_ang_vel[i] * config_.body_ang_vel_scale[i]);
         projected_gravity[i] = static_cast<float>(projected_gravity_double[i]);
     }
+
+    /* 构建电机相关数据（从模型序号转换得到物理序号） */
     for (int model_index = 0; model_index < kPolicyDof; ++model_index) {
-        /* 电机关节映射转换 */
+        /* 得到电机模型序号对应的物理序号 */
         const int motor_index = config_.model_to_motor_index[model_index];
-        /* 完成电机坐标系映射 */
-        const double direction =
-            static_cast<double>(direction_for_motor(config_, motor_index));
+        /* 得到对应物理序号电机的坐标系方向 */
+        const double direction = static_cast<double>(direction_for_motor(config_, motor_index));
+
+        /* 得到对应电机的 角度(rad) 与 角速度(rad/s) */
         const double q_model  = direction * q_rad[motor_index];
         const double dq_model = direction * dq_rad_s[motor_index];
 
-        /* 转换得到基于模型索引的关节位置和速度 */
+        /* 构建为模型序号的关节位置和速度 */
         joint_pos_rel[model_index] =
-            static_cast<float>((q_model - config_.stand_pose_rad[model_index]) *
-                               config_.dof_pos_scale[model_index]);
+            static_cast<float>((q_model - config_.stand_pose_rad[model_index]) * config_.dof_pos_scale[model_index]);
         joint_vel_rel[model_index] =
             static_cast<float>(dq_model * config_.dof_vel_scale[model_index]);
     }

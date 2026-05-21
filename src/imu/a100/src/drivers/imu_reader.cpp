@@ -57,7 +57,7 @@ void IMUReader::read_loop() {
         if (bytes_read > 0) {
             parser_->feed(read_buffer, bytes_read);
 
-            IMUData_t imu_data;
+            IMUData_t  imu_data;
             AHRSData_t ahrs_data;
 
             if (config_.print_imu && parser_->get_imu_data(imu_data)) {

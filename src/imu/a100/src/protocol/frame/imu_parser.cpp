@@ -1,10 +1,66 @@
 #include "imu_parser.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <iomanip>
 
 namespace imu {
+namespace {
+
+bool compute_projected_gravity(float qw,
+                               float qx,
+                               float qy,
+                               float qz,
+                               float& projected_gravity_x,
+                               float& projected_gravity_y,
+                               float& projected_gravity_z)
+{
+    if (!std::isfinite(qw) || !std::isfinite(qx) ||
+        !std::isfinite(qy) || !std::isfinite(qz)) {
+        return false;
+    }
+
+    const double norm_sq = static_cast<double>(qw) * qw +
+                           static_cast<double>(qx) * qx +
+                           static_cast<double>(qy) * qy +
+                           static_cast<double>(qz) * qz;
+    if (!std::isfinite(norm_sq) || norm_sq <= 1.0e-12) {
+        return false;
+    }
+
+    const double inv_norm = 1.0 / std::sqrt(norm_sq);
+    const double w = static_cast<double>(qw) * inv_norm;
+    const double x = static_cast<double>(qx) * inv_norm;
+    const double y = static_cast<double>(qy) * inv_norm;
+    const double z = static_cast<double>(qz) * inv_norm;
+
+    // IsaacLab quat_rotate_inverse(q, [0, 0, -1]): world gravity in body frame.
+    constexpr double gravity_x = 0.0;
+    constexpr double gravity_y = 0.0;
+    constexpr double gravity_z = -1.0;
+    const double cross_x = y * gravity_z - z * gravity_y;
+    const double cross_y = z * gravity_x - x * gravity_z;
+    const double cross_z = x * gravity_y - y * gravity_x;
+    const double dot = x * gravity_x + y * gravity_y + z * gravity_z;
+    const double a_scale = 2.0 * w * w - 1.0;
+
+    const double projected_x = gravity_x * a_scale - 2.0 * w * cross_x + 2.0 * x * dot;
+    const double projected_y = gravity_y * a_scale - 2.0 * w * cross_y + 2.0 * y * dot;
+    const double projected_z = gravity_z * a_scale - 2.0 * w * cross_z + 2.0 * z * dot;
+    if (!std::isfinite(projected_x) ||
+        !std::isfinite(projected_y) ||
+        !std::isfinite(projected_z)) {
+        return false;
+    }
+
+    projected_gravity_x = static_cast<float>(projected_x);
+    projected_gravity_y = static_cast<float>(projected_y);
+    projected_gravity_z = static_cast<float>(projected_z);
+    return true;
+}
+
+}  // namespace
 
 IMUParser::IMUParser() 
     : rx_index_(0),
@@ -205,6 +261,15 @@ bool IMUParser::parse_ahrs_frame(const uint8_t* data) {
     ahrs_data_.qy = data_to_float(data[39], data[40], data[41], data[42]);
     ahrs_data_.qz = data_to_float(data[43], data[44], data[45], data[46]);
 
+    ahrs_data_.projected_gravity_valid =
+        compute_projected_gravity(ahrs_data_.qw,
+                                  ahrs_data_.qx,
+                                  ahrs_data_.qy,
+                                  ahrs_data_.qz,
+                                  ahrs_data_.projected_gravity_x,
+                                  ahrs_data_.projected_gravity_y,
+                                  ahrs_data_.projected_gravity_z);
+
     ahrs_data_.timestamp =
         data_to_u64(data[47], data[48], data[49], data[50],
                     data[51], data[52], data[53], data[54]);
@@ -277,6 +342,12 @@ void IMUParser::print_ahrs_data(const AHRSData_t& ahrs) {
               << ahrs.qx << ", "
               << ahrs.qy << ", "
               << ahrs.qz << "]" << std::endl;
+    std::cout << "Projected gravity: ["
+              << ahrs.projected_gravity_x << ", "
+              << ahrs.projected_gravity_y << ", "
+              << ahrs.projected_gravity_z << "]"
+              << " valid=" << (ahrs.projected_gravity_valid ? "true" : "false")
+              << std::endl;
     std::cout << "Timestamp: " << ahrs.timestamp << " us" << std::endl;
     std::cout << "=============================" << std::endl << std::endl;
 }

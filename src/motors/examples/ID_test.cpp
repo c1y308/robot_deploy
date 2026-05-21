@@ -8,7 +8,7 @@
 
 
 int main() {
-    int motors_nums = 1;
+    int motors_nums = 12;
     auto adapter = std::make_shared<myactua::EthercatAdapterIGH>();
     // 实例化控制类，与适配器关联
     myactua::MYACTUA controller(adapter, motors_nums);

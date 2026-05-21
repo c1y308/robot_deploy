@@ -130,6 +130,7 @@ public:
     std::array<double, 3> get_ang_vel() const;  // [wx, wy, wz], rad/s
     std::array<double, 3> get_body_ang_vel() const;  // [roll_speed, pitch_speed, heading_speed], rad/s
     std::array<double, 3> get_euler() const;          // [roll, pitch, heading], rad
+    std::array<double, 3> get_projected_gravity() const;  // [x, y, z], unit vector in body frame
 
 
 
@@ -176,6 +177,8 @@ private:
     std::array<double, 3> ang_vel_{0.0, 0.0, 0.0};
     std::array<double, 3> body_ang_vel_{0.0, 0.0, 0.0};
     std::array<double, 3> euler_{0.0, 0.0, 0.0};
+    std::array<double, 3> projected_gravity_{0.0, 0.0, -1.0};
+    bool projected_gravity_valid_ = false;
 
 
     /*  Policy 运行器 智能指针 */

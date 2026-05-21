@@ -57,11 +57,17 @@ struct AHRSData_t {
     float qx;
     float qy;
     float qz;
+    float projected_gravity_x;
+    float projected_gravity_y;
+    float projected_gravity_z;
+    bool projected_gravity_valid;
     uint64_t timestamp;
     
     AHRSData_t() : roll_speed(0), pitch_speed(0), heading_speed(0),
                    roll(0), pitch(0), heading(0),
                    qw(0), qx(0), qy(0), qz(0),
+                   projected_gravity_x(0), projected_gravity_y(0), projected_gravity_z(0),
+                   projected_gravity_valid(false),
                    timestamp(0) {}
 };
 

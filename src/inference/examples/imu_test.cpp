@@ -32,7 +32,7 @@ int main() {
     while (g_running.load()) {
         const auto euler = robot.get_euler();
         const auto body_ang_vel = robot.get_body_ang_vel();
-
+        const auto projected_gravity = robot.get_projected_gravity();
         std::cout << std::fixed << std::setprecision(6)
                   << "[IMU_TEST] euler[roll,pitch,heading]=["
                   << euler[0] << ", "
@@ -40,7 +40,10 @@ int main() {
                   << euler[2] << "] rad, body_ang_vel[roll,pitch,heading]=["
                   << body_ang_vel[0] << ", "
                   << body_ang_vel[1] << ", "
-                  << body_ang_vel[2] << "] rad/s\n";
+                  << body_ang_vel[2] << "] rad/s, projected_gravity=["
+                  << projected_gravity[0] << ", "
+                  << projected_gravity[1] << ", "
+                  << projected_gravity[2] << "] m/s^2\n";
 
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
