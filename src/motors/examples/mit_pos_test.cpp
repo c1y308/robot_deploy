@@ -90,13 +90,12 @@ int main()
     controller.start();
 
     std::cout << "[flow] stop all motors before mode switch" << std::endl;
-    controller.send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
+    controller.send_command(myactua::ControlCommand::Stop());
     sleep_ms(kWarmupMs);
 
     std::cout << "[flow] switch all motors to PVT/MIT" << std::endl;
     for (int i = 0; i < kNumMotors; ++i) {
-        controller.send_command(myactua::ControlCommand(
-            myactua::CommandType::SET_MODE, i, {}, myactua::ControlMode::PVT));
+        controller.send_command(myactua::ControlCommand::SetMode(myactua::ControlMode::PVT, i));
     }
     sleep_ms(kModeSwitchWaitMs);
 
@@ -113,7 +112,7 @@ int main()
     }
     if (home_rad.size() != static_cast<std::size_t>(kNumMotors)) {
         std::cerr << "[error] failed to read initial joint positions" << std::endl;
-        controller.send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
+        controller.send_command(myactua::ControlCommand::Stop());
         controller.shutdown();
         return -1;
     }
@@ -138,13 +137,12 @@ int main()
         sp.reserve(home_deg.size());
         for (double p : home_deg)
             sp.emplace_back(p, 0.0, 0.0, kDefaultKp, kDefaultKd);
-        controller.send_command(myactua::ControlCommand(
-            myactua::CommandType::SET_MIT_SETPOINTS, -1, sp));
+        controller.send_command(myactua::ControlCommand::SetMitSetpoints(sp));
     }
     sleep_ms(kPreloadSetpointMs);
 
     std::cout << "[flow] restart all motors" << std::endl;
-    controller.send_command(myactua::ControlCommand(myactua::CommandType::RESTART, -1));
+    controller.send_command(myactua::ControlCommand::Restart());
     sleep_ms(kRestartWaitMs);
 
     // ---- hold current pose, kd=0 ----
@@ -162,8 +160,7 @@ int main()
             if (std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - t0).count() >= kInitialHoldMs)
                 break;
-            controller.send_command(myactua::ControlCommand(
-                myactua::CommandType::SET_MIT_SETPOINTS, -1, sp));
+            controller.send_command(myactua::ControlCommand::SetMitSetpoints(sp));
             next += std::chrono::milliseconds(kCommandPeriodMs);
             std::this_thread::sleep_until(next);
         }
@@ -190,8 +187,7 @@ int main()
                 double p = home_deg[i] + (target_deg[i] - home_deg[i]) * blend;
                 sp.emplace_back(p, 0.0, 0.0, kDefaultKp, kDefaultKd);
             }
-            controller.send_command(myactua::ControlCommand(
-                myactua::CommandType::SET_MIT_SETPOINTS, -1, sp));
+            controller.send_command(myactua::ControlCommand::SetMitSetpoints(sp));
 
             next += std::chrono::milliseconds(kCommandPeriodMs);
             std::this_thread::sleep_until(next);
@@ -201,8 +197,7 @@ int main()
             std::vector<myactua::MitSetpoint> sp;
             sp.reserve(target_deg.size());
             for (double p : target_deg) sp.emplace_back(p, 0.0, 0.0, kDefaultKp, kDefaultKd);
-            controller.send_command(myactua::ControlCommand(
-                myactua::CommandType::SET_MIT_SETPOINTS, -1, sp));
+            controller.send_command(myactua::ControlCommand::SetMitSetpoints(sp));
         }
     }
 
@@ -221,8 +216,7 @@ int main()
             if (std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - t0).count() >= kHoldTargetMs)
                 break;
-            controller.send_command(myactua::ControlCommand(
-                myactua::CommandType::SET_MIT_SETPOINTS, -1, sp));
+            controller.send_command(myactua::ControlCommand::SetMitSetpoints(sp));
             next += std::chrono::milliseconds(kCommandPeriodMs);
             std::this_thread::sleep_until(next);
         }
@@ -233,11 +227,10 @@ int main()
         std::vector<myactua::MitSetpoint> sp;
         sp.reserve(target_deg.size());
         for (double p : target_deg) sp.emplace_back(p, 0.0, 0.0, kDefaultKp, kDefaultKd);
-        controller.send_command(myactua::ControlCommand(
-            myactua::CommandType::SET_MIT_SETPOINTS, -1, sp));
+        controller.send_command(myactua::ControlCommand::SetMitSetpoints(sp));
         sleep_ms(kShutdownHoldMs);
     }
-    controller.send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
+    controller.send_command(myactua::ControlCommand::Stop());
     sleep_ms(kShutdownHoldMs);
     controller.shutdown();
 

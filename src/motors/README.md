@@ -69,11 +69,12 @@ cd src/motors/build
 - `CSV (0x09)` 周期同步速度
 - `CST (0x0A)` 周期同步扭矩
 
-### 控制命令（`CommandType`）
-- `SET_SETPOINTS` 设置目标值
-- `STOP` 停止电机
-- `RESTART` 重新启动
-- `SET_MODE` 切换模式
+### 控制命令（`ControlCommand`）
+- `ControlCommand::SetScalarSetpoints(...)` 设置 CSP/CSV/CST 等标量目标值
+- `ControlCommand::SetMitSetpoints(...)` 设置 MIT/PVT 目标值
+- `ControlCommand::Stop(...)` 停止电机
+- `ControlCommand::Restart(...)` 重新启动
+- `ControlCommand::SetMode(...)` 切换模式
 
 ## 依赖与环境要求
 

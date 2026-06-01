@@ -17,6 +17,7 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 
+/* 检查 3 维数组中的数值是否全部为有限值。 */
 bool finite_array3(const std::array<double, 3>& values)
 {
     return std::isfinite(values[0]) &&
@@ -24,6 +25,7 @@ bool finite_array3(const std::array<double, 3>& values)
            std::isfinite(values[2]);
 }
 
+/* 检查动态数组中的数值是否全部为有限值。 */
 bool finite_vector(const std::vector<double>& values)
 {
     return std::all_of(values.begin(), values.end(), [](double value) {
@@ -31,6 +33,7 @@ bool finite_vector(const std::vector<double>& values)
     });
 }
 
+/* 检查电机方向配置是否只包含 1 或 -1。 */
 bool valid_motor_direction_values(const std::vector<int>& directions)
 {
     return std::all_of(directions.begin(), directions.end(), [](int direction) {
@@ -38,6 +41,7 @@ bool valid_motor_direction_values(const std::vector<int>& directions)
     });
 }
 
+/* 获取指定电机从物理坐标到模型坐标的方向符号。 */
 int direction_for_motor(const RobotInterfaceConfig& config, int motor_index)
 {
     if (config.motor_to_model_direction.empty()) {
@@ -46,6 +50,7 @@ int direction_for_motor(const RobotInterfaceConfig& config, int motor_index)
     return config.motor_to_model_direction[motor_index];
 }
 
+/* 首次构建观测历史时，用当前 term 填满所有历史帧。 */
 template <std::size_t TermSize, std::size_t ObservationSize>
 void fill_term_history(std::array<float, ObservationSize>& history,
                        std::size_t offset,
@@ -59,6 +64,7 @@ void fill_term_history(std::array<float, ObservationSize>& history,
     }
 }
 
+/* 后续构建观测历史时，左移旧帧并把当前 term 追加到末尾。 */
 template <std::size_t TermSize, std::size_t ObservationSize>
 void append_term_history(std::array<float, ObservationSize>& history,
                          std::size_t offset,
@@ -74,6 +80,7 @@ void append_term_history(std::array<float, ObservationSize>& history,
               history.begin() + offset + term_history_size - TermSize);
 }
 
+/* 判断当前电机控制模式是否走 MIT/PVT setpoint 下发路径。 */
 bool is_mit_mode(myactua::ControlMode mode)
 {
     return mode == myactua::ControlMode::PVT;
@@ -81,9 +88,11 @@ bool is_mit_mode(myactua::ControlMode mode)
 
 }  // namespace
 
+/* 保存外部传入的接口配置，后续由初始化函数按模块使用。 */
 RobotInterface::RobotInterface(RobotInterfaceConfig config)
     : config_(std::move(config)) {}
 
+/* 析构时依次释放策略、IMU 和电机资源，保证后台线程退出。 */
 RobotInterface::~RobotInterface() {
     unload_policy();
     deinit_imu();
@@ -93,6 +102,7 @@ RobotInterface::~RobotInterface() {
 
 
 /********************************************************************* */
+/* 初始化并启动 IMU 读取线程，注册 AHRS 回调以缓存姿态与角速度。 */
 bool RobotInterface::initial_and_start_imu() {
     if (imu_initialized_.load()) {
         return true;
@@ -146,7 +156,7 @@ bool RobotInterface::initial_and_start_imu() {
     return true;
 }
 
-
+/* 停止 IMU 读取线程并清空 IMU/AHRS 就绪状态。 */
 void RobotInterface::deinit_imu() {
     if (imu_reader_) {
         imu_reader_->stop();
@@ -157,28 +167,31 @@ void RobotInterface::deinit_imu() {
     projected_gravity_valid_ = false;
 }
 
-/* 获取IMU角度(从AHRS帧得到) */
+/* 获取 AHRS 输出的四元数，顺序为 [w, x, y, z]。 */
 std::array<double, 4> RobotInterface::get_quat() const {
     std::lock_guard<std::mutex> lock(imu_mutex_);
     return quat_;
 }
 
-//** 获取角速度(从AHRS帧得到) */
+/* 获取 IMU AHRS 输出的角速度。 */
 std::array<double, 3> RobotInterface::get_ang_vel() const {
     std::lock_guard<std::mutex> lock(imu_mutex_);
     return ang_vel_;
 }
 
+/* 获取机身坐标系角速度，供策略观测使用。 */
 std::array<double, 3> RobotInterface::get_body_ang_vel() const {
     std::lock_guard<std::mutex> lock(imu_mutex_);
     return body_ang_vel_;
 }
 
+/* 获取 IMU AHRS 输出的欧拉角。 */
 std::array<double, 3> RobotInterface::get_euler() const {
     std::lock_guard<std::mutex> lock(imu_mutex_);
     return euler_;
 }
 
+/* 获取投影重力向量；数据无效时返回零向量。 */
 std::array<double, 3> RobotInterface::get_projected_gravity() const {
     std::lock_guard<std::mutex> lock(imu_mutex_);
     if (!projected_gravity_valid_) {
@@ -189,7 +202,7 @@ std::array<double, 3> RobotInterface::get_projected_gravity() const {
 
 
 /*************************************************************************** */
-/* 初始化并启动电机 */
+/* 初始化 EtherCAT 电机控制器，配置控制模式并启动实时线程。 */
 bool RobotInterface::initial_and_start_motors() {
     if (motors_initialized_.load()) {
         return true;
@@ -222,10 +235,8 @@ bool RobotInterface::initial_and_start_motors() {
 
     /* 设置电机控制模式 */
     for (int i = 0; i < config_.num_motors; ++i) {
-        controller_->send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE,
-                                                             i,
-                                                            {},
-                                                               config_.motor_control_mode));
+        controller_->send_command(
+            myactua::ControlCommand::SetMode(config_.motor_control_mode, i));
     }
 
     /* 根据配置决定是否打印电机信息 */
@@ -238,14 +249,14 @@ bool RobotInterface::initial_and_start_motors() {
     /* 启动实时线程 */
     controller_->start();
 
-    controller_->send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
+    controller_->send_command(myactua::ControlCommand::Stop());
     motors_initialized_.store(true);
     motion_enabled_.store(false);
 
     return true;
 }
 
-
+/* 校验电机数量、方向和 MIT/PVT 控制参数是否满足下发要求。 */
 bool RobotInterface::validate_motor_config() const {
     if (config_.num_motors <= 0) {
         std::cerr << "[RobotInterface] num_motors must be positive\n";
@@ -287,7 +298,7 @@ bool RobotInterface::validate_motor_config() const {
     return true;
 }
 
-
+/* 停止电机控制器并释放 EtherCAT 相关资源。 */
 void RobotInterface::deinit_motors() {
     if (motors_initialized_.load() && controller_) {
         stop_motors(-1);
@@ -301,7 +312,7 @@ void RobotInterface::deinit_motors() {
     motion_enabled_.store(false);
 }
 
-
+/* 发送 STOP 指令；slave_index 为 -1 时停止全部电机并关闭运动使能。 */
 bool RobotInterface::stop_motors(int slave_index) {
     if (!motors_initialized_.load() || !controller_) {
         return false;
@@ -312,14 +323,14 @@ bool RobotInterface::stop_motors(int slave_index) {
         return false;
     }
 
-    controller_->send_command(myactua::ControlCommand(myactua::CommandType::STOP, slave_index));
+    controller_->send_command(myactua::ControlCommand::Stop(slave_index));
     if (slave_index < 0) {
         motion_enabled_.store(false);
     }
     return true;
 }
 
-
+/* 发送 RESTART 指令；全部电机重启成功后允许后续动作下发。 */
 bool RobotInterface::restart_motors(int slave_index) {
     if (!motors_initialized_.load() || !controller_) {
         return false;
@@ -330,15 +341,14 @@ bool RobotInterface::restart_motors(int slave_index) {
         return false;
     }
 
-    controller_->send_command(myactua::ControlCommand(myactua::CommandType::RESTART,
-                                                      slave_index));
+    controller_->send_command(myactua::ControlCommand::Restart(slave_index));
     if (slave_index < 0 || config_.num_motors == 1) {
         motion_enabled_.store(true);
     }
     return true;
 }
 
-/* 输入的关节目标位置（弧度）按照模型电机索引、坐标系; 并完成限位检查; 并完成坐标系反转 */
+/* 下发模型 DOF 顺序的目标关节角，内部完成限位、映射和方向转换。 */
 bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad) {
     if (!motors_initialized_.load() || !controller_) {
         return false;
@@ -396,8 +406,8 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
                                                     config_.mit_kp[i],
                                                     config_.mit_kd[i]);
         }
-        controller_->send_command(myactua::ControlCommand(
-            myactua::CommandType::SET_MIT_SETPOINTS, -1, mit_setpoints));
+        controller_->send_command(
+            myactua::ControlCommand::SetMitSetpoints(std::move(mit_setpoints)));
         return true;
     }
 
@@ -411,13 +421,12 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
         target_deg[i] = myactua::MYACTUA::rad_to_deg(target_rad[i]);
     }
 
-    controller_->send_command(myactua::ControlCommand(myactua::CommandType::SET_SETPOINTS,
-                                                      -1,
-                                                      target_deg));
+    controller_->send_command(
+        myactua::ControlCommand::SetScalarSetpoints(std::move(target_deg)));
     return true;
 }
 
-
+/* 获取当前关节角，单位 rad；控制器未创建时返回零向量。 */
 std::vector<double> RobotInterface::get_joint_q() const {
     std::vector<double> q(config_.num_motors, 0.0);
     if (!controller_) {
@@ -427,7 +436,7 @@ std::vector<double> RobotInterface::get_joint_q() const {
     return q;
 }
 
-
+/* 获取当前关节速度，单位 rad/s；控制器未创建时返回零向量。 */
 std::vector<double> RobotInterface::get_joint_vel() const {
     std::vector<double> dq(config_.num_motors, 0.0);
     if (!controller_) {
@@ -437,7 +446,7 @@ std::vector<double> RobotInterface::get_joint_vel() const {
     return dq;
 }
 
-
+/* 获取当前关节力矩原始值；控制器未创建时返回零向量。 */
 std::vector<double> RobotInterface::get_joint_tau() const {
     std::vector<double> tau(config_.num_motors, 0.0);
     if (!controller_) {
@@ -447,7 +456,7 @@ std::vector<double> RobotInterface::get_joint_tau() const {
     return tau;
 }
 
-/* 恢复到初始姿态 */
+/* 按平滑插值将关节恢复到 stand_pose_rad 初始姿态。 */
 bool RobotInterface::reset_joints() {
     if (!motors_initialized_.load() || !controller_) {
         return false;
@@ -504,6 +513,7 @@ bool RobotInterface::reset_joints() {
 
 
 /*************************************************************************** */
+/* 加载 TorchScript 策略模型，并重置上一周期动作和观测历史。 */
 bool RobotInterface::load_policy() {
     std::lock_guard<std::mutex> lock(policy_mutex_);
     // 加载前先清掉旧 runner 和上一周期动作，避免失败后残留旧策略状态。
@@ -528,7 +538,7 @@ bool RobotInterface::load_policy() {
     return true;
 }
 
-/* 检查 policy 参数是否有效 */
+/* 检查策略模型路径、映射、缩放、限位和观测参数是否有效。 */
 bool RobotInterface::validate_policy_config() const {
     auto fail = [](const std::string& message) {
         std::cerr << "[RobotInterface] invalid policy config: "
@@ -621,7 +631,7 @@ bool RobotInterface::validate_policy_config() const {
     return true;
 }
 
-
+/* 卸载策略模型并清空策略运行状态。 */
 void RobotInterface::unload_policy() {
     std::lock_guard<std::mutex> lock(policy_mutex_);
     policy_runner_.reset();
@@ -630,7 +640,7 @@ void RobotInterface::unload_policy() {
     observation_history_ready_ = false;
 }
 
-
+/* 保留已加载策略，仅重置动作历史、观测历史和相位起点。 */
 void RobotInterface::reset_policy_state() {
     std::lock_guard<std::mutex> lock(policy_mutex_);
     last_action_raw_.fill(0.0F);
@@ -639,7 +649,7 @@ void RobotInterface::reset_policy_state() {
     policy_start_time_ = std::chrono::steady_clock::now();
 }
 
-
+/* 执行一次策略闭环：构建观测、模型推理并下发目标关节角。 */
 bool RobotInterface::policy_step(double vx, double vy, double yaw_rate) {
     std::lock_guard<std::mutex> lock(policy_mutex_);
 
@@ -683,7 +693,7 @@ bool RobotInterface::policy_step(double vx, double vy, double yaw_rate) {
     return true;
 }
 
-/* 结合输入的目标速度构建完整模型输入 */
+/* 结合速度指令、关节状态和 IMU 数据构建完整策略观测。 */
 bool RobotInterface::build_policy_observation(
     double vx,
     double vy,
@@ -881,7 +891,7 @@ bool RobotInterface::build_policy_observation(
 #endif
 }
 
-
+/* 处理策略执行失败：打印错误并停止全部电机。 */
 bool RobotInterface::handle_policy_step_failure(const std::string& message) {
     std::cerr << "[RobotInterface] policy_step failed: " << message << "\n";
     // 策略链路任何一步失败都停机，避免继续执行上一周期的目标。

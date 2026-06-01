@@ -56,8 +56,7 @@ void send_mode_all(myactua::MYACTUA& controller, myactua::ControlMode mode)
 {
     // 统一切换全部电机模式，避免不同轴处于不同控制模式。
     for (int i = 0; i < kNumMotors; ++i) {
-        controller.send_command(
-            myactua::ControlCommand(myactua::CommandType::SET_MODE, i, {}, mode));
+        controller.send_command(myactua::ControlCommand::SetMode(mode, i));
     }
 }
 
@@ -156,7 +155,7 @@ int main()
 
     // 先停机再切换模式，让测试从一个确定的状态开始。
     std::cout << "[flow] stop all motors before switching mode" << std::endl;
-    controller.send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
+    controller.send_command(myactua::ControlCommand::Stop());
     std::this_thread::sleep_for(std::chrono::milliseconds(kWarmupMs));
 
     std::cout << "[flow] switch all motors to CSP" << std::endl;
@@ -166,7 +165,7 @@ int main()
     std::vector<double> initial_positions = controller.get_joint_q_rad();
     if (initial_positions.size() != static_cast<std::size_t>(kNumMotors)) {
         std::cerr << "[error] failed to read initial joint positions" << std::endl;
-        controller.send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
+        controller.send_command(myactua::ControlCommand::Stop());
         controller.shutdown();
         return -1;
     }
@@ -174,12 +173,11 @@ int main()
     // 初始阶段保持当前位置，避免 RESTART 后立即出现位置跳变。
     std::vector<double> setpoints_rad = initial_positions;
     controller.send_command(
-        myactua::ControlCommand(
-            myactua::CommandType::SET_SETPOINTS, -1, rad_targets_to_deg(setpoints_rad)));
+        myactua::ControlCommand::SetScalarSetpoints(rad_targets_to_deg(setpoints_rad)));
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     std::cout << "[flow] restart motors and hold current pose" << std::endl;
-    controller.send_command(myactua::ControlCommand(myactua::CommandType::RESTART, -1));
+    controller.send_command(myactua::ControlCommand::Restart());
     std::this_thread::sleep_for(std::chrono::milliseconds(kRestartWaitMs));
 
     std::cout << "[test] stream interpolated CSP targets for "
@@ -227,7 +225,7 @@ int main()
 
         const std::vector<double> setpoints_deg = rad_targets_to_deg(setpoints_rad);
         controller.send_command(
-            myactua::ControlCommand(myactua::CommandType::SET_SETPOINTS, -1, setpoints_deg));
+            myactua::ControlCommand::SetScalarSetpoints(setpoints_deg));
 
         if ((loop_count % 20) == 0) {
             // 定期打印目标值、实际值和误差，便于观察电机跟踪效果。
@@ -256,11 +254,10 @@ int main()
     // 测试结束后先保持最后目标，再执行停机。
     std::cout << "[test] hold final interpolated target for 1 s" << std::endl;
     controller.send_command(
-        myactua::ControlCommand(
-            myactua::CommandType::SET_SETPOINTS, -1, rad_targets_to_deg(setpoints_rad)));
+        myactua::ControlCommand::SetScalarSetpoints(rad_targets_to_deg(setpoints_rad)));
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
-    controller.send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
+    controller.send_command(myactua::ControlCommand::Stop());
     controller.shutdown();
 
     std::cout << "[done] peak command increment per " << kCommandPeriodMs

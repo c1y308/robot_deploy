@@ -28,7 +28,7 @@ int main() {
 
     std::cout << "[3/4] 连接成功，正在设置电机 CSP 模式..." << std::endl;
     for(int i = 0; i < motors_nums; ++i) {
-        controller.send_command(myactua::ControlCommand(myactua::CommandType::SET_MODE,  i, {}, myactua::ControlMode::CSP));
+        controller.send_command(myactua::ControlCommand::SetMode(myactua::ControlMode::CSP, i));
     }
 
     std::cout << "[4/4] 启动实时控制线程..." << std::endl;
@@ -36,7 +36,7 @@ int main() {
     std::cout << "\n========== 控制流程开始 ==========" << std::endl;
     
     std::cout << "[阶段1] 停止电机，等待 3 秒..." << std::endl;
-    controller.send_command(myactua::ControlCommand(myactua::CommandType::STOP, -1));
+    controller.send_command(myactua::ControlCommand::Stop());
     std::this_thread::sleep_for(std::chrono::seconds(3));
 
     while(true);

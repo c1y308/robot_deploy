@@ -178,35 +178,35 @@ void MYACTUA::process_commands()
 {
     ControlCommand cmd;
     while (cmd_queue_.pop(cmd, 0)) {
-        switch (cmd.type) {
-            /* 设置 DesiredState 中的目标值*/
-            case CommandType::SET_SETPOINTS:
-                for (size_t i = 0; i < cmd.values.size() && i < _motors.size(); i++) {
-                    _motors[i].desired.setpoint = cmd.values[i];
+        if (cmd.kind == ControlCommandKind::DISCRETE) {
+            enqueue_discrete_command(cmd);
+            continue;
+        }
+
+        switch (cmd.setpoint_type) {
+            /* 设置 DesiredState 中的标量目标值 */
+            case SetpointCommandType::SCALAR_SETPOINTS:
+                if (cmd.slave_index == ControlCommand::kAllSlaves) {
+                    for (size_t i = 0; i < cmd.scalar_setpoints.size() && i < _motors.size(); i++) {
+                        _motors[i].desired.setpoint = cmd.scalar_setpoints[i];
+                    }
+                } else if (cmd.slave_index >= 0 &&
+                           cmd.slave_index < static_cast<int>(_motors.size()) &&
+                           !cmd.scalar_setpoints.empty()) {
+                    _motors[cmd.slave_index].desired.setpoint = cmd.scalar_setpoints.front();
                 }
                 break;
 
-            case CommandType::SET_MIT_SETPOINTS:
-                if (cmd.slave_index < 0) {
+            case SetpointCommandType::MIT_SETPOINTS:
+                if (cmd.slave_index == ControlCommand::kAllSlaves) {
                     for (size_t i = 0; i < cmd.mit_setpoints.size() && i < _motors.size(); i++) {
                         _motors[i].desired.mit_setpoint = cmd.mit_setpoints[i];
                     }
-                } else if (cmd.slave_index < static_cast<int>(_motors.size()) &&
+                } else if (cmd.slave_index >= 0 &&
+                           cmd.slave_index < static_cast<int>(_motors.size()) &&
                            !cmd.mit_setpoints.empty()) {
                     _motors[cmd.slave_index].desired.mit_setpoint = cmd.mit_setpoints.front();
                 }
-                break;
-                
-            case CommandType::STOP:
-                enqueue_discrete_command(cmd);
-                break;
-                
-            case CommandType::RESTART:
-                enqueue_discrete_command(cmd);
-                break;
-                
-            case CommandType::SET_MODE:
-                enqueue_discrete_command(cmd);
                 break;
         }
     }
@@ -220,7 +220,7 @@ void MYACTUA::enqueue_discrete_command(const ControlCommand& cmd)
         if (idx < 0 || idx >= static_cast<int>(_motors.size())) {
             return;
         }
-        DiscreteCommand pending(cmd.type, cmd.mode);
+        DiscreteCommand pending(cmd.discrete_type, cmd.mode);
         pending.phase = DiscretePhase::QUEUED;  // 初始状态为 QUEUED(入队列)
 
         pending.enqueue_tick      = discrete_cmd_tick_;
@@ -236,8 +236,8 @@ void MYACTUA::enqueue_discrete_command(const ControlCommand& cmd)
         discrete_cmd_queues_[idx].push_back(pending);
     };
 
-    /* 小于 0 表示对所有电机执行命令 */
-    if (cmd.slave_index < 0) {
+    /* kAllSlaves 表示对所有电机执行命令 */
+    if (cmd.slave_index == ControlCommand::kAllSlaves) {
         for (int i = 0; i < static_cast<int>(_motors.size()); ++i) {
             enqueue_one(i);
         }
@@ -415,28 +415,25 @@ void MYACTUA::apply_discrete_command_to_motor(int motor_index, const DiscreteCom
 
     MotorState& motor = _motors[motor_index];
     switch (cmd.type) {
-        case CommandType::STOP:
+        case DiscreteCommandType::STOP:
             // Edge-triggered: avoid resetting mode-switch state on retries.
             if (motor.desired.enabled) {
                 motor.desired.enabled = false;
                 motor.mode_switch_step = ModeSwitchStep::IDLE;
             }
             break;
-        case CommandType::RESTART:
+        case DiscreteCommandType::RESTART:
             // Edge-triggered: first restart arms enable flow; later retries are no-op.
             if (!motor.desired.enabled) {
                 motor.desired.enabled = true;
                 motor.mode_switch_step = ModeSwitchStep::IDLE;
             }
             break;
-        case CommandType::SET_MODE:
+        case DiscreteCommandType::SET_MODE:
             if (motor.desired.mode != cmd.mode) {
                 motor.desired.mode  = cmd.mode;
                 motor.mode_switch_step = ModeSwitchStep::IDLE;
             }
-            break;
-        case CommandType::SET_SETPOINTS:
-        case CommandType::SET_MIT_SETPOINTS:
             break;
     }
 }
@@ -450,15 +447,12 @@ bool MYACTUA::is_discrete_command_satisfied(const MotorState& motor, const Discr
     }
 
     switch (cmd.type) {
-        case CommandType::STOP:
+        case DiscreteCommandType::STOP:
             return !observed.operation_enabled;
-        case CommandType::RESTART:
+        case DiscreteCommandType::RESTART:
             return  observed.operation_enabled;
-        case CommandType::SET_MODE:
+        case DiscreteCommandType::SET_MODE:
             return observed.mode == cmd.mode;
-        case CommandType::SET_SETPOINTS:
-        case CommandType::SET_MIT_SETPOINTS:
-            return true;
     }
     return false;
 }

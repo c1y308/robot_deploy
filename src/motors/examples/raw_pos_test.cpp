@@ -27,7 +27,7 @@ constexpr int kRestartWaitMs = 1000;
 constexpr int kHoldTargetMs = 20000;
 
 // 12 个电机的位置目标，单位为 deg。
-// 注意: 当前 MYACTUA API 在 CSP 模式下通过 SET_SETPOINTS 接收角度值(deg)。
+// 注意: 当前 MYACTUA API 在 CSP 模式下通过 SetScalarSetpoints 接收角度值(deg)。
 // const std::vector<double> kTargetPositionsDeg = {
 //     0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
 //     0.0, 0.0, 0.0, 0.0, 0.0, 0.0
@@ -46,8 +46,7 @@ void signal_handler(int)
 void send_mode_all(myactua::MYACTUA& controller, myactua::ControlMode mode)
 {
     for (int i = 0; i < kNumMotors; ++i) {
-        controller.send_command(
-            myactua::ControlCommand(myactua::CommandType::SET_MODE, i, {}, mode));
+        controller.send_command(myactua::ControlCommand::SetMode(mode, i));
     }
 }
 
@@ -70,8 +69,7 @@ bool send_target_once(myactua::MYACTUA& controller, const std::vector<double>& t
 
     std::cout << "[motion] send target array to " << kNumMotors
               << " motors without interpolation" << std::endl;
-    controller.send_command(
-        myactua::ControlCommand(myactua::CommandType::SET_SETPOINTS, -1, target_deg));
+    controller.send_command(myactua::ControlCommand::SetScalarSetpoints(target_deg));
     return !g_should_stop;
 }
 
@@ -102,24 +100,23 @@ int main()
 
     std::cout << "[flow] stop all motors before mode switch" << std::endl;
     for(int i = 0; i < kNumMotors; i++){
-        controller.send_command(myactua::ControlCommand(myactua::CommandType::STOP, i));
+        controller.send_command(myactua::ControlCommand::Stop(i));
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(kWarmupMs));
 
 
     std::cout << "[flow] switch all motors to CSP" << std::endl;
     for (int i = 0; i < kNumMotors; ++i) {
-        controller.send_command(
-            myactua::ControlCommand(myactua::CommandType::SET_MODE, i, {}, myactua::ControlMode::CSP));
+        controller.send_command(myactua::ControlCommand::SetMode(myactua::ControlMode::CSP, i));
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(kModeSwitchWaitMs));
 
 
     std::cout << "[flow] restart motors" << std::endl;
     for(int i = 0; i < kNumMotors; i++){
-        controller.send_command(myactua::ControlCommand(myactua::CommandType::RESTART, i));
+        controller.send_command(myactua::ControlCommand::Restart(i));
     }
-    controller.send_command(myactua::ControlCommand(myactua::CommandType::STOP, 0));
+    controller.send_command(myactua::ControlCommand::Stop(0));
     std::this_thread::sleep_for(std::chrono::milliseconds(kRestartWaitMs));
 
 
@@ -131,7 +128,7 @@ int main()
 
     std::cout << "[flow] stop all motors" << std::endl;
     for(int i = 0; i < kNumMotors; i++){
-        controller.send_command(myactua::ControlCommand(myactua::CommandType::STOP, i));
+        controller.send_command(myactua::ControlCommand::Stop(i));
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     controller.shutdown();

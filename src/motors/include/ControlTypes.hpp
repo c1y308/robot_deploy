@@ -2,16 +2,27 @@
 
 #include <vector>
 #include <cstdint>
+#include <utility>
 #include "MotorTypes.hpp"
 
 namespace myactua {
 
-enum class CommandType {
-    SET_SETPOINTS,  // 设置目标值
-    SET_MIT_SETPOINTS,  // 设置MIT/PVT目标值
-    STOP,           // 停止电机
-    RESTART,        // 启动电机
-    SET_MODE        // 设置电机模式
+class MYACTUA;
+
+enum class ControlCommandKind {
+    DISCRETE,  // STOP/RESTART/SET_MODE 等需要闭环确认的离散命令
+    SETPOINT   // 连续目标值命令
+};
+
+enum class DiscreteCommandType {
+    STOP,     // 停止电机
+    RESTART,  // 启动电机
+    SET_MODE  // 设置电机模式
+};
+
+enum class SetpointCommandType {
+    SCALAR_SETPOINTS,  // CSP/CSV/CST 等单标量目标值
+    MIT_SETPOINTS      // MIT/PVT 目标值
 };
 
 /* MIT/PVT 模式单轴目标值，外部使用角度制(deg) */
@@ -38,24 +49,85 @@ struct MitSetpoint {
 
 /* 控制命令 */
 struct ControlCommand {
-    CommandType type;            // 控制命令类型
-    int slave_index;             // 电机索引
-    std::vector<double> values;  // 目标值 (仅在 SET_SETPOINTS 命令中有效)
+    static constexpr int kAllSlaves = -1;
+
+    ControlCommandKind kind;             // 命令大类
+    DiscreteCommandType discrete_type;   // 离散命令类型
+    SetpointCommandType setpoint_type;   // 连续目标值类型
+    int slave_index;                     // 电机索引，kAllSlaves 表示全部电机
+    std::vector<double> scalar_setpoints;  // 标量目标值，单位由当前控制模式决定
     std::vector<MitSetpoint> mit_setpoints;  // MIT/PVT目标值
-    ControlMode mode;            // 电机模式（仅在 SET_MODE 命令中有效）
+    ControlMode mode;                    // 目标电机模式，仅 SET_MODE 使用
 
-    ControlCommand() : type(CommandType::STOP), slave_index(-1), mode(ControlMode::NONE) {}
+    static ControlCommand Stop(int slave_index = kAllSlaves) {
+        ControlCommand cmd;
+        cmd.kind = ControlCommandKind::DISCRETE;
+        cmd.discrete_type = DiscreteCommandType::STOP;
+        cmd.slave_index = slave_index;
+        return cmd;
+    }
 
-    ControlCommand( CommandType t,
-                    int idx = -1,
-                    const std::vector<double>& vals = {},
-                    ControlMode m = ControlMode::NONE)
-                    : type(t), slave_index(idx), values(vals), mode(m) {}
+    static ControlCommand Restart(int slave_index = kAllSlaves) {
+        ControlCommand cmd;
+        cmd.kind = ControlCommandKind::DISCRETE;
+        cmd.discrete_type = DiscreteCommandType::RESTART;
+        cmd.slave_index = slave_index;
+        return cmd;
+    }
 
-    ControlCommand(CommandType t,
-                   int idx,
-                   const std::vector<MitSetpoint>& mit_vals)
-        : type(t), slave_index(idx), mit_setpoints(mit_vals),
+    static ControlCommand SetMode(ControlMode mode, int slave_index = kAllSlaves) {
+        ControlCommand cmd;
+        cmd.kind = ControlCommandKind::DISCRETE;
+        cmd.discrete_type = DiscreteCommandType::SET_MODE;
+        cmd.slave_index = slave_index;
+        cmd.mode = mode;
+        return cmd;
+    }
+
+    static ControlCommand SetScalarSetpoints(std::vector<double> values) {
+        ControlCommand cmd;
+        cmd.kind = ControlCommandKind::SETPOINT;
+        cmd.setpoint_type = SetpointCommandType::SCALAR_SETPOINTS;
+        cmd.slave_index = kAllSlaves;
+        cmd.scalar_setpoints = std::move(values);
+        return cmd;
+    }
+
+    static ControlCommand SetScalarSetpoint(int slave_index, double value) {
+        ControlCommand cmd;
+        cmd.kind = ControlCommandKind::SETPOINT;
+        cmd.setpoint_type = SetpointCommandType::SCALAR_SETPOINTS;
+        cmd.slave_index = slave_index;
+        cmd.scalar_setpoints = {value};
+        return cmd;
+    }
+
+    static ControlCommand SetMitSetpoints(std::vector<MitSetpoint> values) {
+        ControlCommand cmd;
+        cmd.kind = ControlCommandKind::SETPOINT;
+        cmd.setpoint_type = SetpointCommandType::MIT_SETPOINTS;
+        cmd.slave_index = kAllSlaves;
+        cmd.mit_setpoints = std::move(values);
+        return cmd;
+    }
+
+    static ControlCommand SetMitSetpoint(int slave_index, const MitSetpoint& value) {
+        ControlCommand cmd;
+        cmd.kind = ControlCommandKind::SETPOINT;
+        cmd.setpoint_type = SetpointCommandType::MIT_SETPOINTS;
+        cmd.slave_index = slave_index;
+        cmd.mit_setpoints = {value};
+        return cmd;
+    }
+
+private:
+    friend class MYACTUA;
+
+    ControlCommand()
+        : kind(ControlCommandKind::DISCRETE),
+          discrete_type(DiscreteCommandType::STOP),
+          setpoint_type(SetpointCommandType::SCALAR_SETPOINTS),
+          slave_index(kAllSlaves),
           mode(ControlMode::NONE) {}
 };
 
@@ -89,7 +161,7 @@ enum DiscreteFailReason {
 
 /* 离散队列命令 */
 struct DiscreteCommand {
-    CommandType type;
+    DiscreteCommandType type;
     ControlMode mode;
 
     DiscretePhase phase;
@@ -103,7 +175,8 @@ struct DiscreteCommand {
     int stable_success_cycles;
     int fail_reason;
 
-    DiscreteCommand(CommandType t = CommandType::STOP, ControlMode m = ControlMode::NONE)
+    DiscreteCommand(DiscreteCommandType t = DiscreteCommandType::STOP,
+                    ControlMode m = ControlMode::NONE)
         : type(t), mode(m), phase(DiscretePhase::QUEUED),
           enqueue_tick(0), next_retry_tick(0), next_verify_tick(0), deadline_tick(0),
           max_retries(0), cur_retry(0), stable_success_cycles(0), fail_reason(0) {}
