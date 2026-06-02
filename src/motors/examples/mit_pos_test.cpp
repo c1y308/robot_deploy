@@ -35,14 +35,11 @@ constexpr int kShutdownHoldMs = 500;
 constexpr double kDefaultKp = 250.0;
 constexpr double kDefaultKd = 10.0;
 
-// 12 个电机的 MIT/PVT 位置目标偏移，单位 deg；目标 = 上电读取位置 + offset。
-// constexpr std::array<double, kNumMotors> kTargetOffsetsDeg = {
-//     0.0, 0.0, -25.7831, -25.7831,0.0, 0.0,
-//     45.8366,  45.8366, 17.1887, 17.1887, 0.0, 0.0
-// };
-constexpr std::array<double, kNumMotors> kTargetOffsetsDeg = {
-    0.0,   25.7831, 0,   45.8366, 0,   18,
-    0.0,  -25.7831, 0,  -45.8366, 18, 0
+// 12 个电机的 MIT/PVT 绝对位置目标，单位 deg。
+
+constexpr std::array<double, kNumMotors> kTargetPositionsDeg = {
+    0.0,   0, 0,   0, 0,   0,
+    0.0,  -0, 0,  -0, 0, 0
 };
 
 void signal_handler(int)
@@ -121,10 +118,10 @@ int main()
     std::vector<double> target_deg(kNumMotors);
     for (std::size_t i = 0; i < home_rad.size(); ++i) {
         home_deg[i] = myactua::MYACTUA::rad_to_deg(home_rad[i]);
-        target_deg[i] = home_deg[i] + kTargetOffsetsDeg[i];
+        target_deg[i] = kTargetPositionsDeg[i];
     }
 
-    std::cout << "[info] home / target pose:" << std::fixed << std::setprecision(4);
+    std::cout << "[info] home / absolute target pose:" << std::fixed << std::setprecision(4);
     for (std::size_t i = 0; i < home_deg.size(); ++i) {
         std::cout << "\n  motor[" << i << "] home=" << home_deg[i] << " deg"
                   << "  target=" << target_deg[i] << " deg";

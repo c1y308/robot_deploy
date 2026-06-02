@@ -6,7 +6,11 @@
 #include <chrono>
 #include <cstddef>
 #include <cmath>
+#include <ctime>
+#include <filesystem>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -16,6 +20,112 @@ namespace inference {
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
+
+/* build_policy_observation 每次成功构建的单帧观测写到这里。 */
+const std::filesystem::path& policy_observation_log_dir()
+{
+    static const std::filesystem::path path =
+        std::filesystem::path(__FILE__).parent_path().parent_path() /
+        "log" / "policy_observation";
+    return path;
+}
+
+/* policy_step 推理输出和 apply_action 映射后的电机目标写到这里。 */
+const std::filesystem::path& policy_output_log_dir()
+{
+    static const std::filesystem::path path =
+        std::filesystem::path(__FILE__).parent_path().parent_path() /
+        "log" / "policy_output";
+    return path;
+}
+
+/* 生成适合文件名使用的本地时间戳。 */
+std::string local_timestamp_for_filename()
+{
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now.time_since_epoch()).count() % 1000;
+
+    std::tm local_time = {};
+    localtime_r(&now_time, &local_time);
+
+    std::ostringstream stream;
+    stream << std::put_time(&local_time, "%Y%m%d_%H%M%S")
+           << '_' << std::setw(3) << std::setfill('0') << ms;
+    return stream.str();
+}
+
+void append_indexed_columns(std::ostream& stream,
+                            const char* prefix,
+                            int count)
+{
+    for (int i = 0; i < count; ++i) {
+        stream << ',' << prefix << '_' << i;
+    }
+}
+
+void append_indexed_columns_with_frame(std::ostream& stream,
+                                       const char* prefix,
+                                       int count,
+                                       int frame)
+{
+    for (int i = 0; i < count; ++i) {
+        stream << ',' << prefix << '_' << i << "_f" << frame;
+    }
+}
+
+/**
+ * 按 term 优先（每个 term 内帧连续）生成列名。
+ * 匹配 fill_term_history / append_term_history 的内存布局：
+ * term[0]_f0, ..., term[N-1]_f0, term[0]_f1, ..., term[N-1]_f(frame_stack-1)
+ */
+void append_term_major_columns(std::ostream& stream,
+                               const char* prefix,
+                               int count,
+                               int frame_stack)
+{
+    for (int frame = 0; frame < frame_stack; ++frame) {
+        for (int i = 0; i < count; ++i) {
+            stream << ',' << prefix << '_' << i << "_f" << frame;
+        }
+    }
+}
+
+void write_policy_observation_csv_header(std::ostream& stream)
+{
+    stream << "frame_index,elapsed_us";
+#if POLICY_V3
+    constexpr int frame_stack = 15;
+    for (int frame = 0; frame < frame_stack; ++frame) {
+        stream << ",phase_sin_f" << frame << ",phase_cos_f" << frame;
+        append_indexed_columns_with_frame(stream, "velocity_command", 3, frame);
+        append_indexed_columns_with_frame(stream, "joint_pos_rel", 12, frame);
+        append_indexed_columns_with_frame(stream, "joint_vel_rel", 12, frame);
+        append_indexed_columns_with_frame(stream, "last_action", 12, frame);
+        append_indexed_columns_with_frame(stream, "body_ang_vel", 3, frame);
+        append_indexed_columns_with_frame(stream, "euler", 3, frame);
+    }
+#else
+    constexpr int frame_stack = 5;
+    append_term_major_columns(stream, "base_ang_vel", 3, frame_stack);
+    append_term_major_columns(stream, "projected_gravity", 3, frame_stack);
+    append_term_major_columns(stream, "velocity_command", 3, frame_stack);
+    append_term_major_columns(stream, "joint_pos_rel", 12, frame_stack);
+    append_term_major_columns(stream, "joint_vel_rel", 12, frame_stack);
+    append_term_major_columns(stream, "last_action", 12, frame_stack);
+#endif
+    stream << '\n';
+}
+
+void write_policy_output_csv_header(std::ostream& stream)
+{
+    stream << "frame_index,elapsed_us";
+    append_indexed_columns(stream, "raw_action", 12);
+    append_indexed_columns(stream, "target_q_model_rad", 12);
+    append_indexed_columns(stream, "target_rad", 12);
+    stream << '\n';
+}
 
 /* 检查 3 维数组中的数值是否全部为有限值。 */
 bool finite_array3(const std::array<double, 3>& values)
@@ -50,35 +160,6 @@ int direction_for_motor(const RobotInterfaceConfig& config, int motor_index)
     return config.motor_to_model_direction[motor_index];
 }
 
-/* 首次构建观测历史时，用当前 term 填满所有历史帧。 */
-template <std::size_t TermSize, std::size_t ObservationSize>
-void fill_term_history(std::array<float, ObservationSize>& history,
-                       std::size_t offset,
-                       std::size_t frame_stack,
-                       const std::array<float, TermSize>& current_term)
-{
-    for (std::size_t frame = 0; frame < frame_stack; ++frame) {
-        std::copy(current_term.begin(),
-                  current_term.end(),
-                  history.begin() + offset + frame * TermSize);
-    }
-}
-
-/* 后续构建观测历史时，左移旧帧并把当前 term 追加到末尾。 */
-template <std::size_t TermSize, std::size_t ObservationSize>
-void append_term_history(std::array<float, ObservationSize>& history,
-                         std::size_t offset,
-                         std::size_t frame_stack,
-                         const std::array<float, TermSize>& current_term)
-{
-    const std::size_t term_history_size = frame_stack * TermSize;
-    std::copy(history.begin() + offset + TermSize,
-              history.begin() + offset + term_history_size,
-              history.begin() + offset);
-    std::copy(current_term.begin(),
-              current_term.end(),
-              history.begin() + offset + term_history_size - TermSize);
-}
 
 /* 判断当前电机控制模式是否走 MIT/PVT setpoint 下发路径。 */
 bool is_mit_mode(myactua::ControlMode mode)
@@ -113,7 +194,6 @@ bool RobotInterface::initial_and_start_imu() {
     imu_cfg.baudrate    = config_.imu_baudrate;
     imu_cfg.print_imu   = config_.imu_print_imu;
     imu_cfg.print_ahrs  = config_.imu_print_ahrs;
-    imu_cfg.print_stats = config_.imu_print_stats;
 
     ahrs_ready_.store(false);
     projected_gravity_valid_ = false;
@@ -348,6 +428,48 @@ bool RobotInterface::restart_motors(int slave_index) {
     return true;
 }
 
+/* 将模型 DOF 顺序目标关节角转换为电机顺序目标角。 */
+bool RobotInterface::build_action_target_rad(
+    const std::vector<double>& target_q_model_rad,
+    std::vector<double>& target_rad) const {
+    if (static_cast<int>(target_q_model_rad.size()) != config_.num_motors) {
+        std::cerr << "[RobotInterface] apply_action size mismatch. expected="
+                  << config_.num_motors << " got=" << target_q_model_rad.size() << "\n";
+        return false;
+    }
+
+    target_rad.assign(config_.num_motors, 0.0);
+    const bool has_model_mapping =
+        static_cast<int>(config_.model_to_motor_index.size()) == config_.num_motors;
+    const bool has_relative_limits =
+        config_.stand_pose_rad.size() == static_cast<size_t>(config_.num_motors) &&
+        config_.joint_min_rad.size()  == static_cast<size_t>(config_.num_motors) &&
+        config_.joint_max_rad.size()  == static_cast<size_t>(config_.num_motors);
+
+    /* 按照模型顺序遍历电机 */
+    for (int model_index = 0; model_index < config_.num_motors; ++model_index) {
+        /* 从模型顺序得到物理安装顺序 */
+        const int motor_index = has_model_mapping ? config_.model_to_motor_index[model_index] : model_index;
+        if (motor_index < 0 || motor_index >= config_.num_motors) {
+            std::cerr << "[RobotInterface] apply_action rejected: "
+                      << "model_to_motor_index contains invalid motor index "
+                      << motor_index << "\n";
+            return false;
+        }
+
+        double q = target_q_model_rad[model_index];
+        if (has_relative_limits) {
+            const double lower_limit = config_.stand_pose_rad[model_index] + config_.joint_min_rad[model_index];
+            const double upper_limit = config_.stand_pose_rad[model_index] + config_.joint_max_rad[model_index];
+            q = std::max(lower_limit, std::min(upper_limit, q));
+        }
+        /* 将模型输出的电机目标值转换为电机目标值：1.完成方向映射 2.将模型输出值映射到物理电机ID  */
+        target_rad[motor_index] = static_cast<double>(direction_for_motor(config_, motor_index)) * q;
+    }
+
+    return true;
+}
+
 /* 下发模型 DOF 顺序的目标关节角，内部完成限位、映射和方向转换。 */
 bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad) {
     if (!motors_initialized_.load() || !controller_) {
@@ -358,43 +480,10 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
                   << "Call restart_motors(-1) first.\n";
         return false;
     }
-    if (static_cast<int>(target_q_model_rad.size()) != config_.num_motors) {
-        std::cerr << "[RobotInterface] apply_action size mismatch. expected="
-                  << config_.num_motors << " got=" << target_q_model_rad.size() << "\n";
+
+    std::vector<double> target_rad;
+    if (!build_action_target_rad(target_q_model_rad, target_rad)) {
         return false;
-    }
-
-    std::vector<double> target_rad(config_.num_motors, 0.0);
-    const bool has_model_mapping =
-        static_cast<int>(config_.model_to_motor_index.size()) == config_.num_motors;
-    const bool has_relative_limits =
-        config_.stand_pose_rad.size() == static_cast<size_t>(config_.num_motors) &&
-        config_.joint_min_rad.size()  == static_cast<size_t>(config_.num_motors) &&
-        config_.joint_max_rad.size()  == static_cast<size_t>(config_.num_motors);
-
-
-    for (int model_index = 0; model_index < config_.num_motors; ++model_index) {
-        const int motor_index = has_model_mapping
-            ? config_.model_to_motor_index[model_index]
-            : model_index;
-        if (motor_index < 0 || motor_index >= config_.num_motors) {
-            std::cerr << "[RobotInterface] apply_action rejected: "
-                      << "model_to_motor_index contains invalid motor index "
-                      << motor_index << "\n";
-            return false;
-        }
-
-        double q = target_q_model_rad[model_index];
-        if (has_relative_limits) {
-            const double lower_limit =
-                config_.stand_pose_rad[model_index] + config_.joint_min_rad[model_index];
-            const double upper_limit =
-                config_.stand_pose_rad[model_index] + config_.joint_max_rad[model_index];
-            q = std::max(lower_limit, std::min(upper_limit, q));
-        }
-        /* 进行坐标系映射 */
-        target_rad[motor_index] =
-            static_cast<double>(direction_for_motor(config_, motor_index)) * q;
     }
 
     if (is_mit_mode(config_.motor_control_mode)) {
@@ -406,11 +495,11 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
                                                     config_.mit_kp[i],
                                                     config_.mit_kd[i]);
         }
-        controller_->send_command(
-            myactua::ControlCommand::SetMitSetpoints(std::move(mit_setpoints)));
+        controller_->send_command(myactua::ControlCommand::SetMitSetpoints(std::move(mit_setpoints)));
         return true;
     }
 
+    /* 位置控制模式 */
     if (config_.motor_control_mode != myactua::ControlMode::CSP) {
         std::cerr << "[RobotInterface] apply_action supports only MIT/PVT or CSP mode\n";
         return false;
@@ -421,8 +510,7 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
         target_deg[i] = myactua::MYACTUA::rad_to_deg(target_rad[i]);
     }
 
-    controller_->send_command(
-        myactua::ControlCommand::SetScalarSetpoints(std::move(target_deg)));
+    controller_->send_command(myactua::ControlCommand::SetScalarSetpoints(std::move(target_deg)));
     return true;
 }
 
@@ -522,6 +610,7 @@ bool RobotInterface::load_policy() {
     observation_history_.fill(0.0F);
     observation_history_ready_ = false;
     policy_start_time_ = std::chrono::steady_clock::now();
+    reset_policy_observation_log();
 
     if (!validate_policy_config()) {
         return false;
@@ -638,6 +727,8 @@ void RobotInterface::unload_policy() {
     last_action_raw_.fill(0.0F);
     observation_history_.fill(0.0F);
     observation_history_ready_ = false;
+    reset_policy_observation_log();
+    reset_policy_output_log();
 }
 
 /* 保留已加载策略，仅重置动作历史、观测历史和相位起点。 */
@@ -647,6 +738,166 @@ void RobotInterface::reset_policy_state() {
     observation_history_.fill(0.0F);
     observation_history_ready_ = false;
     policy_start_time_ = std::chrono::steady_clock::now();
+    reset_policy_observation_log();
+    reset_policy_output_log();
+}
+
+/* 关闭当前观测日志，下次成功构建观测时重新创建新文件。 */
+void RobotInterface::reset_policy_observation_log() {
+    if (policy_observation_log_.is_open()) {
+        policy_observation_log_.close();
+    }
+    policy_observation_frame_index_ = 0;
+    policy_observation_log_failed_ = false;
+}
+
+/* 确保 policy_observation 日志文件已经打开并写入表头。 */
+bool RobotInterface::ensure_policy_observation_log() {
+    if (policy_observation_log_failed_) {
+        return false;
+    }
+    if (policy_observation_log_.is_open()) {
+        return true;
+    }
+
+    try {
+        std::filesystem::create_directories(policy_observation_log_dir());
+    } catch (const std::filesystem::filesystem_error& error) {
+        std::cerr << "[RobotInterface] failed to create policy observation log dir: "
+                  << error.what() << "\n";
+        policy_observation_log_failed_ = true;
+        return false;
+    }
+
+    const std::filesystem::path log_path =
+        policy_observation_log_dir() /
+        ("policy_observation_" + local_timestamp_for_filename() + ".csv");
+    policy_observation_log_.open(log_path, std::ios::out);
+    if (!policy_observation_log_) {
+        std::cerr << "[RobotInterface] failed to open policy observation log: "
+                  << log_path << "\n";
+        policy_observation_log_failed_ = true;
+        return false;
+    }
+
+    write_policy_observation_csv_header(policy_observation_log_);
+    policy_observation_log_ << std::setprecision(9);
+    std::cout << "[RobotInterface] policy observation log: "
+              << log_path << "\n";
+    return true;
+}
+
+/* 记录 build_policy_observation 构建出的完整堆叠观测。 */
+void RobotInterface::log_policy_observation_frame(
+    const std::array<float, kPolicyObservationSize>& observation) {
+    if (!ensure_policy_observation_log()) {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto elapsed_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            now - policy_start_time_).count();
+
+    policy_observation_log_ << policy_observation_frame_index_ << ','
+                            << elapsed_us;
+    for (float value : observation) {
+        policy_observation_log_ << ',' << value;
+    }
+    policy_observation_log_ << '\n';
+    policy_observation_log_.flush();
+
+    if (!policy_observation_log_) {
+        std::cerr << "[RobotInterface] failed to write policy observation log\n";
+        policy_observation_log_.close();
+        policy_observation_log_failed_ = true;
+        return;
+    }
+
+    ++policy_observation_frame_index_;
+}
+
+/* 关闭当前策略输出日志，下次成功调用时重新创建新文件。 */
+void RobotInterface::reset_policy_output_log() {
+    if (policy_output_log_.is_open()) {
+        policy_output_log_.close();
+    }
+    policy_output_frame_index_ = 0;
+    policy_output_log_failed_ = false;
+}
+
+/* 确保策略输出日志文件已经打开并写入表头。 */
+bool RobotInterface::ensure_policy_output_log() {
+    if (policy_output_log_failed_) {
+        return false;
+    }
+    if (policy_output_log_.is_open()) {
+        return true;
+    }
+
+    try {
+        std::filesystem::create_directories(policy_output_log_dir());
+    } catch (const std::filesystem::filesystem_error& error) {
+        std::cerr << "[RobotInterface] failed to create policy output log dir: "
+                  << error.what() << "\n";
+        policy_output_log_failed_ = true;
+        return false;
+    }
+
+    const std::filesystem::path log_path =
+        policy_output_log_dir() /
+        ("policy_output_" + local_timestamp_for_filename() + ".csv");
+    policy_output_log_.open(log_path, std::ios::out);
+    if (!policy_output_log_) {
+        std::cerr << "[RobotInterface] failed to open policy output log: "
+                  << log_path << "\n";
+        policy_output_log_failed_ = true;
+        return false;
+    }
+
+    write_policy_output_csv_header(policy_output_log_);
+    policy_output_log_ << std::setprecision(9);
+    std::cout << "[RobotInterface] policy output log: "
+              << log_path << "\n";
+    return true;
+}
+
+/* 记录 policy_step 的 raw_action、target_q_model_rad 和 apply_action 的 target_rad。 */
+void RobotInterface::log_policy_output(
+    const std::array<float, kPolicyDof>& raw_action,
+    const std::vector<double>& target_q_model_rad,
+    const std::vector<double>& target_rad) {
+    if (!ensure_policy_output_log()) {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto elapsed_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            now - policy_start_time_).count();
+
+    policy_output_log_ << policy_output_frame_index_ << ','
+                       << elapsed_us;
+    for (float value : raw_action) {
+        policy_output_log_ << ',' << value;
+    }
+    for (double value : target_q_model_rad) {
+        policy_output_log_ << ',' << value;
+    }
+    for (double value : target_rad) {
+        policy_output_log_ << ',' << value;
+    }
+    policy_output_log_ << '\n';
+    policy_output_log_.flush();
+
+    if (!policy_output_log_) {
+        std::cerr << "[RobotInterface] failed to write policy output log\n";
+        policy_output_log_.close();
+        policy_output_log_failed_ = true;
+        return;
+    }
+
+    ++policy_output_frame_index_;
 }
 
 /* 执行一次策略闭环：构建观测、模型推理并下发目标关节角。 */
@@ -686,11 +937,45 @@ bool RobotInterface::policy_step(double vx, double vy, double yaw_rate) {
             config_.stand_pose_rad[model_index] + clipped_action * config_.action_scale[model_index];
     }
 
+    std::vector<double> target_rad;
+    if (!build_action_target_rad(target_q_model_rad, target_rad)) {
+        return handle_policy_step_failure("failed to build action target rad");
+    }
+
+    log_policy_output(raw_action, target_q_model_rad, target_rad);
+
     if (!apply_action(target_q_model_rad)) {
         return handle_policy_step_failure("failed to apply policy target action");
     }
 
     return true;
+}
+
+
+/* 首次构建观测历史时，用当前 term 填满历史帧中关于当前的 term。 */
+template <std::size_t TermSize, std::size_t ObservationSize>
+void fill_term_history(std::array<float, ObservationSize>& history,
+                       std::size_t offset,
+                       std::size_t frame_stack,
+                       const std::array<float, TermSize>& current_term)
+{
+    for (std::size_t frame = 0; frame < frame_stack; ++frame) {
+        std::copy(current_term.begin(), current_term.end(), history.begin() + offset + frame * TermSize);
+    }
+}
+
+/* 后续构建观测历史时，左移旧帧并把当前 term 追加到末尾。 */
+template <std::size_t TermSize, std::size_t ObservationSize>
+void append_term_history(std::array<float, ObservationSize>& history,
+                         std::size_t offset,
+                         std::size_t frame_stack,
+                         const std::array<float, TermSize>& current_term)
+{
+    const std::size_t term_history_size = frame_stack * TermSize;
+    /* 左移旧帧 */
+    std::copy(history.begin() + offset + TermSize, history.begin() + offset + term_history_size, history.begin() + offset);
+    /* 拷贝新帧 */
+    std::copy(current_term.begin(), current_term.end(), history.begin() + offset + term_history_size - TermSize);
 }
 
 /* 结合速度指令、关节状态和 IMU 数据构建完整策略观测。 */
@@ -719,8 +1004,7 @@ bool RobotInterface::build_policy_observation(
 
     const std::vector<double> q_rad    = get_joint_q();     // 拿到关节角度
     const std::vector<double> dq_rad_s = get_joint_vel();   // 拿到关节速度
-    if (q_rad.size() != static_cast<std::size_t>(kPolicyDof) ||
-        dq_rad_s.size() != static_cast<std::size_t>(kPolicyDof)) {
+    if (q_rad.size() != static_cast<std::size_t>(kPolicyDof) || dq_rad_s.size() != static_cast<std::size_t>(kPolicyDof)) {
         std::cerr << "[RobotInterface] policy observation rejected: joint state size mismatch\n";
         return false;
     }
@@ -802,6 +1086,7 @@ bool RobotInterface::build_policy_observation(
     }
 
     observation = observation_history_;
+    log_policy_observation_frame(observation);
     return true;
 
 #else
@@ -842,12 +1127,24 @@ bool RobotInterface::build_policy_observation(
         const double q_model  = direction * q_rad[motor_index];
         const double dq_model = direction * dq_rad_s[motor_index];
 
-        /* 构建为模型序号的关节位置和速度 */
-        joint_pos_rel[model_index] =
-            static_cast<float>((q_model - config_.stand_pose_rad[model_index]) * config_.dof_pos_scale[model_index]);
-        joint_vel_rel[model_index] =
-            static_cast<float>(dq_model * config_.dof_vel_scale[model_index]);
+        /* 转换为模型序号电机的关节位置和速度 */
+        joint_pos_rel[model_index] = static_cast<float>((q_model - config_.stand_pose_rad[model_index]) * config_.dof_pos_scale[model_index]);
+        joint_vel_rel[model_index] = static_cast<float>(dq_model * config_.dof_vel_scale[model_index]);
     }
+
+    std::array<float, kPolicySingleObservationSize> current_observation = {};
+    std::copy(base_ang_vel.begin(), base_ang_vel.end(),
+              current_observation.begin());
+    std::copy(projected_gravity.begin(), projected_gravity.end(),
+              current_observation.begin() + 3);
+    std::copy(velocity_commands.begin(), velocity_commands.end(),
+              current_observation.begin() + 6);
+    std::copy(joint_pos_rel.begin(), joint_pos_rel.end(),
+              current_observation.begin() + 9);
+    std::copy(joint_vel_rel.begin(), joint_vel_rel.end(),
+              current_observation.begin() + 21);
+    std::copy(last_action_raw_.begin(), last_action_raw_.end(),
+              current_observation.begin() + 33);
 
     constexpr std::size_t kBaseAngVelOffset = 0;
     constexpr std::size_t kProjectedGravityOffset = 15;
@@ -886,6 +1183,7 @@ bool RobotInterface::build_policy_observation(
     }
 
     observation = observation_history_;
+    log_policy_observation_frame(observation);
     return true;
 
 #endif

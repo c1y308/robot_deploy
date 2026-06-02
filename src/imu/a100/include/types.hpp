@@ -79,12 +79,11 @@ struct ParserInfo_t {
     uint64_t total_frames;
     uint64_t imu_frames;
     uint64_t ahrs_frames;
-    uint64_t insgps_frames;
     uint64_t error_frames;
     
     ParserInfo_t() : total_bytes(0), total_frames(0), 
-                      imu_frames(0), ahrs_frames(0), insgps_frames(0),
-                      error_frames(0) {}
+                     imu_frames(0), ahrs_frames(0),
+                     error_frames(0) {}
 };
 
 }

@@ -771,8 +771,7 @@ void MYACTUA::set_print_info(const std::vector<int>& slave_indices)
             continue;
         }
         /* 去重 */
-        if (std::find(print_motor_ids_.begin(), print_motor_ids_.end(), slave_index) ==
-            print_motor_ids_.end()) {
+        if (std::find(print_motor_ids_.begin(), print_motor_ids_.end(), slave_index) == print_motor_ids_.end()) {
             print_motor_ids_.push_back(slave_index);
             _motors[slave_index].print_info = true;
         }
@@ -790,8 +789,7 @@ void MYACTUA::print_motors_info(void){
     printf("------------------------------------------------------------------------------------------------------------------------------------------------------\n");
 
     for (const auto& m : _motors) {
-        if (std::find(print_motor_ids_.begin(), print_motor_ids_.end(), m.slave_index) ==
-            print_motor_ids_.end()) {
+        if (std::find(print_motor_ids_.begin(), print_motor_ids_.end(), m.slave_index) == print_motor_ids_.end()) {
             continue;
         }
         const char* color_code = "\033[32m";

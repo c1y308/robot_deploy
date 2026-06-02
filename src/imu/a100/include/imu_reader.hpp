@@ -17,13 +17,12 @@ struct Config_t {
     int baudrate;
     bool print_imu;
     bool print_ahrs;
-    bool print_stats;
     
     Config_t() : device("/dev/ttyUSB0"), 
                  baudrate(921600),
                  print_imu(false),
-                 print_ahrs(false),
-                 print_stats(false) {}
+                 print_ahrs(false)
+                {}
 };
 
 

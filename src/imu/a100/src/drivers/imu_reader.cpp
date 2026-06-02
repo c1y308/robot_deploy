@@ -49,8 +49,6 @@ void IMUReader::read_loop() {
 
     std::cout << "[INFO] Starting IMU data acquisition..." << std::endl;
 
-    uint64_t last_stats_frame = 0;
-
     while (running_.load()) {
         int bytes_read = serial_port_->read(read_buffer, READ_BUFFER_SIZE);
 
@@ -59,10 +57,14 @@ void IMUReader::read_loop() {
 
             IMUData_t  imu_data;
             AHRSData_t ahrs_data;
-
-            if (config_.print_imu && parser_->get_imu_data(imu_data)) {
-                IMUParser::print_imu_data(imu_data);
+            
+            /* 获取 IMU 数据并判断是否打印 */
+            if(parser_->get_imu_data(imu_data)){
+                if (config_.print_imu) {
+                    IMUParser::print_imu_data(imu_data);
+                }
             }
+            /* 获取 AHRS 数据并判断是否打印 */
             if (parser_->get_ahrs_data(ahrs_data)) {
                 if (!has_yaw_offset_) {
                     yaw_offset_ = ahrs_data.heading;
@@ -74,15 +76,6 @@ void IMUReader::read_loop() {
             }
         }
         
-        if (config_.print_stats) {
-            const auto& stats = parser_->get_info();
-            if (stats.total_frames > 0 && 
-                stats.total_frames % 100 == 0 &&
-                stats.total_frames != last_stats_frame) {
-                print_statistics();
-                last_stats_frame = stats.total_frames;
-            }
-        }
 
         usleep(1000);
     }
@@ -129,7 +122,6 @@ void IMUReader::print_configuration() const {
     std::cout << "Baud Rate: " << config_.baudrate << std::endl;
     std::cout << "Print IMU: " << (config_.print_imu ? "Yes" : "No") << std::endl;
     std::cout << "Print AHRS: " << (config_.print_ahrs ? "Yes" : "No") << std::endl;
-    std::cout << "Print Stats: " << (config_.print_stats ? "Yes" : "No") << std::endl;
     std::cout << "========================================" << std::endl << std::endl;
 }
 

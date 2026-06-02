@@ -6,6 +6,8 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -33,9 +35,11 @@ struct RobotInterfaceConfig {
     /* 等待所有从站就绪的超时和轮询时间 */
     int wait_all_slaves_timeout_ms = 30000;
     int wait_all_slaves_poll_ms    = 100;
+
     /* 是否在终端打印电机信息 */
-    bool print_motors_info = true;  // false将 print_motor_ids 清零
+    bool print_motors_info = false;  // false将 print_motor_ids 清零
     std::vector<int> print_motor_ids = {-1};  // 仅打印这些ID的电机信息，ID从0开始，-1表示全部
+    
     /* 相对 stand_pose_rad 的关节弧度偏移限制，按模型 DOF 序号填写 */
     std::vector<double> joint_min_rad;
     std::vector<double> joint_max_rad;
@@ -54,7 +58,7 @@ struct RobotInterfaceConfig {
     int imu_baudrate       = 921600;
 
     bool imu_print_imu     = false;
-    bool imu_print_ahrs    = false;
+    bool imu_print_ahrs    = true;
     bool imu_print_stats   = false;
 
 
@@ -150,8 +154,7 @@ private:
     static constexpr int kPolicySingleObservationSize = 45;  // 单周期各 observation term 总维度
     static constexpr int kPolicyFrameStack = 5;              // policy.pt 每个 term 使用 5 帧历史
 #endif
-    static constexpr int kPolicyObservationSize =
-        kPolicySingleObservationSize * kPolicyFrameStack;
+    static constexpr int kPolicyObservationSize = kPolicySingleObservationSize * kPolicyFrameStack;
 
     /* 机器人接口配置 */
     RobotInterfaceConfig config_;
@@ -188,12 +191,29 @@ private:
     std::array<float, kPolicyObservationSize> observation_history_{};
     bool observation_history_ready_ = false;
     std::chrono::steady_clock::time_point policy_start_time_{};
+    std::ofstream policy_observation_log_;
+    std::uint64_t policy_observation_frame_index_ = 0;
+    bool policy_observation_log_failed_ = false;
+    std::ofstream policy_output_log_;
+    std::uint64_t policy_output_frame_index_ = 0;
+    bool policy_output_log_failed_ = false;
 
     bool validate_policy_config() const;
+    bool build_action_target_rad(const std::vector<double>& target_q_model_rad,
+                                 std::vector<double>& target_rad) const;
     bool build_policy_observation(double vx,
                                   double vy,
                                   double yaw_rate,
                                   std::array<float, kPolicyObservationSize>& observation);
+    void reset_policy_observation_log();
+    bool ensure_policy_observation_log();
+    void log_policy_observation_frame(
+        const std::array<float, kPolicyObservationSize>& observation);
+    void reset_policy_output_log();
+    bool ensure_policy_output_log();
+    void log_policy_output(const std::array<float, kPolicyDof>& raw_action,
+                           const std::vector<double>& target_q_model_rad,
+                           const std::vector<double>& target_rad);
     bool handle_policy_step_failure(const std::string& message);
 };
 

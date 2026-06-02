@@ -8,6 +8,9 @@
 namespace imu {
 namespace {
 
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kTwoPi = 2.0 * kPi;
+
 bool compute_projected_gravity(float qw,
                                float qx,
                                float qy,
@@ -54,9 +57,10 @@ bool compute_projected_gravity(float qw,
         return false;
     }
 
-    projected_gravity_x = static_cast<float>(projected_x);
-    projected_gravity_y = static_cast<float>(projected_y);
-    projected_gravity_z = static_cast<float>(projected_z);
+    // Back-mounted IMU compensation: remove the roll-pi attitude bias and match model pitch sign.
+    projected_gravity_x = static_cast<float>(-projected_x);
+    projected_gravity_y = static_cast<float>(-projected_y);
+    projected_gravity_z = static_cast<float>(-projected_z);
     return true;
 }
 
@@ -252,8 +256,15 @@ bool IMUParser::parse_ahrs_frame(const uint8_t* data) {
     ahrs_data_.pitch_speed   = data_to_float(data[11], data[12], data[13], data[14]);
     ahrs_data_.heading_speed = data_to_float(data[15], data[16], data[17], data[18]);
 
-    ahrs_data_.roll     = data_to_float(data[19], data[20], data[21], data[22]);
-    ahrs_data_.pitch    = data_to_float(data[23], data[24], data[25], data[26]);
+    double compensated_roll =
+        static_cast<double>(data_to_float(data[19], data[20], data[21], data[22])) - kPi;
+    if (compensated_roll > kPi) {
+        compensated_roll -= kTwoPi;
+    } else if (compensated_roll < -kPi) {
+        compensated_roll += kTwoPi;
+    }
+    ahrs_data_.roll     = static_cast<float>(compensated_roll);
+    ahrs_data_.pitch    = -data_to_float(data[23], data[24], data[25], data[26]);
     ahrs_data_.heading  = data_to_float(data[27], data[28], data[29], data[30]);
 
     ahrs_data_.qw = data_to_float(data[31], data[32], data[33], data[34]);

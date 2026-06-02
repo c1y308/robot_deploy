@@ -27,28 +27,6 @@ struct SharedState {
 
 
 
-void print_latest_summary(SharedState& state, const imu::ParserInfo_t& info) {
-    std::lock_guard<std::mutex> lock(state.mutex);
-
-    std::cout << "[A100_TEST] frames=" << info.total_frames
-              << " imu=" << info.imu_frames
-              << " ahrs=" << info.ahrs_frames
-              << " err=" << info.error_frames << "\n";
-
-    if (state.has_imu) {
-        std::cout << "[A100_TEST] latest IMU updates=" << state.imu_updates << "\n";
-        imu::IMUParser::print_imu_data(state.latest_imu);
-    } else {
-        std::cout << "  IMU waiting for data...\n";
-    }
-
-    if (state.has_ahrs) {
-        std::cout << "[A100_TEST] latest AHRS updates=" << state.ahrs_updates << "\n";
-        imu::IMUParser::print_ahrs_data(state.latest_ahrs);
-    } else {
-        std::cout << "  AHRS waiting for data...\n";
-    }
-}
 
 }  // namespace
 
@@ -57,6 +35,8 @@ int main() {
     std::signal(SIGTERM, signal_handler);
 
     imu::Config_t cfg;
+    cfg.print_ahrs = true;
+
     SharedState state;
 
 
@@ -82,7 +62,6 @@ int main() {
     std::cout << "[A100_TEST] Running. Press Ctrl+C to stop.\n";
     while (g_running.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        print_latest_summary(state, reader.get_info());
     }
 
     reader.stop();

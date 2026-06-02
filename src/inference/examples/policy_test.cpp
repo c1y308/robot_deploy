@@ -65,28 +65,30 @@ inference::RobotInterfaceConfig make_robot_config()
                            
     cfg.motor_to_model_direction = {
         1, -1,  1, 1,  1, -1,
-        1, 1, 1, 1, 1, 1
+        1,  1,  1, 1, 1, 1
     };
 
-    cfg.action_clip = 1;  // 模型原始输出动作的截断范围：[-action_clip, action_clip]
+    cfg.action_clip = 0.35;  // 模型原始输出动作的截断范围：[-action_clip, action_clip]
     cfg.policy_cycle_time_s = 0.02;
 
     // 以下 12 维策略配置均按模型 DOF 序号填写；joint_min/max 是相对 stand_pose_rad 的偏移限位。
     cfg.stand_pose_rad = {
-    0.0, 0.0, -0.45, -0.45,
-    0.0, 0.0, 0.8,  0.8,
-    0.3, 0.3, 0.0, 0.0
+    0.0, 0.0, 0.0,  0.0,
+    0.0, 0.0, 0.0,  0.0,
+    0.0, 0.0, 0.0, 0.0
     };
 
     cfg.dof_pos_scale.assign(12, 1.0);
     cfg.dof_vel_scale.assign(12, 0.05);
 
-    cfg.action_scale = {
-    0.08, 0.08, 0.3, 0.3,
-    0.08, 0.08, 0.3, 0.3,
-    0.15, 0.15, 0.08, 0.08
-};
-    cfg.joint_min_rad.assign(12, -1.5);
+    // cfg.action_scale = {
+    // 0.08, 0.08, 0.3, 0.3,
+    // 0.08, 0.08, 0.3, 0.3,
+    // 0.15, 0.15, 0.08, 0.08
+    // };
+    cfg.action_scale.assign(12, 0.12);
+
+    cfg.joint_min_rad.assign(12, -1);
     cfg.joint_max_rad.assign(12,  1.5);
 
     /******************************************************************* */
@@ -187,14 +189,14 @@ int main()
         return 0;
     }
 
-    // std::cout << "[INFO] Resetting joints to stand_pose_rad...\n";
-    // if (!robot.reset_joints()) {
-    //     std::cerr << "[ERROR] reset_joints() failed.\n";
-    //     safe_shutdown(robot);
-    //     return 1;
-    // }
+    std::cout << "[INFO] Resetting joints to stand_pose_rad...\n";
+    if (!robot.reset_joints()) {
+        std::cerr << "[ERROR] reset_joints() failed.\n";
+        safe_shutdown(robot);
+        return 1;
+    }
 
-    // std::this_thread::sleep_for(std::chrono::milliseconds(15000));
+    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
 
     std::cout << "[INFO] Entering policy loop. Press Ctrl+C to stop.\n";
     using Clock = std::chrono::steady_clock;
