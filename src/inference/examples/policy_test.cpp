@@ -29,6 +29,7 @@ constexpr double kPolicyPeriodSec = 1.0 / kPolicyHz;
 constexpr double kCommandVx = 0.0;
 constexpr double kCommandVy = 0.0;
 constexpr double kCommandYawRate = 0.0;
+constexpr bool kPrintPolicyTiming = false;
 
 std::atomic<bool> g_stop_requested{false};
 
@@ -50,6 +51,9 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.ethercat_ifname = kEthercatIfname;
     cfg.imu_device      = kImuDevice;
     cfg.imu_baudrate    = kImuBaudrate;
+    cfg.imu_print_imu   = false;
+    cfg.imu_print_ahrs  = true;
+    cfg.imu_print_stats = false;
 
     cfg.policy_model_path = kPolicyModelPath;
 
@@ -57,47 +61,76 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.model_to_motor_index = {0, 1, 2, 3, 4, 5,
                                 6, 7, 8, 9, 11, 10};
 #else
-    cfg.model_to_motor_index = {0, 6, 1, 7, 2, 8,
-                                3, 9, 5, 10, 4, 11};
+    //  把模型 DOF 顺序映射到电机逻辑索引，长度必须为 12 且不可重复；按模型 DOF 序号使用
+    cfg.model_to_motor_index = {0, 6, 1, 7,  2, 8,
+                                3, 9, 4, 11, 5, 10};
+
+    // cfg.model_to_motor_index = {0, 1, 2, 3,  4,  5,
+    //                             6, 7, 8, 9, 11, 10};
 #endif
     cfg.print_motor_ids = {0, 1, 2, 3, 4, 5,
                            6, 7, 8, 9, 10, 11};
-                           
-    cfg.motor_to_model_direction = {
-        1, -1,  1, 1,  1, -1,
-        1,  1,  1, 1, 1, 1
-    };
+    
 
-    cfg.action_clip = 0.35;  // 模型原始输出动作的截断范围：[-action_clip, action_clip]
+    // 按模型 DOF 顺序限制 raw_action * action_scale 后的动作偏移: [lower, upper]
+    cfg.action_clip = {
+        {-0.12, 0.12},
+        {-0.12, 0.12},
+
+        {-0.30, 0.30},
+        {-0.30, 0.30},
+
+        {-0.12, 0.12},
+        {-0.12, 0.12},
+
+        {0.00, 0.45},
+        {0.00, 0.45},
+
+        {-0.1, 0.1},
+        {-0.1, 0.1},
+
+        {-0.08, 0.08},
+        {-0.08, 0.08},
+    };
+    cfg.action_scale = {
+        0.08, 0.08,
+        0.30, 0.30,
+        0.08, 0.08,
+        0.30, 0.30,
+        0.15, 0.15,
+        0.08, 0.08
+    };
+    // joint_min/max 是相对 stand_pose_rad 的偏移限位。
+    cfg.joint_min_rad.assign(12, -0.45);
+    cfg.joint_max_rad.assign(12,  0.45);
+
+
     cfg.policy_cycle_time_s = 0.02;
 
-    // 以下 12 维策略配置均按模型 DOF 序号填写；joint_min/max 是相对 stand_pose_rad 的偏移限位。
-    cfg.stand_pose_rad = {
-    0.0, 0.0, 0.0,  0.0,
-    0.0, 0.0, 0.0,  0.0,
-    0.0, 0.0, 0.0, 0.0
+    //  按照电机 DOF 顺序配置电机方向，1 表示方向一致，-1 表示方向相反；为空时全部按 1
+    cfg.motor_to_model_direction = {
+         1, -1, 1,  1, -1,  1,
+        -1,  1, 1, -1, -1, -1
     };
 
+    // 以下 12 维策略配置均按模型 DOF 序号填写
+    cfg.stand_pose_rad = {
+     0.0,  0.0, -0.1, -0.1,
+     0.0,  0.0,  0.3,  0.3,
+    -0.2, -0.2,  0.0,  0.0
+    };
+
+    // 电机观测缩放系数
     cfg.dof_pos_scale.assign(12, 1.0);
     cfg.dof_vel_scale.assign(12, 0.05);
 
-    // cfg.action_scale = {
-    // 0.08, 0.08, 0.3, 0.3,
-    // 0.08, 0.08, 0.3, 0.3,
-    // 0.15, 0.15, 0.08, 0.08
-    // };
-    cfg.action_scale.assign(12, 0.12);
-
-    cfg.joint_min_rad.assign(12, -1);
-    cfg.joint_max_rad.assign(12,  1.5);
 
     /******************************************************************* */
-
-    cfg.command_scale = {0.1, 0.1, 0.1};
+    cfg.command_scale = {1.0, 1.0, 1.0};
     cfg.body_ang_vel_scale = {0.2, 0.2, 0.2};
     cfg.euler_scale = {1.0, 1.0, 1.0};
 
-    cfg.mit_kp.assign(12, 250);
+    cfg.mit_kp.assign(12, 500);
     cfg.mit_kd.assign(12, 10);
     return cfg;
 }
@@ -149,19 +182,6 @@ int main()
 
     inference::RobotInterface robot(cfg);
 
-    std::cout << "[INFO] Starting IMU...\n";
-    if (!robot.initial_and_start_imu()) {
-        std::cerr << "[ERROR] initial_and_start_imu() failed.\n";
-        return 1;
-    }
-
-    std::cout << "[INFO] Waiting 1 second for IMU/AHRS warmup...\n";
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    if (g_stop_requested.load()) {
-        safe_shutdown(robot);
-        return 0;
-    }
-
     std::cout << "[INFO] Starting EtherCAT motors...\n";
     if (!robot.initial_and_start_motors()) {
         std::cerr << "[ERROR] initial_and_start_motors() failed.\n";
@@ -184,6 +204,19 @@ int main()
     }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    if (g_stop_requested.load()) {
+        safe_shutdown(robot);
+        return 0;
+    }
+
+        std::cout << "[INFO] Starting IMU...\n";
+    if (!robot.initial_and_start_imu()) {
+        std::cerr << "[ERROR] initial_and_start_imu() failed.\n";
+        return 1;
+    }
+
+    std::cout << "[INFO] Waiting 1 second for IMU/AHRS warmup...\n";
+    std::this_thread::sleep_for(std::chrono::seconds(1));
     if (g_stop_requested.load()) {
         safe_shutdown(robot);
         return 0;
@@ -227,7 +260,7 @@ int main()
         ++steps;
 
         const auto now = Clock::now();
-        if (now - last_report >= std::chrono::seconds(1)) {
+        if (kPrintPolicyTiming && now - last_report >= std::chrono::seconds(1)) {
             const double avg_step_ms = total_step_ms / static_cast<double>(steps);
             std::cout << std::fixed << std::setprecision(3)
                       << "[INFO] steps=" << steps
@@ -239,13 +272,7 @@ int main()
         std::this_thread::sleep_until(next_tick);
     }
 
-    const double avg_step_ms = steps > 0
-        ? total_step_ms / static_cast<double>(steps)
-        : 0.0;
-    std::cout << std::fixed << std::setprecision(3)
-              << "[INFO] Exiting policy loop. total_steps=" << steps
-              << " avg_policy_step_ms=" << avg_step_ms
-              << " max_policy_step_ms=" << max_step_ms << "\n";
+    std::cout << "[INFO] Exiting policy loop. total_steps=" << steps << "\n";
 
     safe_shutdown(robot);
     return 0;

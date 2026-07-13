@@ -3,7 +3,7 @@ project(robot_inference_hw_interface CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)
 option(POLICY_V3 "Build policy_test with policy_v3.pt input layout" OFF)
 if(POLICY_V3)
     set(POLICY_V3_VALUE 1)

@@ -33,7 +33,7 @@ struct RobotInterfaceConfig {
     int num_motors = 12;
     std::string ethercat_ifname = "enp8s0";
     /* 等待所有从站就绪的超时和轮询时间 */
-    int wait_all_slaves_timeout_ms = 30000;
+    int wait_all_slaves_timeout_ms = 40000;
     int wait_all_slaves_poll_ms    = 100;
 
     /* 是否在终端打印电机信息 */
@@ -69,9 +69,9 @@ struct RobotInterfaceConfig {
     std::vector<int> model_to_motor_index;
     /* 电机物理/控制器 ID 到模型关节方向的符号；1 表示方向一致，-1 表示方向相反；为空时全部按 1 */
     std::vector<int> motor_to_model_direction;
-    /* 网络原始输出动作的截断范围：[-action_clip, action_clip] */
-    double action_clip = 1.0;
-    /* 截断后的动作缩放系数，长度必须为 12；按模型 DOF 序号使用 */
+    /* 缩放后动作偏移的逐 DOF 截断范围：{lower, upper}；按模型 DOF 序号使用 */
+    std::vector<std::array<double, 2>> action_clip;
+    /* 模型原始输出动作的缩放系数，长度必须为 12；按模型 DOF 序号使用 */
     std::vector<double> action_scale;
     /* 步态相位周期，单位 s；phase = fmod(elapsed / policy_cycle_time_s, 1) */
     double policy_cycle_time_s = 0.02;

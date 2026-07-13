@@ -3,6 +3,7 @@ project(MYACTUA_EtherCat)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)
 
 set(IGH_PATH /home/cat/ethercat)
 
@@ -50,5 +51,3 @@ target_link_libraries(raw_pos_test MYACTUA_EtherCat)
 target_link_libraries(squat_stand MYACTUA_EtherCat)
 target_link_libraries(MIT_test MYACTUA_EtherCat)
 target_link_libraries(mit_pos_test MYACTUA_EtherCat)
-
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

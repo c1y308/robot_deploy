@@ -143,6 +143,14 @@ bool finite_vector(const std::vector<double>& values)
     });
 }
 
+/* 检查 action 截断范围中的上下界是否全部为有限值。 */
+bool finite_action_clip_ranges(const std::vector<std::array<double, 2>>& ranges)
+{
+    return std::all_of(ranges.begin(), ranges.end(), [](const auto& range) {
+        return std::isfinite(range[0]) && std::isfinite(range[1]);
+    });
+}
+
 /* 检查电机方向配置是否只包含 1 或 -1。 */
 bool valid_motor_direction_values(const std::vector<int>& directions)
 {
@@ -646,8 +654,8 @@ bool RobotInterface::validate_policy_config() const {
         return fail("policy_cycle_time_s must be finite and > 0");
     }
 #endif
-    if (!std::isfinite(config_.action_clip) || config_.action_clip <= 0.0) {
-        return fail("action_clip must be finite and > 0");
+    if (config_.action_clip.size() != static_cast<std::size_t>(kPolicyDof)) {
+        return fail("action_clip must have 12 ranges");
     }
     if (config_.stand_pose_rad.size() != static_cast<std::size_t>(kPolicyDof)) {
         return fail("stand_pose_rad must have 12 values");
@@ -672,6 +680,7 @@ bool RobotInterface::validate_policy_config() const {
     }
 
     if (!finite_vector(config_.stand_pose_rad) ||
+        !finite_action_clip_ranges(config_.action_clip) ||
         !finite_vector(config_.action_scale) ||
         !finite_vector(config_.joint_min_rad) ||
         !finite_vector(config_.joint_max_rad) ||
@@ -706,6 +715,9 @@ bool RobotInterface::validate_policy_config() const {
     }
 
     for (int i = 0; i < kPolicyDof; ++i) {
+        if (config_.action_clip[i][0] > config_.action_clip[i][1]) {
+            return fail("action_clip lower bound must be <= upper bound for every model DOF");
+        }
         if (config_.action_scale[i] <= 0.0) {
             return fail("action_scale must be > 0 for every model DOF");
         }
@@ -928,13 +940,16 @@ bool RobotInterface::policy_step(double vx, double vy, double yaw_rate) {
 
     std::vector<double> target_q_model_rad(config_.num_motors, 0.0);
     for (int model_index = 0; model_index < kPolicyDof; ++model_index) {
-        // 模型输出先按训练约定截断/缩放，再叠加模型顺序的站立姿态。
-        const double clipped_action =
-            std::max(-config_.action_clip,
-                     std::min(config_.action_clip, static_cast<double>(raw_action[model_index])));
+        // 模型输出先按训练约定缩放，再截断缩放后的动作偏移，最后叠加模型顺序的站立姿态。
+        const auto& action_clip = config_.action_clip[model_index];
+        const double scaled_action =
+            static_cast<double>(raw_action[model_index]) * config_.action_scale[model_index];
+        const double clipped_action_offset =
+            std::max(action_clip[0],
+                     std::min(action_clip[1], scaled_action));
 
         target_q_model_rad[model_index] =
-            config_.stand_pose_rad[model_index] + clipped_action * config_.action_scale[model_index];
+            config_.stand_pose_rad[model_index] + clipped_action_offset;
     }
 
     std::vector<double> target_rad;

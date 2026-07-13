@@ -11,56 +11,47 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kTwoPi = 2.0 * kPi;
 
-bool compute_projected_gravity(float qw,
-                               float qx,
-                               float qy,
-                               float qz,
+double wrap_to_pi(double angle)
+{
+    if (angle > kPi) {
+        angle -= kTwoPi;
+    } else if (angle < -kPi) {
+        angle += kTwoPi;
+    }
+    return angle;
+}
+
+bool compute_projected_gravity(float roll,
+                               float pitch,
                                float& projected_gravity_x,
                                float& projected_gravity_y,
                                float& projected_gravity_z)
 {
-    if (!std::isfinite(qw) || !std::isfinite(qx) ||
-        !std::isfinite(qy) || !std::isfinite(qz)) {
+    if (!std::isfinite(roll) || !std::isfinite(pitch)) {
         return false;
     }
 
-    const double norm_sq = static_cast<double>(qw) * qw +
-                           static_cast<double>(qx) * qx +
-                           static_cast<double>(qy) * qy +
-                           static_cast<double>(qz) * qz;
-    if (!std::isfinite(norm_sq) || norm_sq <= 1.0e-12) {
-        return false;
-    }
+    const double roll_rad = static_cast<double>(roll);
+    const double pitch_rad = static_cast<double>(pitch);
+    const double sin_roll = std::sin(roll_rad);
+    const double cos_roll = std::cos(roll_rad);
+    const double sin_pitch = std::sin(pitch_rad);
+    const double cos_pitch = std::cos(pitch_rad);
 
-    const double inv_norm = 1.0 / std::sqrt(norm_sq);
-    const double w = static_cast<double>(qw) * inv_norm;
-    const double x = static_cast<double>(qx) * inv_norm;
-    const double y = static_cast<double>(qy) * inv_norm;
-    const double z = static_cast<double>(qz) * inv_norm;
-
-    // IsaacLab quat_rotate_inverse(q, [0, 0, -1]): world gravity in body frame.
-    constexpr double gravity_x = 0.0;
-    constexpr double gravity_y = 0.0;
-    constexpr double gravity_z = -1.0;
-    const double cross_x = y * gravity_z - z * gravity_y;
-    const double cross_y = z * gravity_x - x * gravity_z;
-    const double cross_z = x * gravity_y - y * gravity_x;
-    const double dot = x * gravity_x + y * gravity_y + z * gravity_z;
-    const double a_scale = 2.0 * w * w - 1.0;
-
-    const double projected_x = gravity_x * a_scale - 2.0 * w * cross_x + 2.0 * x * dot;
-    const double projected_y = gravity_y * a_scale - 2.0 * w * cross_y + 2.0 * y * dot;
-    const double projected_z = gravity_z * a_scale - 2.0 * w * cross_z + 2.0 * z * dot;
+    // IsaacLab projected gravity for body axes x-forward, y-left, z-up.
+    // Use compensated AHRS Euler angles because the raw quaternion is still in the IMU mount frame.
+    const double projected_x = sin_pitch;
+    const double projected_y = -sin_roll * cos_pitch;
+    const double projected_z = -cos_roll * cos_pitch;
     if (!std::isfinite(projected_x) ||
         !std::isfinite(projected_y) ||
         !std::isfinite(projected_z)) {
         return false;
     }
 
-    // Back-mounted IMU compensation: remove the roll-pi attitude bias and match model pitch sign.
-    projected_gravity_x = static_cast<float>(-projected_x);
-    projected_gravity_y = static_cast<float>(-projected_y);
-    projected_gravity_z = static_cast<float>(-projected_z);
+    projected_gravity_x = static_cast<float>(projected_x);
+    projected_gravity_y = static_cast<float>(projected_y);
+    projected_gravity_z = static_cast<float>(projected_z);
     return true;
 }
 
@@ -254,18 +245,16 @@ bool IMUParser::parse_ahrs_frame(const uint8_t* data) {
 
     ahrs_data_.roll_speed    = data_to_float(data[7], data[8], data[9], data[10]);
     ahrs_data_.pitch_speed   = data_to_float(data[11], data[12], data[13], data[14]);
-    ahrs_data_.heading_speed = data_to_float(data[15], data[16], data[17], data[18]);
+    ahrs_data_.heading_speed = -data_to_float(data[15], data[16], data[17], data[18]);
 
     double compensated_roll =
         static_cast<double>(data_to_float(data[19], data[20], data[21], data[22])) - kPi;
-    if (compensated_roll > kPi) {
-        compensated_roll -= kTwoPi;
-    } else if (compensated_roll < -kPi) {
-        compensated_roll += kTwoPi;
-    }
-    ahrs_data_.roll     = static_cast<float>(compensated_roll);
+    const double compensated_heading =
+        -static_cast<double>(data_to_float(data[27], data[28], data[29], data[30]));
+
+    ahrs_data_.roll     = static_cast<float>(wrap_to_pi(compensated_roll));
     ahrs_data_.pitch    = -data_to_float(data[23], data[24], data[25], data[26]);
-    ahrs_data_.heading  = data_to_float(data[27], data[28], data[29], data[30]);
+    ahrs_data_.heading  = static_cast<float>(wrap_to_pi(compensated_heading));
 
     ahrs_data_.qw = data_to_float(data[31], data[32], data[33], data[34]);
     ahrs_data_.qx = data_to_float(data[35], data[36], data[37], data[38]);
@@ -273,10 +262,8 @@ bool IMUParser::parse_ahrs_frame(const uint8_t* data) {
     ahrs_data_.qz = data_to_float(data[43], data[44], data[45], data[46]);
 
     ahrs_data_.projected_gravity_valid =
-        compute_projected_gravity(ahrs_data_.qw,
-                                  ahrs_data_.qx,
-                                  ahrs_data_.qy,
-                                  ahrs_data_.qz,
+        compute_projected_gravity(ahrs_data_.roll,
+                                  ahrs_data_.pitch,
                                   ahrs_data_.projected_gravity_x,
                                   ahrs_data_.projected_gravity_y,
                                   ahrs_data_.projected_gravity_z);

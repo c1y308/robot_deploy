@@ -311,15 +311,11 @@ void EthercatAdapterIGH::sendPhysical() {
                              (diag_interval_cycles > 0) &&
                              (cycle % diag_interval_cycles == 0);
     if (sample_diag) {
-        if (ecrt_domain_state(domain1, &domain1_state) < 0) {
-            std::printf("[ECAT_DIAG] cycle=%llu ecrt_domain_state failed\n",
-                        static_cast<unsigned long long>(cycle));
-        } else {
-            std::printf("[ECAT_DIAG] cycle=%llu wc=%u wc_state=%s\n",
-                        static_cast<unsigned long long>(cycle),
-                        domain1_state.working_counter,
-                        wc_state_to_string(domain1_state.wc_state));
-        }
+        ecrt_domain_state(domain1, &domain1_state);
+        std::printf("[ECAT_DIAG] cycle=%llu wc=%u wc_state=%s\n",
+                    static_cast<unsigned long long>(cycle),
+                    domain1_state.working_counter,
+                    wc_state_to_string(domain1_state.wc_state));
 
         for (std::size_t i = 0; i < kNumSlaves; ++i) {
             const SlaveOffsets& off = slave_offsets[i];
