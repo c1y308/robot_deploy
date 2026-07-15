@@ -33,7 +33,7 @@ struct RobotInterfaceConfig {
     int num_motors = 12;
     std::string ethercat_ifname = "enp8s0";
     /* 等待所有从站就绪的超时和轮询时间 */
-    int wait_all_slaves_timeout_ms = 40000;
+    int wait_all_slaves_timeout_ms = 30000;
     int wait_all_slaves_poll_ms    = 100;
 
     /* 是否在终端打印电机信息 */
@@ -58,7 +58,7 @@ struct RobotInterfaceConfig {
     int imu_baudrate       = 921600;
 
     bool imu_print_imu     = false;
-    bool imu_print_ahrs    = true;
+    bool imu_print_ahrs    = false;
     bool imu_print_stats   = false;
 
 
@@ -197,6 +197,10 @@ private:
     std::ofstream policy_output_log_;
     std::uint64_t policy_output_frame_index_ = 0;
     bool policy_output_log_failed_ = false;
+    std::ofstream motor_pos_error_log_;
+    std::uint64_t motor_pos_error_frame_index_ = 0;
+    bool motor_pos_error_log_failed_ = false;
+    std::chrono::steady_clock::time_point motor_pos_error_log_start_time_{};
 
     bool validate_policy_config() const;
     bool build_action_target_rad(const std::vector<double>& target_q_model_rad,
@@ -214,6 +218,9 @@ private:
     void log_policy_output(const std::array<float, kPolicyDof>& raw_action,
                            const std::vector<double>& target_q_model_rad,
                            const std::vector<double>& target_rad);
+    void reset_motor_pos_error_log();
+    bool ensure_motor_pos_error_log();
+    void log_motor_pos_error(const std::vector<double>& target_rad);
     bool handle_policy_step_failure(const std::string& message);
 };
 

@@ -52,10 +52,12 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.imu_device      = kImuDevice;
     cfg.imu_baudrate    = kImuBaudrate;
     cfg.imu_print_imu   = false;
-    cfg.imu_print_ahrs  = true;
+    cfg.imu_print_ahrs  = false;
     cfg.imu_print_stats = false;
 
     cfg.policy_model_path = kPolicyModelPath;
+
+    cfg.print_motors_info = true;
 
 #if POLICY_V3
     cfg.model_to_motor_index = {0, 1, 2, 3, 4, 5,
@@ -70,24 +72,24 @@ inference::RobotInterfaceConfig make_robot_config()
 #endif
     cfg.print_motor_ids = {0, 1, 2, 3, 4, 5,
                            6, 7, 8, 9, 10, 11};
-    
+
 
     // 按模型 DOF 顺序限制 raw_action * action_scale 后的动作偏移: [lower, upper]
     cfg.action_clip = {
         {-0.12, 0.12},
         {-0.12, 0.12},
 
-        {-0.30, 0.30},
-        {-0.30, 0.30},
+        {-0.40, 0.40},
+        {-0.40, 0.40},
 
         {-0.12, 0.12},
         {-0.12, 0.12},
 
-        {0.00, 0.45},
-        {0.00, 0.45},
+        {0.00, 0.85},
+        {0.00, 0.85},
 
-        {-0.1, 0.1},
-        {-0.1, 0.1},
+        {-0.18, 0.18},
+        {-0.18, 0.18},
 
         {-0.08, 0.08},
         {-0.08, 0.08},
@@ -130,8 +132,8 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.body_ang_vel_scale = {0.2, 0.2, 0.2};
     cfg.euler_scale = {1.0, 1.0, 1.0};
 
-    cfg.mit_kp.assign(12, 500);
-    cfg.mit_kd.assign(12, 10);
+    cfg.mit_kp.assign(12, 400);
+    cfg.mit_kd.assign(12, 30);
     return cfg;
 }
 

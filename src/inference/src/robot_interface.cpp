@@ -39,6 +39,15 @@ const std::filesystem::path& policy_output_log_dir()
     return path;
 }
 
+/* apply_action after each target command writes target tracking error here. */
+const std::filesystem::path& motor_pos_error_log_dir()
+{
+    static const std::filesystem::path path =
+        std::filesystem::path(__FILE__).parent_path().parent_path() /
+        "log" / "motor_pos_error";
+    return path;
+}
+
 /* 生成适合文件名使用的本地时间戳。 */
 std::string local_timestamp_for_filename()
 {
@@ -124,6 +133,15 @@ void write_policy_output_csv_header(std::ostream& stream)
     append_indexed_columns(stream, "raw_action", 12);
     append_indexed_columns(stream, "target_q_model_rad", 12);
     append_indexed_columns(stream, "target_rad", 12);
+    stream << '\n';
+}
+
+void write_motor_pos_error_csv_header(std::ostream& stream, int motor_count)
+{
+    stream << "frame_index,elapsed_us";
+    append_indexed_columns(stream, "target_pos_deg", motor_count);
+    append_indexed_columns(stream, "rx_pos_deg", motor_count);
+    append_indexed_columns(stream, "tar_err_deg", motor_count);
     stream << '\n';
 }
 
@@ -340,6 +358,7 @@ bool RobotInterface::initial_and_start_motors() {
     controller_->send_command(myactua::ControlCommand::Stop());
     motors_initialized_.store(true);
     motion_enabled_.store(false);
+    reset_motor_pos_error_log();
 
     return true;
 }
@@ -398,6 +417,7 @@ void RobotInterface::deinit_motors() {
     adapter_.reset();
     motors_initialized_.store(false);
     motion_enabled_.store(false);
+    reset_motor_pos_error_log();
 }
 
 /* 发送 STOP 指令；slave_index 为 -1 时停止全部电机并关闭运动使能。 */
@@ -504,6 +524,7 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
                                                     config_.mit_kd[i]);
         }
         controller_->send_command(myactua::ControlCommand::SetMitSetpoints(std::move(mit_setpoints)));
+        log_motor_pos_error(target_rad);
         return true;
     }
 
@@ -519,6 +540,7 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
     }
 
     controller_->send_command(myactua::ControlCommand::SetScalarSetpoints(std::move(target_deg)));
+    log_motor_pos_error(target_rad);
     return true;
 }
 
@@ -619,6 +641,7 @@ bool RobotInterface::load_policy() {
     observation_history_ready_ = false;
     policy_start_time_ = std::chrono::steady_clock::now();
     reset_policy_observation_log();
+    reset_motor_pos_error_log();
 
     if (!validate_policy_config()) {
         return false;
@@ -741,6 +764,7 @@ void RobotInterface::unload_policy() {
     observation_history_ready_ = false;
     reset_policy_observation_log();
     reset_policy_output_log();
+    reset_motor_pos_error_log();
 }
 
 /* 保留已加载策略，仅重置动作历史、观测历史和相位起点。 */
@@ -752,6 +776,7 @@ void RobotInterface::reset_policy_state() {
     policy_start_time_ = std::chrono::steady_clock::now();
     reset_policy_observation_log();
     reset_policy_output_log();
+    reset_motor_pos_error_log();
 }
 
 /* 关闭当前观测日志，下次成功构建观测时重新创建新文件。 */
@@ -910,6 +935,110 @@ void RobotInterface::log_policy_output(
     }
 
     ++policy_output_frame_index_;
+}
+
+/* Close the current motor position error log; the next action opens a new file. */
+void RobotInterface::reset_motor_pos_error_log() {
+    if (motor_pos_error_log_.is_open()) {
+        motor_pos_error_log_.close();
+    }
+    motor_pos_error_frame_index_ = 0;
+    motor_pos_error_log_failed_ = false;
+    motor_pos_error_log_start_time_ = std::chrono::steady_clock::now();
+}
+
+/* Ensure the TAR_ERR_DEG CSV exists and has a header. */
+bool RobotInterface::ensure_motor_pos_error_log() {
+    if (motor_pos_error_log_failed_) {
+        return false;
+    }
+    if (motor_pos_error_log_.is_open()) {
+        return true;
+    }
+
+    try {
+        std::filesystem::create_directories(motor_pos_error_log_dir());
+    } catch (const std::filesystem::filesystem_error& error) {
+        std::cerr << "[RobotInterface] failed to create motor position error log dir: "
+                  << error.what() << "\n";
+        motor_pos_error_log_failed_ = true;
+        return false;
+    }
+
+    const std::filesystem::path log_path =
+        motor_pos_error_log_dir() /
+        ("motor_pos_error_" + local_timestamp_for_filename() + ".csv");
+    motor_pos_error_log_.open(log_path, std::ios::out);
+    if (!motor_pos_error_log_) {
+        std::cerr << "[RobotInterface] failed to open motor position error log: "
+                  << log_path << "\n";
+        motor_pos_error_log_failed_ = true;
+        return false;
+    }
+
+    motor_pos_error_log_start_time_ = std::chrono::steady_clock::now();
+    write_motor_pos_error_csv_header(motor_pos_error_log_, config_.num_motors);
+    motor_pos_error_log_ << std::setprecision(9);
+    std::cout << "[RobotInterface] motor position error log: "
+              << log_path << "\n";
+    return true;
+}
+
+/* Record target position, feedback position, and TAR_ERR_DEG in motor order. */
+void RobotInterface::log_motor_pos_error(const std::vector<double>& target_rad) {
+    if (!controller_ || static_cast<int>(target_rad.size()) != config_.num_motors) {
+        return;
+    }
+    if (!ensure_motor_pos_error_log()) {
+        return;
+    }
+
+    const std::vector<myactua::MotorStatusSnapshot> status = controller_->get_status();
+    if (static_cast<int>(status.size()) != config_.num_motors) {
+        std::cerr << "[RobotInterface] failed to write motor position error log: "
+                  << "status size mismatch\n";
+        motor_pos_error_log_.close();
+        motor_pos_error_log_failed_ = true;
+        return;
+    }
+
+    std::vector<double> target_pos_deg(config_.num_motors, 0.0);
+    std::vector<double> rx_pos_deg(config_.num_motors, 0.0);
+    std::vector<double> tar_err_deg(config_.num_motors, 0.0);
+    for (int i = 0; i < config_.num_motors; ++i) {
+        target_pos_deg[i] = myactua::MYACTUA::rad_to_deg(target_rad[i]);
+        rx_pos_deg[i] = myactua::MYACTUA::rad_to_deg(
+            myactua::MYACTUA::raw_pos_to_rad(status[i].position));
+        tar_err_deg[i] = target_pos_deg[i] - rx_pos_deg[i];
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto elapsed_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            now - motor_pos_error_log_start_time_).count();
+
+    motor_pos_error_log_ << motor_pos_error_frame_index_ << ','
+                         << elapsed_us;
+    for (double value : target_pos_deg) {
+        motor_pos_error_log_ << ',' << value;
+    }
+    for (double value : rx_pos_deg) {
+        motor_pos_error_log_ << ',' << value;
+    }
+    for (double value : tar_err_deg) {
+        motor_pos_error_log_ << ',' << value;
+    }
+    motor_pos_error_log_ << '\n';
+    motor_pos_error_log_.flush();
+
+    if (!motor_pos_error_log_) {
+        std::cerr << "[RobotInterface] failed to write motor position error log\n";
+        motor_pos_error_log_.close();
+        motor_pos_error_log_failed_ = true;
+        return;
+    }
+
+    ++motor_pos_error_frame_index_;
 }
 
 /* 执行一次策略闭环：构建观测、模型推理并下发目标关节角。 */

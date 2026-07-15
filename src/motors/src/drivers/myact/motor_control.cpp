@@ -289,7 +289,7 @@ void MYACTUA::update(const std::vector<double> &setvalues)
         _adapter->send(_motors[i].slave_index, _motors[i].tx);
     }
 
-    if (++print_count >= 500) {
+    if (++print_count >= 200) {
         print_count = 0;
         if (!print_motor_ids_.empty()) {
             print_motors_info();
@@ -783,9 +783,9 @@ void MYACTUA::print_motors_info(void){
     printf("\033[2J\033[H");
 
     printf("\033[1;36m============================ MOTOR REAL-TIME MONITOR ============================\033[0m\n");
-    printf("%-6s | %-10s | %-16s | %-22s | %-8s | %-8s | %-7s | %-16s | %-14s | %-14s | %-12s\n",
+    printf("%-6s | %-10s | %-16s | %-22s | %-8s | %-8s | %-7s | %-16s | %-14s | %-14s\n",
         "ID", "OFFLINE_CNT", "STEP", "MODE_SWITCH_STEP", "RX_MODE", "TX_MODE", "DES_EN",
-        "TX_TARGET", "RX_POS_RAD", "RX_POS_DEG", "RX_VEL_RPM");
+        "TX_TARGET", "RX_POS_DEG", "TAR_ERR_DEG");
     printf("------------------------------------------------------------------------------------------------------------------------------------------------------\n");
 
     for (const auto& m : _motors) {
@@ -840,18 +840,17 @@ void MYACTUA::print_motors_info(void){
 
         const double rx_pos_rad = static_cast<double>(m.rx.pos) * kRawPosToRad;
         const double rx_pos_deg = rx_pos_rad * kRadToDeg;
-        const double rx_vel_rpm = static_cast<double>(m.rx.vel) * kRawVelToRpm;
+        const double target_pos_deg = static_cast<double>(m.tx.target_pos) * kRawPosToRad * kRadToDeg;
+        const double target_error_deg = target_pos_deg - rx_pos_deg;
         char tx_target_info[64] = {};
         switch (m.tx.op_mode) {
             case ControlMode::PVT:
-                std::snprintf(tx_target_info, sizeof(tx_target_info), "p=%.6f kp=%.3f kd=%.3f",
-                    static_cast<double>(m.tx.target_pos) * kRawPosToRad,
-                    static_cast<double>(m.tx.pvt_kp) * 0.001,
-                    static_cast<double>(m.tx.pvt_kd) * 0.001);
+                std::snprintf(tx_target_info, sizeof(tx_target_info), "%.3f",
+                    target_pos_deg);
                 break;
             case ControlMode::CSP:
-                std::snprintf(tx_target_info, sizeof(tx_target_info), "%.6f rad",
-                    static_cast<double>(m.tx.target_pos) * kRawPosToRad);
+                std::snprintf(tx_target_info, sizeof(tx_target_info), "%.3f",
+                    target_pos_deg);
                 break;
             case ControlMode::CSV:
                 std::snprintf(tx_target_info, sizeof(tx_target_info), "%.3f rpm",
@@ -866,7 +865,7 @@ void MYACTUA::print_motors_info(void){
                 break;
         }
 
-        printf("M %-4d | %-10u | %s%-16s\033[0m | %s%-22s\033[0m | %-8s | %-8s | %-7s | %-16s | %-14.6f | %-14.3f | %-12.3f\n",
+        printf("M %-4d | %-10u | %s%-16s\033[0m | %s%-22s\033[0m | %-8s | %-8s | %-7s | %-16s | %-14.3f | %-14.3f\n",
             m.slave_index,
             static_cast<unsigned int>(m.comm_offline_total_count),
             color_code,
@@ -877,9 +876,8 @@ void MYACTUA::print_motors_info(void){
             tx_mode_name,
             m.desired.enabled ? "Y" : "N",
             tx_target_info,
-            rx_pos_rad,
             rx_pos_deg,
-            rx_vel_rpm);
+            target_error_deg);
     }
     printf("\033[1;36m=================================================================================\033[0m\n");
     
