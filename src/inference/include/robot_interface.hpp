@@ -2,6 +2,7 @@
 #include "EthercatAdapterIGH.hpp"
 #include "imu_reader.hpp"
 #include "motor_control.hpp"
+#include "ankle_motor_ik.hpp"
 
 #include <array>
 #include <atomic>
@@ -97,6 +98,9 @@ struct RobotInterfaceConfig {
         1,
         1
     };
+
+    /* 是否启用脚踝并联机构逆解；启用后将 ankle roll/pitch DOF 通过 IK 转为两个电机角度 */
+    bool ankle_ik_enabled = true;
 };
 
 
@@ -215,6 +219,25 @@ private:
     bool ensure_motor_pos_error_log();
     void log_motor_pos_error(const std::vector<double>& target_rad);
     bool handle_policy_step_failure(const std::string& message);
+
+    /* 脚踝 IK 求解器（左右各一），状态跨 policy_step 保持 */
+    mutable ankle_motor_ik::Solver left_ankle_solver_;
+    mutable ankle_motor_ik::Solver right_ankle_solver_;
+    /* 上一次成功求解的电机角度，用于不可达时回退 */
+    mutable double left_ankle_last_motor1_ = 0.0;
+    mutable double left_ankle_last_motor2_ = 0.0;
+    mutable double right_ankle_last_motor1_ = 0.0;
+    mutable double right_ankle_last_motor2_ = 0.0;
+    mutable bool left_ankle_solved_ = false;
+    mutable bool right_ankle_solved_ = false;
+
+    /* 对单条腿的脚踝并联机构执行逆解，将 roll/pitch 转为两个电机角度 */
+    void apply_ankle_ik(const std::vector<double>& target_q_model_rad,
+                        std::vector<double>& target_rad,
+                        int pitch_dof, int roll_dof,
+                        ankle_motor_ik::Solver& solver,
+                        double& last_motor1, double& last_motor2,
+                        bool& solved) const;
 };
 
 }  // namespace inference

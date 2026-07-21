@@ -134,6 +134,9 @@ inference::RobotInterfaceConfig make_robot_config()
 
     cfg.mit_kp.assign(12, 400);
     cfg.mit_kd.assign(12, 30);
+
+    /* 启用脚踝并联机构逆解 */
+    cfg.ankle_ik_enabled = true;
     return cfg;
 }
 

@@ -394,6 +394,77 @@ bool RobotInterface::restart_motors(int slave_index) {
     return true;
 }
 
+/* 判断指定模型 DOF 是否为脚踝并联机构 DOF（由 IK 处理，不走直接映射）。 */
+bool is_ankle_dof(int model_index) {
+    return model_index == 8 || model_index == 9 ||
+           model_index == 10 || model_index == 11;
+}
+
+/* 对单条腿的脚踝并联机构执行逆解，将 roll/pitch 转为两个电机角度。 */
+void RobotInterface::apply_ankle_ik(
+    const std::vector<double>& target_q_model_rad,
+    std::vector<double>& target_rad,
+    int pitch_dof, int roll_dof,
+    ankle_motor_ik::Solver& solver,
+    double& last_motor1, double& last_motor2,
+    bool& solved) const {
+
+    const bool has_model_mapping =
+        static_cast<int>(config_.model_to_motor_index.size()) == config_.num_motors;
+    const bool has_relative_limits =
+        config_.stand_pose_rad.size() == static_cast<size_t>(config_.num_motors) &&
+        config_.joint_min_rad.size()  == static_cast<size_t>(config_.num_motors) &&
+        config_.joint_max_rad.size()  == static_cast<size_t>(config_.num_motors);
+
+    /* 对 pitch 限位（相对 stand_pose_rad） */
+    double pitch = target_q_model_rad[pitch_dof];
+    if (has_relative_limits) {
+        const double lo = config_.stand_pose_rad[pitch_dof] + config_.joint_min_rad[pitch_dof];
+        const double hi = config_.stand_pose_rad[pitch_dof] + config_.joint_max_rad[pitch_dof];
+        pitch = std::max(lo, std::min(hi, pitch));
+    }
+
+    /* 对 roll 限位（相对 stand_pose_rad） */
+    double roll = target_q_model_rad[roll_dof];
+    if (has_relative_limits) {
+        const double lo = config_.stand_pose_rad[roll_dof] + config_.joint_min_rad[roll_dof];
+        const double hi = config_.stand_pose_rad[roll_dof] + config_.joint_max_rad[roll_dof];
+        roll = std::max(lo, std::min(hi, roll));
+    }
+
+    /* IK 求解：输入 (roll, pitch)，输出 motor1/motor2 */
+    ankle_motor_ik::MotorAngles result = solver.solve(roll, pitch);
+
+    double motor1, motor2;
+    if (result.reachable()) {
+        motor1 = result.motor1;
+        motor2 = result.motor2;
+        last_motor1 = motor1;
+        last_motor2 = motor2;
+        solved = true;
+    } else if (solved) {
+        /* 不可达时保持上一次成功值 */
+        motor1 = last_motor1;
+        motor2 = last_motor2;
+    } else {
+        /* 从未成功过，回零 */
+        motor1 = 0.0;
+        motor2 = 0.0;
+    }
+
+    /* motor1 对应 pitch DOF 映射的电机，motor2 对应 roll DOF 映射的电机 */
+    const int motor1_index = has_model_mapping
+        ? config_.model_to_motor_index[pitch_dof] : pitch_dof;
+    const int motor2_index = has_model_mapping
+        ? config_.model_to_motor_index[roll_dof] : roll_dof;
+
+    /* 应用方向映射后写入电机目标 */
+    target_rad[motor1_index] =
+        static_cast<double>(direction_for_motor(config_, motor1_index)) * motor1;
+    target_rad[motor2_index] =
+        static_cast<double>(direction_for_motor(config_, motor2_index)) * motor2;
+}
+
 /* 将模型 DOF 顺序目标关节角转换为电机顺序目标角。 */
 bool RobotInterface::build_action_target_rad(
     const std::vector<double>& target_q_model_rad,
@@ -414,6 +485,11 @@ bool RobotInterface::build_action_target_rad(
 
     /* 按照模型顺序遍历电机 */
     for (int model_index = 0; model_index < config_.num_motors; ++model_index) {
+        /* 脚踝 DOF 在启用 IK 时由 apply_ankle_ik 处理，跳过直接映射 */
+        if (config_.ankle_ik_enabled && is_ankle_dof(model_index)) {
+            continue;
+        }
+
         /* 从模型顺序得到物理安装顺序 */
         const int motor_index = has_model_mapping ? config_.model_to_motor_index[model_index] : model_index;
         if (motor_index < 0 || motor_index >= config_.num_motors) {
@@ -431,6 +507,20 @@ bool RobotInterface::build_action_target_rad(
         }
         /* 将模型输出的电机目标值转换为电机目标值：1.完成方向映射 2.将模型输出值映射到物理电机ID  */
         target_rad[motor_index] = static_cast<double>(direction_for_motor(config_, motor_index)) * q;
+    }
+
+    /* 脚踝并联机构逆解：将 roll/pitch 转为两个电机角度 */
+    if (config_.ankle_ik_enabled) {
+        apply_ankle_ik(target_q_model_rad, target_rad,
+                       8, 10,  /* 左踝 pitch, roll */
+                       left_ankle_solver_,
+                       left_ankle_last_motor1_, left_ankle_last_motor2_,
+                       left_ankle_solved_);
+        apply_ankle_ik(target_q_model_rad, target_rad,
+                       9, 11,  /* 右踝 pitch, roll */
+                       right_ankle_solver_,
+                       right_ankle_last_motor1_, right_ankle_last_motor2_,
+                       right_ankle_solved_);
     }
 
     return true;
@@ -701,6 +791,16 @@ void RobotInterface::unload_policy() {
     observation_history_ready_ = false;
     reset_policy_output_log();
     reset_motor_pos_error_log();
+
+    /* 重置脚踝 IK 求解器状态 */
+    left_ankle_solver_.reset();
+    right_ankle_solver_.reset();
+    left_ankle_solved_ = false;
+    right_ankle_solved_ = false;
+    left_ankle_last_motor1_ = 0.0;
+    left_ankle_last_motor2_ = 0.0;
+    right_ankle_last_motor1_ = 0.0;
+    right_ankle_last_motor2_ = 0.0;
 }
 
 /* 保留已加载策略，仅重置动作历史、观测历史和相位起点。 */
@@ -712,6 +812,16 @@ void RobotInterface::reset_policy_state() {
     policy_start_time_ = std::chrono::steady_clock::now();
     reset_policy_output_log();
     reset_motor_pos_error_log();
+
+    /* 重置脚踝 IK 求解器状态 */
+    left_ankle_solver_.reset();
+    right_ankle_solver_.reset();
+    left_ankle_solved_ = false;
+    right_ankle_solved_ = false;
+    left_ankle_last_motor1_ = 0.0;
+    left_ankle_last_motor2_ = 0.0;
+    right_ankle_last_motor1_ = 0.0;
+    right_ankle_last_motor2_ = 0.0;
 }
 
 /* 关闭当前策略输出日志，下次成功调用时重新创建新文件。 */
