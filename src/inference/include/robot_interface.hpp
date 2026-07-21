@@ -33,7 +33,7 @@ struct RobotInterfaceConfig {
     int num_motors = 12;
     std::string ethercat_ifname = "enp8s0";
     /* 等待所有从站就绪的超时和轮询时间 */
-    int wait_all_slaves_timeout_ms = 30000;
+    int wait_all_slaves_timeout_ms = 20000;
     int wait_all_slaves_poll_ms    = 100;
 
     /* 是否在终端打印电机信息 */
@@ -191,9 +191,6 @@ private:
     std::array<float, kPolicyObservationSize> observation_history_{};
     bool observation_history_ready_ = false;
     std::chrono::steady_clock::time_point policy_start_time_{};
-    std::ofstream policy_observation_log_;
-    std::uint64_t policy_observation_frame_index_ = 0;
-    bool policy_observation_log_failed_ = false;
     std::ofstream policy_output_log_;
     std::uint64_t policy_output_frame_index_ = 0;
     bool policy_output_log_failed_ = false;
@@ -209,10 +206,6 @@ private:
                                   double vy,
                                   double yaw_rate,
                                   std::array<float, kPolicyObservationSize>& observation);
-    void reset_policy_observation_log();
-    bool ensure_policy_observation_log();
-    void log_policy_observation_frame(
-        const std::array<float, kPolicyObservationSize>& observation);
     void reset_policy_output_log();
     bool ensure_policy_output_log();
     void log_policy_output(const std::array<float, kPolicyDof>& raw_action,

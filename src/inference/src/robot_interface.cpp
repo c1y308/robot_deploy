@@ -21,15 +21,6 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 
-/* build_policy_observation 每次成功构建的单帧观测写到这里。 */
-const std::filesystem::path& policy_observation_log_dir()
-{
-    static const std::filesystem::path path =
-        std::filesystem::path(__FILE__).parent_path().parent_path() /
-        "log" / "policy_observation";
-    return path;
-}
-
 /* policy_step 推理输出和 apply_action 映射后的电机目标写到这里。 */
 const std::filesystem::path& policy_output_log_dir()
 {
@@ -72,59 +63,6 @@ void append_indexed_columns(std::ostream& stream,
     for (int i = 0; i < count; ++i) {
         stream << ',' << prefix << '_' << i;
     }
-}
-
-void append_indexed_columns_with_frame(std::ostream& stream,
-                                       const char* prefix,
-                                       int count,
-                                       int frame)
-{
-    for (int i = 0; i < count; ++i) {
-        stream << ',' << prefix << '_' << i << "_f" << frame;
-    }
-}
-
-/**
- * 按 term 优先（每个 term 内帧连续）生成列名。
- * 匹配 fill_term_history / append_term_history 的内存布局：
- * term[0]_f0, ..., term[N-1]_f0, term[0]_f1, ..., term[N-1]_f(frame_stack-1)
- */
-void append_term_major_columns(std::ostream& stream,
-                               const char* prefix,
-                               int count,
-                               int frame_stack)
-{
-    for (int frame = 0; frame < frame_stack; ++frame) {
-        for (int i = 0; i < count; ++i) {
-            stream << ',' << prefix << '_' << i << "_f" << frame;
-        }
-    }
-}
-
-void write_policy_observation_csv_header(std::ostream& stream)
-{
-    stream << "frame_index,elapsed_us";
-#if POLICY_V3
-    constexpr int frame_stack = 15;
-    for (int frame = 0; frame < frame_stack; ++frame) {
-        stream << ",phase_sin_f" << frame << ",phase_cos_f" << frame;
-        append_indexed_columns_with_frame(stream, "velocity_command", 3, frame);
-        append_indexed_columns_with_frame(stream, "joint_pos_rel", 12, frame);
-        append_indexed_columns_with_frame(stream, "joint_vel_rel", 12, frame);
-        append_indexed_columns_with_frame(stream, "last_action", 12, frame);
-        append_indexed_columns_with_frame(stream, "body_ang_vel", 3, frame);
-        append_indexed_columns_with_frame(stream, "euler", 3, frame);
-    }
-#else
-    constexpr int frame_stack = 5;
-    append_term_major_columns(stream, "base_ang_vel", 3, frame_stack);
-    append_term_major_columns(stream, "projected_gravity", 3, frame_stack);
-    append_term_major_columns(stream, "velocity_command", 3, frame_stack);
-    append_term_major_columns(stream, "joint_pos_rel", 12, frame_stack);
-    append_term_major_columns(stream, "joint_vel_rel", 12, frame_stack);
-    append_term_major_columns(stream, "last_action", 12, frame_stack);
-#endif
-    stream << '\n';
 }
 
 void write_policy_output_csv_header(std::ostream& stream)
@@ -640,7 +578,6 @@ bool RobotInterface::load_policy() {
     observation_history_.fill(0.0F);
     observation_history_ready_ = false;
     policy_start_time_ = std::chrono::steady_clock::now();
-    reset_policy_observation_log();
     reset_motor_pos_error_log();
 
     if (!validate_policy_config()) {
@@ -762,7 +699,6 @@ void RobotInterface::unload_policy() {
     last_action_raw_.fill(0.0F);
     observation_history_.fill(0.0F);
     observation_history_ready_ = false;
-    reset_policy_observation_log();
     reset_policy_output_log();
     reset_motor_pos_error_log();
 }
@@ -774,84 +710,8 @@ void RobotInterface::reset_policy_state() {
     observation_history_.fill(0.0F);
     observation_history_ready_ = false;
     policy_start_time_ = std::chrono::steady_clock::now();
-    reset_policy_observation_log();
     reset_policy_output_log();
     reset_motor_pos_error_log();
-}
-
-/* 关闭当前观测日志，下次成功构建观测时重新创建新文件。 */
-void RobotInterface::reset_policy_observation_log() {
-    if (policy_observation_log_.is_open()) {
-        policy_observation_log_.close();
-    }
-    policy_observation_frame_index_ = 0;
-    policy_observation_log_failed_ = false;
-}
-
-/* 确保 policy_observation 日志文件已经打开并写入表头。 */
-bool RobotInterface::ensure_policy_observation_log() {
-    if (policy_observation_log_failed_) {
-        return false;
-    }
-    if (policy_observation_log_.is_open()) {
-        return true;
-    }
-
-    try {
-        std::filesystem::create_directories(policy_observation_log_dir());
-    } catch (const std::filesystem::filesystem_error& error) {
-        std::cerr << "[RobotInterface] failed to create policy observation log dir: "
-                  << error.what() << "\n";
-        policy_observation_log_failed_ = true;
-        return false;
-    }
-
-    const std::filesystem::path log_path =
-        policy_observation_log_dir() /
-        ("policy_observation_" + local_timestamp_for_filename() + ".csv");
-    policy_observation_log_.open(log_path, std::ios::out);
-    if (!policy_observation_log_) {
-        std::cerr << "[RobotInterface] failed to open policy observation log: "
-                  << log_path << "\n";
-        policy_observation_log_failed_ = true;
-        return false;
-    }
-
-    write_policy_observation_csv_header(policy_observation_log_);
-    policy_observation_log_ << std::setprecision(9);
-    std::cout << "[RobotInterface] policy observation log: "
-              << log_path << "\n";
-    return true;
-}
-
-/* 记录 build_policy_observation 构建出的完整堆叠观测。 */
-void RobotInterface::log_policy_observation_frame(
-    const std::array<float, kPolicyObservationSize>& observation) {
-    if (!ensure_policy_observation_log()) {
-        return;
-    }
-
-    const auto now = std::chrono::steady_clock::now();
-    const auto elapsed_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(
-            now - policy_start_time_).count();
-
-    policy_observation_log_ << policy_observation_frame_index_ << ','
-                            << elapsed_us;
-    for (float value : observation) {
-        policy_observation_log_ << ',' << value;
-    }
-    policy_observation_log_ << '\n';
-    policy_observation_log_.flush();
-
-    if (!policy_observation_log_) {
-        std::cerr << "[RobotInterface] failed to write policy observation log\n";
-        policy_observation_log_.close();
-        policy_observation_log_failed_ = true;
-        return;
-    }
-
-    ++policy_observation_frame_index_;
 }
 
 /* 关闭当前策略输出日志，下次成功调用时重新创建新文件。 */
@@ -1230,7 +1090,6 @@ bool RobotInterface::build_policy_observation(
     }
 
     observation = observation_history_;
-    log_policy_observation_frame(observation);
     return true;
 
 #else
@@ -1327,7 +1186,6 @@ bool RobotInterface::build_policy_observation(
     }
 
     observation = observation_history_;
-    log_policy_observation_frame(observation);
     return true;
 
 #endif

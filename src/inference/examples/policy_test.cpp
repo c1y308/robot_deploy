@@ -117,7 +117,7 @@ inference::RobotInterfaceConfig make_robot_config()
 
     // 以下 12 维策略配置均按模型 DOF 序号填写
     cfg.stand_pose_rad = {
-     0.0,  0.0, -0.1, -0.1,
+     0.0,  0.0, -0.3, -0.3,
      0.0,  0.0,  0.3,  0.3,
     -0.2, -0.2,  0.0,  0.0
     };
