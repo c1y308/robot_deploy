@@ -2,6 +2,7 @@
 #include "EthercatAdapterIGH.hpp"
 #include "imu_reader.hpp"
 #include "motor_control.hpp"
+#include "ankle_motor_fk.hpp"
 #include "ankle_motor_ik.hpp"
 
 #include <array>
@@ -52,7 +53,8 @@ struct RobotInterfaceConfig {
     std::vector<double> mit_kp;
     std::vector<double> mit_kd;
 
-
+    /* 是否启用脚踝并联机构逆解；启用后将 ankle roll/pitch DOF 通过 IK 转为两个电机角度 */
+    bool ankle_ik_enabled = true;
 
     /* IMU 配置 */
     std::string imu_device = "/dev/ttyUSB0";
@@ -98,9 +100,6 @@ struct RobotInterfaceConfig {
         1,
         1
     };
-
-    /* 是否启用脚踝并联机构逆解；启用后将 ankle roll/pitch DOF 通过 IK 转为两个电机角度 */
-    bool ankle_ik_enabled = true;
 };
 
 
@@ -210,6 +209,16 @@ private:
                                   double vy,
                                   double yaw_rate,
                                   std::array<float, kPolicyObservationSize>& observation);
+    void build_joint_observation_terms(const std::vector<double>& q_rad,
+                                       const std::vector<double>& dq_rad_s,
+                                       std::chrono::steady_clock::time_point now,
+                                       std::array<float, kPolicyDof>& joint_pos_rel,
+                                       std::array<float, kPolicyDof>& joint_vel_rel);
+    void apply_ankle_fk_observation(const std::vector<double>& q_rad,
+                                    std::chrono::steady_clock::time_point now,
+                                    std::array<float, kPolicyDof>& joint_pos_rel,
+                                    std::array<float, kPolicyDof>& joint_vel_rel);
+    void reset_ankle_fk_state();
     void reset_policy_output_log();
     bool ensure_policy_output_log();
     void log_policy_output(const std::array<float, kPolicyDof>& raw_action,
@@ -223,13 +232,19 @@ private:
     /* 脚踝 IK 求解器（左右各一），状态跨 policy_step 保持 */
     mutable ankle_motor_ik::Solver left_ankle_solver_;
     mutable ankle_motor_ik::Solver right_ankle_solver_;
-    /* 上一次成功求解的电机角度，用于不可达时回退 */
+    /* 上一次成功求解的电机角度（弧度），用于不可达时回退 */
     mutable double left_ankle_last_motor1_ = 0.0;
     mutable double left_ankle_last_motor2_ = 0.0;
     mutable double right_ankle_last_motor1_ = 0.0;
     mutable double right_ankle_last_motor2_ = 0.0;
     mutable bool left_ankle_solved_ = false;
     mutable bool right_ankle_solved_ = false;
+
+    /* 脚踝 FK 求解器：真实电机反馈 -> 脚踝 roll/pitch observation */
+    ankle_motor_fk::Solver left_ankle_fk_solver_;
+    ankle_motor_fk::Solver right_ankle_fk_solver_;
+    bool ankle_fk_observation_ready_ = false;
+    std::chrono::steady_clock::time_point ankle_fk_last_time_{};
 
     /* 对单条腿的脚踝并联机构执行逆解，将 roll/pitch 转为两个电机角度 */
     void apply_ankle_ik(const std::vector<double>& target_q_model_rad,

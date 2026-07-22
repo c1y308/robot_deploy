@@ -15,6 +15,29 @@ struct Vec3 {
     double z;
 };
 
+struct Geometry {
+    static constexpr Vec3 kA1{-13.45, -0.16, 198.0};
+    static constexpr Vec3 kA2{-13.45, -0.16, 140.0};
+    static constexpr Vec3 kB1Zero{-41.13, 23.53, 205.98};
+    static constexpr Vec3 kB2Zero{-41.13, -23.50, 148.98};
+    static constexpr Vec3 kC1Zero{-38.85, 25.0, 9.0};
+    static constexpr Vec3 kC2Zero{-39.03, -25.0, 9.0};
+
+    static constexpr Vec3 kV1{
+        kB1Zero.x - kA1.x,
+        kB1Zero.y - kA1.y,
+        kB1Zero.z - kA1.z,
+    };
+    static constexpr Vec3 kV2{
+        kB2Zero.x - kA2.x,
+        kB2Zero.y - kA2.y,
+        kB2Zero.z - kA2.z,
+    };
+
+    static constexpr double kL1 = 197.0;
+    static constexpr double kL2 = 140.0;
+};
+
 struct CandidateSet {
     std::array<double, 2> values{};
     int count = 0;
@@ -63,6 +86,17 @@ inline Vec3 foot_rotate_point(const Vec3& point, double roll, double pitch) {
         cp * x1 + sp * z1,
         y1,
         -sp * x1 + cp * z1,
+    };
+}
+
+inline Vec3 crank_rotate_point(const Vec3& a_point, const Vec3& crank_vector, double motor_angle) {
+    const double c = std::cos(motor_angle);
+    const double s = std::sin(motor_angle);
+
+    return {
+        a_point.x + crank_vector.x,
+        a_point.y + c * crank_vector.y - s * crank_vector.z,
+        a_point.z + s * crank_vector.y + c * crank_vector.z,
     };
 }
 
@@ -136,11 +170,11 @@ public:
         : previous_motor1_(previous_motor1), previous_motor2_(previous_motor2) {}
 
     MotorAngles solve(double roll, double pitch) {
-        const Vec3 c1 = foot_rotate_point(kC1Zero, roll, pitch);
-        const Vec3 c2 = foot_rotate_point(kC2Zero, roll, pitch);
+        const Vec3 c1 = foot_rotate_point(Geometry::kC1Zero, roll, pitch);
+        const Vec3 c2 = foot_rotate_point(Geometry::kC2Zero, roll, pitch);
 
-        const CandidateSet candidates1 = motor_candidates(kA1, kV1, c1, kL1);
-        const CandidateSet candidates2 = motor_candidates(kA2, kV2, c2, kL2);
+        const CandidateSet candidates1 = motor_candidates(Geometry::kA1, Geometry::kV1, c1, Geometry::kL1);
+        const CandidateSet candidates2 = motor_candidates(Geometry::kA2, Geometry::kV2, c2, Geometry::kL2);
 
         MotorAngles result;
         result.motor1 = nearest_solution(candidates1, previous_motor1_);
@@ -172,27 +206,6 @@ public:
     }
 
 private:
-    static constexpr Vec3 kA1{-13.45, -0.16, 198.0};
-    static constexpr Vec3 kA2{-13.45, -0.16, 140.0};
-    static constexpr Vec3 kB1Zero{-41.13, 23.53, 205.98};
-    static constexpr Vec3 kB2Zero{-41.13, -23.50, 148.98};
-    static constexpr Vec3 kC1Zero{-38.85, 25.0, 9.0};
-    static constexpr Vec3 kC2Zero{-39.03, -25.0, 9.0};
-
-    static constexpr Vec3 kV1{
-        kB1Zero.x - kA1.x,
-        kB1Zero.y - kA1.y,
-        kB1Zero.z - kA1.z,
-    };
-    static constexpr Vec3 kV2{
-        kB2Zero.x - kA2.x,
-        kB2Zero.y - kA2.y,
-        kB2Zero.z - kA2.z,
-    };
-
-    static constexpr double kL1 = 197.0;
-    static constexpr double kL2 = 140.0;
-
     double previous_motor1_ = 0.0;
     double previous_motor2_ = 0.0;
 };

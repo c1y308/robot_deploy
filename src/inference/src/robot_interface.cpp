@@ -20,6 +20,10 @@ namespace inference {
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
+constexpr int kLeftAnklePitchDof =  8;
+constexpr int kRightAnklePitchDof = 9;
+constexpr int kLeftAnkleRollDof =   10;
+constexpr int kRightAnkleRollDof =  11;
 
 /* policy_step 推理输出和 apply_action 映射后的电机目标写到这里。 */
 const std::filesystem::path& policy_output_log_dir()
@@ -396,18 +400,20 @@ bool RobotInterface::restart_motors(int slave_index) {
 
 /* 判断指定模型 DOF 是否为脚踝并联机构 DOF（由 IK 处理，不走直接映射）。 */
 bool is_ankle_dof(int model_index) {
-    return model_index == 8 || model_index == 9 ||
-           model_index == 10 || model_index == 11;
+    return model_index == kLeftAnklePitchDof ||
+           model_index == kRightAnklePitchDof ||
+           model_index == kLeftAnkleRollDof ||
+           model_index == kRightAnkleRollDof;
 }
 
 /* 对单条腿的脚踝并联机构执行逆解，将 roll/pitch 转为两个电机角度。 */
 void RobotInterface::apply_ankle_ik(
-    const std::vector<double>& target_q_model_rad,
-    std::vector<double>& target_rad,
-    int pitch_dof, int roll_dof,
-    ankle_motor_ik::Solver& solver,
-    double& last_motor1, double& last_motor2,
-    bool& solved) const {
+    const std::vector<double>& target_q_model_rad,  // 模型 DOF 顺序的目标关节角(弧度)
+    std::vector<double>& target_rad,                // 输出电机顺序的目标关节角(弧度)
+    int pitch_dof, int roll_dof,                    // 模型 DOF 序号
+    ankle_motor_ik::Solver& solver,                 // IK 求解器
+    double& last_motor1, double& last_motor2,       // 上一次成功求解的电机角度（弧度）
+    bool& solved) const {                           // 上一次求解是否成功，失败时回退到上一次成功值
 
     const bool has_model_mapping =
         static_cast<int>(config_.model_to_motor_index.size()) == config_.num_motors;
@@ -465,10 +471,15 @@ void RobotInterface::apply_ankle_ik(
         static_cast<double>(direction_for_motor(config_, motor2_index)) * motor2;
 }
 
-/* 将模型 DOF 顺序目标关节角转换为电机顺序目标角。 */
-bool RobotInterface::build_action_target_rad(
-    const std::vector<double>& target_q_model_rad,
-    std::vector<double>& target_rad) const {
+
+/* 将模型 DOF 顺序目标关节位置（弧度）转换为电机顺序目标位置（弧度）。
+    args:
+        target_q_model_rad: 模型 DOF 顺序的目标关节角，单位为弧度
+        target_rad: 输出电机顺序的目标关节角，单位为弧度
+*/
+bool RobotInterface::build_action_target_rad(   const std::vector<double>& target_q_model_rad,
+                                                std::vector<double>& target_rad) const {
+
     if (static_cast<int>(target_q_model_rad.size()) != config_.num_motors) {
         std::cerr << "[RobotInterface] apply_action size mismatch. expected="
                   << config_.num_motors << " got=" << target_q_model_rad.size() << "\n";
@@ -476,21 +487,24 @@ bool RobotInterface::build_action_target_rad(
     }
 
     target_rad.assign(config_.num_motors, 0.0);
+
+    /* 检查是否存在模型到电机的映射关系 */
     const bool has_model_mapping =
         static_cast<int>(config_.model_to_motor_index.size()) == config_.num_motors;
+    /* 检查是否具有相对限位 */
     const bool has_relative_limits =
         config_.stand_pose_rad.size() == static_cast<size_t>(config_.num_motors) &&
         config_.joint_min_rad.size()  == static_cast<size_t>(config_.num_motors) &&
         config_.joint_max_rad.size()  == static_cast<size_t>(config_.num_motors);
 
-    /* 按照模型顺序遍历电机 */
+    /* 按照模型 dof 顺序遍历电机 */
     for (int model_index = 0; model_index < config_.num_motors; ++model_index) {
-        /* 脚踝 DOF 在启用 IK 时由 apply_ankle_ik 处理，跳过直接映射 */
+        /* 脚踝 DOF 在启用 IK 时由 apply_ankle_ik 处理，跳过直接映射（方向 与 ID顺序） */
         if (config_.ankle_ik_enabled && is_ankle_dof(model_index)) {
             continue;
         }
 
-        /* 从模型顺序得到物理安装顺序 */
+        /* 开始从模型 dof 顺序转换得到物理顺序 */
         const int motor_index = has_model_mapping ? config_.model_to_motor_index[model_index] : model_index;
         if (motor_index < 0 || motor_index >= config_.num_motors) {
             std::cerr << "[RobotInterface] apply_action rejected: "
@@ -499,6 +513,7 @@ bool RobotInterface::build_action_target_rad(
             return false;
         }
 
+        /* 将模型输出的关节角度限制在相对 stand_pose_rad 的 joint_min/joint_max 范围内 */
         double q = target_q_model_rad[model_index];
         if (has_relative_limits) {
             const double lower_limit = config_.stand_pose_rad[model_index] + config_.joint_min_rad[model_index];
@@ -509,15 +524,15 @@ bool RobotInterface::build_action_target_rad(
         target_rad[motor_index] = static_cast<double>(direction_for_motor(config_, motor_index)) * q;
     }
 
-    /* 脚踝并联机构逆解：将 roll/pitch 转为两个电机角度 */
+    /* 脚踝并联机构逆解：将 roll/pitch 转为两个电机角度（弧度） */
     if (config_.ankle_ik_enabled) {
         apply_ankle_ik(target_q_model_rad, target_rad,
-                       8, 10,  /* 左踝 pitch, roll */
+                       kLeftAnklePitchDof, kLeftAnkleRollDof,
                        left_ankle_solver_,
                        left_ankle_last_motor1_, left_ankle_last_motor2_,
                        left_ankle_solved_);
         apply_ankle_ik(target_q_model_rad, target_rad,
-                       9, 11,  /* 右踝 pitch, roll */
+                       kRightAnklePitchDof, kRightAnkleRollDof,
                        right_ankle_solver_,
                        right_ankle_last_motor1_, right_ankle_last_motor2_,
                        right_ankle_solved_);
@@ -673,6 +688,7 @@ bool RobotInterface::load_policy() {
     if (!validate_policy_config()) {
         return false;
     }
+    reset_ankle_fk_state();
 
     auto runner = std::make_unique<TorchPolicyRunner>();
     if (!runner->load(config_.policy_model_path)) {
@@ -801,6 +817,8 @@ void RobotInterface::unload_policy() {
     left_ankle_last_motor2_ = 0.0;
     right_ankle_last_motor1_ = 0.0;
     right_ankle_last_motor2_ = 0.0;
+
+    reset_ankle_fk_state();
 }
 
 /* 保留已加载策略，仅重置动作历史、观测历史和相位起点。 */
@@ -822,6 +840,27 @@ void RobotInterface::reset_policy_state() {
     left_ankle_last_motor2_ = 0.0;
     right_ankle_last_motor1_ = 0.0;
     right_ankle_last_motor2_ = 0.0;
+
+    reset_ankle_fk_state();
+}
+
+void RobotInterface::reset_ankle_fk_state() {
+    double left_pitch = 0.0;
+    double right_pitch = 0.0;
+    double left_roll = 0.0;
+    double right_roll = 0.0;
+
+    if (config_.stand_pose_rad.size() == static_cast<std::size_t>(kPolicyDof)) {
+        left_pitch = config_.stand_pose_rad[kLeftAnklePitchDof];
+        right_pitch = config_.stand_pose_rad[kRightAnklePitchDof];
+        left_roll = config_.stand_pose_rad[kLeftAnkleRollDof];
+        right_roll = config_.stand_pose_rad[kRightAnkleRollDof];
+    }
+
+    left_ankle_fk_solver_.reset(left_roll, left_pitch);
+    right_ankle_fk_solver_.reset(right_roll, right_pitch);
+    ankle_fk_observation_ready_ = false;
+    ankle_fk_last_time_ = {};
 }
 
 /* 关闭当前策略输出日志，下次成功调用时重新创建新文件。 */
@@ -1092,6 +1131,88 @@ void append_term_history(std::array<float, ObservationSize>& history,
     std::copy(current_term.begin(), current_term.end(), history.begin() + offset + term_history_size - TermSize);
 }
 
+void RobotInterface::build_joint_observation_terms(
+    const std::vector<double>& q_rad,
+    const std::vector<double>& dq_rad_s,
+    std::chrono::steady_clock::time_point now,
+    std::array<float, kPolicyDof>& joint_pos_rel,
+    std::array<float, kPolicyDof>& joint_vel_rel) {
+
+    /* 先按普通单关节映射填满全部 DOF；并联脚踝会在下面用 FK 覆盖。 */
+    for (int model_index = 0; model_index < kPolicyDof; ++model_index) {
+        const int motor_index = config_.model_to_motor_index[model_index];
+        const double direction = static_cast<double>(direction_for_motor(config_, motor_index));
+        const double q_model = direction * q_rad[motor_index];
+        const double dq_model = direction * dq_rad_s[motor_index];
+
+        joint_pos_rel[model_index] =
+            static_cast<float>((q_model - config_.stand_pose_rad[model_index]) *
+                               config_.dof_pos_scale[model_index]);
+        joint_vel_rel[model_index] =
+            static_cast<float>(dq_model * config_.dof_vel_scale[model_index]);
+    }
+
+    if (config_.ankle_ik_enabled) {
+        apply_ankle_fk_observation(q_rad, now, joint_pos_rel, joint_vel_rel);
+    }
+}
+
+void RobotInterface::apply_ankle_fk_observation(
+    const std::vector<double>& q_rad,
+    std::chrono::steady_clock::time_point now,
+    std::array<float, kPolicyDof>& joint_pos_rel,
+    std::array<float, kPolicyDof>& joint_vel_rel) {
+
+    const double dt = ankle_fk_observation_ready_
+        ? std::chrono::duration<double>(now - ankle_fk_last_time_).count()
+        : 0.0;
+    const bool has_valid_dt = ankle_fk_observation_ready_ &&
+                              std::isfinite(dt) &&
+                              dt > 0.0;
+
+    auto apply_leg = [&](int pitch_dof,
+                         int roll_dof,
+                         ankle_motor_fk::Solver& solver) {
+        const int motor1_index = config_.model_to_motor_index[pitch_dof];
+        const int motor2_index = config_.model_to_motor_index[roll_dof];
+        const double motor1 =
+            static_cast<double>(direction_for_motor(config_, motor1_index)) *
+            q_rad[motor1_index];
+        const double motor2 =
+            static_cast<double>(direction_for_motor(config_, motor2_index)) *
+            q_rad[motor2_index];
+
+        const double previous_roll = solver.previous_roll();
+        const double previous_pitch = solver.previous_pitch();
+        const ankle_motor_fk::FootAngles foot = solver.solve(motor1, motor2);
+
+        joint_pos_rel[pitch_dof] =
+            static_cast<float>((foot.pitch - config_.stand_pose_rad[pitch_dof]) *
+                               config_.dof_pos_scale[pitch_dof]);
+        joint_pos_rel[roll_dof] =
+            static_cast<float>((foot.roll - config_.stand_pose_rad[roll_dof]) *
+                               config_.dof_pos_scale[roll_dof]);
+
+        double pitch_velocity = 0.0;
+        double roll_velocity = 0.0;
+        if (has_valid_dt) {
+            pitch_velocity = ankle_motor_ik::wrap_to_pi(foot.pitch - previous_pitch) / dt;
+            roll_velocity = ankle_motor_ik::wrap_to_pi(foot.roll - previous_roll) / dt;
+        }
+
+        joint_vel_rel[pitch_dof] =
+            static_cast<float>(pitch_velocity * config_.dof_vel_scale[pitch_dof]);
+        joint_vel_rel[roll_dof] =
+            static_cast<float>(roll_velocity * config_.dof_vel_scale[roll_dof]);
+    };
+
+    apply_leg(kLeftAnklePitchDof, kLeftAnkleRollDof, left_ankle_fk_solver_);
+    apply_leg(kRightAnklePitchDof, kRightAnkleRollDof, right_ankle_fk_solver_);
+
+    ankle_fk_observation_ready_ = true;
+    ankle_fk_last_time_ = now;
+}
+
 /* 结合速度指令、关节状态和 IMU 数据构建完整策略观测。 */
 bool RobotInterface::build_policy_observation(
     double vx,
@@ -1135,6 +1256,8 @@ bool RobotInterface::build_policy_observation(
         projected_gravity_valid = projected_gravity_valid_;
     }
 
+    const auto now = std::chrono::steady_clock::now();
+
 #if POLICY_V3
     if (!finite_vector(q_rad) || !finite_vector(dq_rad_s) ||
         !finite_array3(body_ang_vel) || !finite_array3(euler)) {
@@ -1142,7 +1265,6 @@ bool RobotInterface::build_policy_observation(
         return false;
     }
 
-    const auto now = std::chrono::steady_clock::now();
     const double elapsed_s =
         std::chrono::duration<double>(now - policy_start_time_).count();
     double phase = std::fmod(elapsed_s * 0.1 / config_.policy_cycle_time_s, 1.0);
@@ -1158,18 +1280,13 @@ bool RobotInterface::build_policy_observation(
     current_observation[3] = static_cast<float>(vy * config_.command_scale[1]);
     current_observation[4] = static_cast<float>(yaw_rate * config_.command_scale[2]);
 
+    std::array<float, kPolicyDof> joint_pos_rel = {};
+    std::array<float, kPolicyDof> joint_vel_rel = {};
+    build_joint_observation_terms(q_rad, dq_rad_s, now, joint_pos_rel, joint_vel_rel);
+
     for (int model_index = 0; model_index < kPolicyDof; ++model_index) {
-        /* 电机关节映射转换 */
-        const int motor_index = config_.model_to_motor_index[model_index];
-        const double direction =
-            static_cast<double>(direction_for_motor(config_, motor_index));
-        const double q_model = direction * q_rad[motor_index];
-        const double dq_model = direction * dq_rad_s[motor_index];
-        current_observation[5 + model_index]  =
-            static_cast<float>((q_model - config_.stand_pose_rad[model_index]) *
-                               config_.dof_pos_scale[model_index]);
-        current_observation[17 + model_index] =
-            static_cast<float>(dq_model * config_.dof_vel_scale[model_index]);
+        current_observation[5 + model_index] = joint_pos_rel[model_index];
+        current_observation[17 + model_index] = joint_vel_rel[model_index];
         current_observation[29 + model_index] = last_action_raw_[model_index];
     }
 
@@ -1229,21 +1346,7 @@ bool RobotInterface::build_policy_observation(
         projected_gravity[i] = static_cast<float>(projected_gravity_double[i]);
     }
 
-    /* 构建电机相关数据（从模型序号转换得到物理序号） */
-    for (int model_index = 0; model_index < kPolicyDof; ++model_index) {
-        /* 得到电机模型序号对应的物理序号 */
-        const int motor_index = config_.model_to_motor_index[model_index];
-        /* 得到对应物理序号电机的坐标系方向 */
-        const double direction = static_cast<double>(direction_for_motor(config_, motor_index));
-
-        /* 得到对应电机的 角度(rad) 与 角速度(rad/s) */
-        const double q_model  = direction * q_rad[motor_index];
-        const double dq_model = direction * dq_rad_s[motor_index];
-
-        /* 转换为模型序号电机的关节位置和速度 */
-        joint_pos_rel[model_index] = static_cast<float>((q_model - config_.stand_pose_rad[model_index]) * config_.dof_pos_scale[model_index]);
-        joint_vel_rel[model_index] = static_cast<float>(dq_model * config_.dof_vel_scale[model_index]);
-    }
+    build_joint_observation_terms(q_rad, dq_rad_s, now, joint_pos_rel, joint_vel_rel);
 
     std::array<float, kPolicySingleObservationSize> current_observation = {};
     std::copy(base_ang_vel.begin(), base_ang_vel.end(),
