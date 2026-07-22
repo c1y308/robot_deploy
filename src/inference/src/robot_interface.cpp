@@ -20,10 +20,6 @@ namespace inference {
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
-constexpr int kLeftAnklePitchDof =  8;
-constexpr int kRightAnklePitchDof = 9;
-constexpr int kLeftAnkleRollDof =   10;
-constexpr int kRightAnkleRollDof =  11;
 
 /* policy_step 推理输出和 apply_action 映射后的电机目标写到这里。 */
 const std::filesystem::path& policy_output_log_dir()
@@ -126,6 +122,21 @@ int direction_for_motor(const RobotInterfaceConfig& config, int motor_index)
         return 1;
     }
     return config.motor_to_model_direction[motor_index];
+}
+
+bool index_in_range(int index, int count)
+{
+    return index >= 0 && index < count;
+}
+
+bool ankle_parallel_map_indices_in_range(
+    const RobotInterfaceConfig::AnkleParallelMap& ankle_map,
+    int count)
+{
+    return index_in_range(ankle_map.model_pitch_dof, count) &&
+           index_in_range(ankle_map.model_roll_dof, count) &&
+           index_in_range(ankle_map.upper_motor_index, count) &&
+           index_in_range(ankle_map.lower_motor_index, count);
 }
 
 
@@ -398,77 +409,85 @@ bool RobotInterface::restart_motors(int slave_index) {
     return true;
 }
 
-/* 判断指定模型 DOF 是否为脚踝并联机构 DOF（由 IK 处理，不走直接映射）。 */
-bool is_ankle_dof(int model_index) {
-    return model_index == kLeftAnklePitchDof ||
-           model_index == kRightAnklePitchDof ||
-           model_index == kLeftAnkleRollDof ||
-           model_index == kRightAnkleRollDof;
+/* 判断指定模型 DOF 是否为显式配置的脚踝并联机构 DOF。 */
+bool RobotInterface::is_parallel_ankle_model_dof(int model_index) const {
+    return model_index == config_.left_ankle_parallel.model_pitch_dof ||
+           model_index == config_.left_ankle_parallel.model_roll_dof ||
+           model_index == config_.right_ankle_parallel.model_pitch_dof ||
+           model_index == config_.right_ankle_parallel.model_roll_dof;
 }
 
-/* 对单条腿的脚踝并联机构执行逆解，将 roll/pitch 转为两个电机角度。 */
-void RobotInterface::apply_ankle_ik(
-    const std::vector<double>& target_q_model_rad,  // 模型 DOF 顺序的目标关节角(弧度)
-    std::vector<double>& target_rad,                // 输出电机顺序的目标关节角(弧度)
-    int pitch_dof, int roll_dof,                    // 模型 DOF 序号
+/* 对单条腿的脚踝并联机构执行逆解，将 roll/pitch 转为两条驱动链电机角度。 */
+bool RobotInterface::apply_ankle_ik(
+    const std::vector<double>& target_q_model_rad,  // 模型 DOF 顺序输出的目标关节角(弧度)
+    std::vector<double>& target_rad,                // 电机物理顺序的目标关节角(弧度)
+    const RobotInterfaceConfig::AnkleParallelMap& ankle_map,
     ankle_motor_ik::Solver& solver,                 // IK 求解器
-    double& last_motor1, double& last_motor2,       // 上一次成功求解的电机角度（弧度）
+    double& last_upper_motor, double& last_lower_motor,
     bool& solved) const {                           // 上一次求解是否成功，失败时回退到上一次成功值
 
-    const bool has_model_mapping =
-        static_cast<int>(config_.model_to_motor_index.size()) == config_.num_motors;
+    if (!ankle_parallel_map_indices_in_range(ankle_map, config_.num_motors)) {
+        std::cerr << "[RobotInterface] apply_action rejected: "
+                  << "ankle parallel map contains an out-of-range index\n";
+        return false;
+    }
+
     const bool has_relative_limits =
         config_.stand_pose_rad.size() == static_cast<size_t>(config_.num_motors) &&
         config_.joint_min_rad.size()  == static_cast<size_t>(config_.num_motors) &&
         config_.joint_max_rad.size()  == static_cast<size_t>(config_.num_motors);
 
     /* 对 pitch 限位（相对 stand_pose_rad） */
-    double pitch = target_q_model_rad[pitch_dof];
+    const int ankle_model_pitch_dof = ankle_map.model_pitch_dof;
+    const int ankle_model_roll_dof = ankle_map.model_roll_dof;
+    double pitch = target_q_model_rad[ankle_model_pitch_dof];
     if (has_relative_limits) {
-        const double lo = config_.stand_pose_rad[pitch_dof] + config_.joint_min_rad[pitch_dof];
-        const double hi = config_.stand_pose_rad[pitch_dof] + config_.joint_max_rad[pitch_dof];
+        const double lo = config_.stand_pose_rad[ankle_model_pitch_dof] +
+                          config_.joint_min_rad[ankle_model_pitch_dof];
+        const double hi = config_.stand_pose_rad[ankle_model_pitch_dof] +
+                          config_.joint_max_rad[ankle_model_pitch_dof];
         pitch = std::max(lo, std::min(hi, pitch));
     }
 
     /* 对 roll 限位（相对 stand_pose_rad） */
-    double roll = target_q_model_rad[roll_dof];
+    double roll = target_q_model_rad[ankle_model_roll_dof];
     if (has_relative_limits) {
-        const double lo = config_.stand_pose_rad[roll_dof] + config_.joint_min_rad[roll_dof];
-        const double hi = config_.stand_pose_rad[roll_dof] + config_.joint_max_rad[roll_dof];
+        const double lo = config_.stand_pose_rad[ankle_model_roll_dof] +
+                          config_.joint_min_rad[ankle_model_roll_dof];
+        const double hi = config_.stand_pose_rad[ankle_model_roll_dof] +
+                          config_.joint_max_rad[ankle_model_roll_dof];
         roll = std::max(lo, std::min(hi, roll));
     }
 
-    /* IK 求解：输入 (roll, pitch)，输出 motor1/motor2 */
+    /* IK 求解：输入 (roll, pitch)，输出两条几何链 motor1/motor2 */
     ankle_motor_ik::MotorAngles result = solver.solve(roll, pitch);
 
-    double motor1, motor2;
+    double upper_motor = 0.0;
+    double lower_motor = 0.0;
     if (result.reachable()) {
-        motor1 = result.motor1;
-        motor2 = result.motor2;
-        last_motor1 = motor1;
-        last_motor2 = motor2;
+        upper_motor = result.motor1;
+        lower_motor = result.motor2;
+        last_upper_motor = upper_motor;
+        last_lower_motor = lower_motor;
         solved = true;
     } else if (solved) {
         /* 不可达时保持上一次成功值 */
-        motor1 = last_motor1;
-        motor2 = last_motor2;
+        upper_motor = last_upper_motor;
+        lower_motor = last_lower_motor;
     } else {
         /* 从未成功过，回零 */
-        motor1 = 0.0;
-        motor2 = 0.0;
+        upper_motor = 0.0;
+        lower_motor = 0.0;
     }
 
-    /* motor1 对应 pitch DOF 映射的电机，motor2 对应 roll DOF 映射的电机 */
-    const int motor1_index = has_model_mapping
-        ? config_.model_to_motor_index[pitch_dof] : pitch_dof;
-    const int motor2_index = has_model_mapping
-        ? config_.model_to_motor_index[roll_dof] : roll_dof;
-
     /* 应用方向映射后写入电机目标 */
-    target_rad[motor1_index] =
-        static_cast<double>(direction_for_motor(config_, motor1_index)) * motor1;
-    target_rad[motor2_index] =
-        static_cast<double>(direction_for_motor(config_, motor2_index)) * motor2;
+    target_rad[ankle_map.upper_motor_index] =
+        static_cast<double>(direction_for_motor(config_, ankle_map.upper_motor_index)) *
+        upper_motor;
+    target_rad[ankle_map.lower_motor_index] =
+        static_cast<double>(direction_for_motor(config_, ankle_map.lower_motor_index)) *
+        lower_motor;
+    return true;
 }
 
 
@@ -500,7 +519,8 @@ bool RobotInterface::build_action_target_rad(   const std::vector<double>& targe
     /* 按照模型 dof 顺序遍历电机 */
     for (int model_index = 0; model_index < config_.num_motors; ++model_index) {
         /* 脚踝 DOF 在启用 IK 时由 apply_ankle_ik 处理，跳过直接映射（方向 与 ID顺序） */
-        if (config_.ankle_ik_enabled && is_ankle_dof(model_index)) {
+        if (config_.ankle_parallel_kinematics_enabled &&
+            is_parallel_ankle_model_dof(model_index)) {
             continue;
         }
 
@@ -524,18 +544,24 @@ bool RobotInterface::build_action_target_rad(   const std::vector<double>& targe
         target_rad[motor_index] = static_cast<double>(direction_for_motor(config_, motor_index)) * q;
     }
 
-    /* 脚踝并联机构逆解：将 roll/pitch 转为两个电机角度（弧度） */
-    if (config_.ankle_ik_enabled) {
-        apply_ankle_ik(target_q_model_rad, target_rad,
-                       kLeftAnklePitchDof, kLeftAnkleRollDof,
-                       left_ankle_solver_,
-                       left_ankle_last_motor1_, left_ankle_last_motor2_,
-                       left_ankle_solved_);
-        apply_ankle_ik(target_q_model_rad, target_rad,
-                       kRightAnklePitchDof, kRightAnkleRollDof,
-                       right_ankle_solver_,
-                       right_ankle_last_motor1_, right_ankle_last_motor2_,
-                       right_ankle_solved_);
+    /* 脚踝并联机构逆解：将 roll/pitch 转为两条驱动链电机角度（弧度） */
+    if (config_.ankle_parallel_kinematics_enabled) {
+        if (!apply_ankle_ik(target_q_model_rad, target_rad,
+                            config_.left_ankle_parallel,
+                            left_ankle_solver_,
+                            left_ankle_last_upper_motor_,
+                            left_ankle_last_lower_motor_,
+                            left_ankle_solved_)) {
+            return false;
+        }
+        if (!apply_ankle_ik(target_q_model_rad, target_rad,
+                            config_.right_ankle_parallel,
+                            right_ankle_solver_,
+                            right_ankle_last_upper_motor_,
+                            right_ankle_last_lower_motor_,
+                            right_ankle_solved_)) {
+            return false;
+        }
     }
 
     return true;
@@ -640,6 +666,11 @@ bool RobotInterface::reset_joints() {
         static_cast<int>(config_.model_to_motor_index.size()) == config_.num_motors;
 
     for (int model_index = 0; model_index < config_.num_motors; ++model_index) {
+        if (config_.ankle_parallel_kinematics_enabled &&
+            is_parallel_ankle_model_dof(model_index)) {
+            continue;
+        }
+
         const int motor_index = has_model_mapping
             ? config_.model_to_motor_index[model_index]
             : model_index;
@@ -652,6 +683,42 @@ bool RobotInterface::reset_joints() {
         q0_model[model_index] =
             static_cast<double>(direction_for_motor(config_, motor_index)) *
             q0_motor[motor_index];
+    }
+
+    auto fill_ankle_q0_model = [&](const RobotInterfaceConfig::AnkleParallelMap& ankle_map) {
+        if (!ankle_parallel_map_indices_in_range(ankle_map, config_.num_motors)) {
+            std::cerr << "[RobotInterface] reset_joints rejected: "
+                      << "ankle parallel map contains an out-of-range index\n";
+            return false;
+        }
+
+        const double upper_motor =
+            static_cast<double>(direction_for_motor(config_, ankle_map.upper_motor_index)) *
+            q0_motor[ankle_map.upper_motor_index];
+        const double lower_motor =
+            static_cast<double>(direction_for_motor(config_, ankle_map.lower_motor_index)) *
+            q0_motor[ankle_map.lower_motor_index];
+
+        const double initial_pitch = target_model[ankle_map.model_pitch_dof];
+        const double initial_roll = target_model[ankle_map.model_roll_dof];
+        const ankle_motor_fk::FootAngles foot =
+            ankle_motor_fk::solve(upper_motor, lower_motor, initial_roll, initial_pitch);
+
+        if (foot.reachable) {
+            q0_model[ankle_map.model_pitch_dof] = foot.pitch;
+            q0_model[ankle_map.model_roll_dof] = foot.roll;
+        } else {
+            q0_model[ankle_map.model_pitch_dof] = target_model[ankle_map.model_pitch_dof];
+            q0_model[ankle_map.model_roll_dof] = target_model[ankle_map.model_roll_dof];
+        }
+        return true;
+    };
+
+    if (config_.ankle_parallel_kinematics_enabled) {
+        if (!fill_ankle_q0_model(config_.left_ankle_parallel) ||
+            !fill_ankle_q0_model(config_.right_ankle_parallel)) {
+            return false;
+        }
     }
 
     const int ramp_steps = 100;
@@ -780,6 +847,48 @@ bool RobotInterface::validate_policy_config() const {
         seen[motor_index] = true;
     }
 
+    if (config_.ankle_parallel_kinematics_enabled) {
+        if (!ankle_parallel_map_indices_in_range(config_.left_ankle_parallel, kPolicyDof) ||
+            !ankle_parallel_map_indices_in_range(config_.right_ankle_parallel, kPolicyDof)) {
+            return fail("ankle parallel maps contain an out-of-range index");
+        }
+
+        std::array<bool, kPolicyDof> seen_ankle_model_dof = {};
+        std::array<bool, kPolicyDof> seen_ankle_motor = {};
+
+        auto mark_model_dof = [&](int model_dof) {
+            if (seen_ankle_model_dof[model_dof]) {
+                return false;
+            }
+            seen_ankle_model_dof[model_dof] = true;
+            return true;
+        };
+
+        auto mark_motor = [&](int motor_index) {
+            if (seen_ankle_motor[motor_index]) {
+                return false;
+            }
+            seen_ankle_motor[motor_index] = true;
+            return true;
+        };
+
+        const auto& left = config_.left_ankle_parallel;
+        const auto& right = config_.right_ankle_parallel;
+        if (!mark_model_dof(left.model_pitch_dof) ||
+            !mark_model_dof(left.model_roll_dof) ||
+            !mark_model_dof(right.model_pitch_dof) ||
+            !mark_model_dof(right.model_roll_dof)) {
+            return fail("ankle parallel model DOFs must be distinct");
+        }
+
+        if (!mark_motor(left.upper_motor_index) ||
+            !mark_motor(left.lower_motor_index) ||
+            !mark_motor(right.upper_motor_index) ||
+            !mark_motor(right.lower_motor_index)) {
+            return fail("ankle parallel motor indices must be distinct");
+        }
+    }
+
     for (int i = 0; i < kPolicyDof; ++i) {
         if (config_.action_clip[i][0] > config_.action_clip[i][1]) {
             return fail("action_clip lower bound must be <= upper bound for every model DOF");
@@ -813,10 +922,10 @@ void RobotInterface::unload_policy() {
     right_ankle_solver_.reset();
     left_ankle_solved_ = false;
     right_ankle_solved_ = false;
-    left_ankle_last_motor1_ = 0.0;
-    left_ankle_last_motor2_ = 0.0;
-    right_ankle_last_motor1_ = 0.0;
-    right_ankle_last_motor2_ = 0.0;
+    left_ankle_last_upper_motor_ = 0.0;
+    left_ankle_last_lower_motor_ = 0.0;
+    right_ankle_last_upper_motor_ = 0.0;
+    right_ankle_last_lower_motor_ = 0.0;
 
     reset_ankle_fk_state();
 }
@@ -836,29 +945,30 @@ void RobotInterface::reset_policy_state() {
     right_ankle_solver_.reset();
     left_ankle_solved_ = false;
     right_ankle_solved_ = false;
-    left_ankle_last_motor1_ = 0.0;
-    left_ankle_last_motor2_ = 0.0;
-    right_ankle_last_motor1_ = 0.0;
-    right_ankle_last_motor2_ = 0.0;
+    left_ankle_last_upper_motor_ = 0.0;
+    left_ankle_last_lower_motor_ = 0.0;
+    right_ankle_last_upper_motor_ = 0.0;
+    right_ankle_last_lower_motor_ = 0.0;
 
     reset_ankle_fk_state();
 }
 
 void RobotInterface::reset_ankle_fk_state() {
-    double left_pitch = 0.0;
-    double right_pitch = 0.0;
-    double left_roll = 0.0;
-    double right_roll = 0.0;
+    auto reset_solver = [&](const RobotInterfaceConfig::AnkleParallelMap& ankle_map,
+                            ankle_motor_fk::Solver& solver) {
+        double pitch = 0.0;
+        double roll = 0.0;
+        if (config_.stand_pose_rad.size() == static_cast<std::size_t>(kPolicyDof) &&
+            index_in_range(ankle_map.model_pitch_dof, kPolicyDof) &&
+            index_in_range(ankle_map.model_roll_dof, kPolicyDof)) {
+            pitch = config_.stand_pose_rad[ankle_map.model_pitch_dof];
+            roll = config_.stand_pose_rad[ankle_map.model_roll_dof];
+        }
+        solver.reset(roll, pitch);
+    };
 
-    if (config_.stand_pose_rad.size() == static_cast<std::size_t>(kPolicyDof)) {
-        left_pitch = config_.stand_pose_rad[kLeftAnklePitchDof];
-        right_pitch = config_.stand_pose_rad[kRightAnklePitchDof];
-        left_roll = config_.stand_pose_rad[kLeftAnkleRollDof];
-        right_roll = config_.stand_pose_rad[kRightAnkleRollDof];
-    }
-
-    left_ankle_fk_solver_.reset(left_roll, left_pitch);
-    right_ankle_fk_solver_.reset(right_roll, right_pitch);
+    reset_solver(config_.left_ankle_parallel, left_ankle_fk_solver_);
+    reset_solver(config_.right_ankle_parallel, right_ankle_fk_solver_);
     ankle_fk_observation_ready_ = false;
     ankle_fk_last_time_ = {};
 }
@@ -1131,6 +1241,7 @@ void append_term_history(std::array<float, ObservationSize>& history,
     std::copy(current_term.begin(), current_term.end(), history.begin() + offset + term_history_size - TermSize);
 }
 
+
 void RobotInterface::build_joint_observation_terms(
     const std::vector<double>& q_rad,
     const std::vector<double>& dq_rad_s,
@@ -1138,11 +1249,16 @@ void RobotInterface::build_joint_observation_terms(
     std::array<float, kPolicyDof>& joint_pos_rel,
     std::array<float, kPolicyDof>& joint_vel_rel) {
 
-    /* 先按普通单关节映射填满全部 DOF；并联脚踝会在下面用 FK 覆盖。 */
+    /* 普通单关节按直接映射填充；并联脚踝跳过后由 FK 写入。 */
     for (int model_index = 0; model_index < kPolicyDof; ++model_index) {
+        if (config_.ankle_parallel_kinematics_enabled &&
+            is_parallel_ankle_model_dof(model_index)) {
+            continue;
+        }
+
         const int motor_index = config_.model_to_motor_index[model_index];
         const double direction = static_cast<double>(direction_for_motor(config_, motor_index));
-        const double q_model = direction * q_rad[motor_index];
+        const double q_model  = direction * q_rad[motor_index];
         const double dq_model = direction * dq_rad_s[motor_index];
 
         joint_pos_rel[model_index] =
@@ -1152,65 +1268,73 @@ void RobotInterface::build_joint_observation_terms(
             static_cast<float>(dq_model * config_.dof_vel_scale[model_index]);
     }
 
-    if (config_.ankle_ik_enabled) {
-        apply_ankle_fk_observation(q_rad, now, joint_pos_rel, joint_vel_rel);
+    if (config_.ankle_parallel_kinematics_enabled) {
+        const double dt = ankle_fk_observation_ready_
+            ? std::chrono::duration<double>(now - ankle_fk_last_time_).count()
+            : 0.0;
+
+        const bool has_valid_dt = ankle_fk_observation_ready_ &&
+                                  std::isfinite(dt) &&
+                                  dt > 0.0;
+
+        apply_ankle_fk_observation(q_rad, dt, has_valid_dt,
+                                   config_.left_ankle_parallel,
+                                   left_ankle_fk_solver_,
+                                   joint_pos_rel, joint_vel_rel);
+        apply_ankle_fk_observation(q_rad, dt, has_valid_dt,
+                                   config_.right_ankle_parallel,
+                                   right_ankle_fk_solver_,
+                                   joint_pos_rel, joint_vel_rel);
+
+        ankle_fk_observation_ready_ = true;
+        ankle_fk_last_time_ = now;
     }
 }
 
 void RobotInterface::apply_ankle_fk_observation(
     const std::vector<double>& q_rad,
-    std::chrono::steady_clock::time_point now,
+    double dt,
+    bool has_valid_dt,
+    const RobotInterfaceConfig::AnkleParallelMap& ankle_map,
+    ankle_motor_fk::Solver& solver,
     std::array<float, kPolicyDof>& joint_pos_rel,
     std::array<float, kPolicyDof>& joint_vel_rel) {
 
-    const double dt = ankle_fk_observation_ready_
-        ? std::chrono::duration<double>(now - ankle_fk_last_time_).count()
-        : 0.0;
-    const bool has_valid_dt = ankle_fk_observation_ready_ &&
-                              std::isfinite(dt) &&
-                              dt > 0.0;
+    if (!ankle_parallel_map_indices_in_range(ankle_map, kPolicyDof)) {
+        return;
+    }
 
-    auto apply_leg = [&](int pitch_dof,
-                         int roll_dof,
-                         ankle_motor_fk::Solver& solver) {
-        const int motor1_index = config_.model_to_motor_index[pitch_dof];
-        const int motor2_index = config_.model_to_motor_index[roll_dof];
-        const double motor1 =
-            static_cast<double>(direction_for_motor(config_, motor1_index)) *
-            q_rad[motor1_index];
-        const double motor2 =
-            static_cast<double>(direction_for_motor(config_, motor2_index)) *
-            q_rad[motor2_index];
+    const int ankle_model_pitch_dof = ankle_map.model_pitch_dof;
+    const int ankle_model_roll_dof = ankle_map.model_roll_dof;
+    const double upper_motor =
+        static_cast<double>(direction_for_motor(config_, ankle_map.upper_motor_index)) *
+        q_rad[ankle_map.upper_motor_index];
+    const double lower_motor =
+        static_cast<double>(direction_for_motor(config_, ankle_map.lower_motor_index)) *
+        q_rad[ankle_map.lower_motor_index];
 
-        const double previous_roll = solver.previous_roll();
-        const double previous_pitch = solver.previous_pitch();
-        const ankle_motor_fk::FootAngles foot = solver.solve(motor1, motor2);
+    const double previous_roll = solver.previous_roll();
+    const double previous_pitch = solver.previous_pitch();
+    const ankle_motor_fk::FootAngles foot = solver.solve(upper_motor, lower_motor);
 
-        joint_pos_rel[pitch_dof] =
-            static_cast<float>((foot.pitch - config_.stand_pose_rad[pitch_dof]) *
-                               config_.dof_pos_scale[pitch_dof]);
-        joint_pos_rel[roll_dof] =
-            static_cast<float>((foot.roll - config_.stand_pose_rad[roll_dof]) *
-                               config_.dof_pos_scale[roll_dof]);
+    joint_pos_rel[ankle_model_pitch_dof] =
+        static_cast<float>((foot.pitch - config_.stand_pose_rad[ankle_model_pitch_dof]) *
+                           config_.dof_pos_scale[ankle_model_pitch_dof]);
+    joint_pos_rel[ankle_model_roll_dof] =
+        static_cast<float>((foot.roll - config_.stand_pose_rad[ankle_model_roll_dof]) *
+                           config_.dof_pos_scale[ankle_model_roll_dof]);
 
-        double pitch_velocity = 0.0;
-        double roll_velocity = 0.0;
-        if (has_valid_dt) {
-            pitch_velocity = ankle_motor_ik::wrap_to_pi(foot.pitch - previous_pitch) / dt;
-            roll_velocity = ankle_motor_ik::wrap_to_pi(foot.roll - previous_roll) / dt;
-        }
+    double pitch_velocity = 0.0;
+    double roll_velocity = 0.0;
+    if (has_valid_dt) {
+        pitch_velocity = ankle_motor_ik::wrap_to_pi(foot.pitch - previous_pitch) / dt;
+        roll_velocity = ankle_motor_ik::wrap_to_pi(foot.roll - previous_roll) / dt;
+    }
 
-        joint_vel_rel[pitch_dof] =
-            static_cast<float>(pitch_velocity * config_.dof_vel_scale[pitch_dof]);
-        joint_vel_rel[roll_dof] =
-            static_cast<float>(roll_velocity * config_.dof_vel_scale[roll_dof]);
-    };
-
-    apply_leg(kLeftAnklePitchDof, kLeftAnkleRollDof, left_ankle_fk_solver_);
-    apply_leg(kRightAnklePitchDof, kRightAnkleRollDof, right_ankle_fk_solver_);
-
-    ankle_fk_observation_ready_ = true;
-    ankle_fk_last_time_ = now;
+    joint_vel_rel[ankle_model_pitch_dof] =
+        static_cast<float>(pitch_velocity * config_.dof_vel_scale[ankle_model_pitch_dof]);
+    joint_vel_rel[ankle_model_roll_dof] =
+        static_cast<float>(roll_velocity * config_.dof_vel_scale[ankle_model_roll_dof]);
 }
 
 /* 结合速度指令、关节状态和 IMU 数据构建完整策略观测。 */

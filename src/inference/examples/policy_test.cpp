@@ -62,10 +62,14 @@ inference::RobotInterfaceConfig make_robot_config()
 #if POLICY_V3
     cfg.model_to_motor_index = {0, 1, 2, 3, 4, 5,
                                 6, 7, 8, 9, 11, 10};
+    cfg.left_ankle_parallel = {8, 10, 8, 11};
+    cfg.right_ankle_parallel = {9, 11, 9, 10};
 #else
     //  把模型 DOF 顺序映射到电机逻辑索引，长度必须为 12 且不可重复；按模型 DOF 序号使用
     cfg.model_to_motor_index = {0, 6, 1, 7,  2, 8,
                                 3, 9, 4, 11, 5, 10};
+    cfg.left_ankle_parallel = {8, 10, 4, 5};
+    cfg.right_ankle_parallel = {9, 11, 11, 10};
 
     // cfg.model_to_motor_index = {0, 1, 2, 3,  4,  5,
     //                             6, 7, 8, 9, 11, 10};
@@ -135,8 +139,8 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.mit_kp.assign(12, 400);
     cfg.mit_kd.assign(12, 30);
 
-    /* 启用脚踝并联机构逆解 */
-    cfg.ankle_ik_enabled = true;
+    /* 启用脚踝并联机构 IK/FK 特殊处理 */
+    cfg.ankle_parallel_kinematics_enabled = true;
     return cfg;
 }
 

@@ -30,6 +30,12 @@ class TorchPolicyRunner;
 
 /* 接口层的配置结构体 */
 struct RobotInterfaceConfig {
+    struct AnkleParallelMap {
+        int model_pitch_dof = -1;
+        int model_roll_dof = -1;
+        int upper_motor_index = -1;
+        int lower_motor_index = -1;
+    };
 
     /* 电机 配置*/
     int num_motors = 12;
@@ -53,8 +59,11 @@ struct RobotInterfaceConfig {
     std::vector<double> mit_kp;
     std::vector<double> mit_kd;
 
-    /* 是否启用脚踝并联机构逆解；启用后将 ankle roll/pitch DOF 通过 IK 转为两个电机角度 */
-    bool ankle_ik_enabled = true;
+    /* 是否启用脚踝并联机构运动学；启用后 action 走 IK，observation/reset 起点走 FK */
+    bool ankle_parallel_kinematics_enabled = true;
+    /* 并联脚踝显式映射：模型姿态 DOF 与两条物理驱动链电机分开配置 */
+    AnkleParallelMap left_ankle_parallel;
+    AnkleParallelMap right_ankle_parallel;
 
     /* IMU 配置 */
     std::string imu_device = "/dev/ttyUSB0";
@@ -68,7 +77,7 @@ struct RobotInterfaceConfig {
     /* TorchScript 策略配置 */
     /* .pt 模型文件路径，由 torch.jit.script/trace 导出 */
     std::string policy_model_path;
-    /* 模型关节维度到电机逻辑索引的映射，长度必须为 12 且不可重复 */
+    /* 模型关节维度到电机逻辑索引的映射，长度必须为 12 且不可重复；并联脚踝驱动链由 AnkleParallelMap 指定 */
     std::vector<int> model_to_motor_index;
     /* 电机物理/控制器 ID 到模型关节方向的符号；1 表示方向一致，-1 表示方向相反；为空时全部按 1 */
     std::vector<int> motor_to_model_direction;
@@ -205,6 +214,7 @@ private:
     bool validate_policy_config() const;
     bool build_action_target_rad(const std::vector<double>& target_q_model_rad,
                                  std::vector<double>& target_rad) const;
+    bool is_parallel_ankle_model_dof(int model_index) const;
     bool build_policy_observation(double vx,
                                   double vy,
                                   double yaw_rate,
@@ -215,7 +225,10 @@ private:
                                        std::array<float, kPolicyDof>& joint_pos_rel,
                                        std::array<float, kPolicyDof>& joint_vel_rel);
     void apply_ankle_fk_observation(const std::vector<double>& q_rad,
-                                    std::chrono::steady_clock::time_point now,
+                                    double dt,
+                                    bool has_valid_dt,
+                                    const RobotInterfaceConfig::AnkleParallelMap& ankle_map,
+                                    ankle_motor_fk::Solver& solver,
                                     std::array<float, kPolicyDof>& joint_pos_rel,
                                     std::array<float, kPolicyDof>& joint_vel_rel);
     void reset_ankle_fk_state();
@@ -232,11 +245,11 @@ private:
     /* 脚踝 IK 求解器（左右各一），状态跨 policy_step 保持 */
     mutable ankle_motor_ik::Solver left_ankle_solver_;
     mutable ankle_motor_ik::Solver right_ankle_solver_;
-    /* 上一次成功求解的电机角度（弧度），用于不可达时回退 */
-    mutable double left_ankle_last_motor1_ = 0.0;
-    mutable double left_ankle_last_motor2_ = 0.0;
-    mutable double right_ankle_last_motor1_ = 0.0;
-    mutable double right_ankle_last_motor2_ = 0.0;
+    /* 上一次成功求解的驱动链电机角度（弧度），用于不可达时回退 */
+    mutable double left_ankle_last_upper_motor_ = 0.0;
+    mutable double left_ankle_last_lower_motor_ = 0.0;
+    mutable double right_ankle_last_upper_motor_ = 0.0;
+    mutable double right_ankle_last_lower_motor_ = 0.0;
     mutable bool left_ankle_solved_ = false;
     mutable bool right_ankle_solved_ = false;
 
@@ -247,11 +260,11 @@ private:
     std::chrono::steady_clock::time_point ankle_fk_last_time_{};
 
     /* 对单条腿的脚踝并联机构执行逆解，将 roll/pitch 转为两个电机角度 */
-    void apply_ankle_ik(const std::vector<double>& target_q_model_rad,
+    bool apply_ankle_ik(const std::vector<double>& target_q_model_rad,
                         std::vector<double>& target_rad,
-                        int pitch_dof, int roll_dof,
+                        const RobotInterfaceConfig::AnkleParallelMap& ankle_map,
                         ankle_motor_ik::Solver& solver,
-                        double& last_motor1, double& last_motor2,
+                        double& last_upper_motor, double& last_lower_motor,
                         bool& solved) const;
 };
 
