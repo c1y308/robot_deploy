@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="760" viewBox="0 0 980 760">
+  <defs>
+    <style>
+      .bg { fill: #f8fafc; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+      .axis { stroke: #334155; stroke-width: 2; marker-end: url(#arrow); }
+      .frame { stroke: #64748b; stroke-width: 4; stroke-linecap: round; }
+      .crank { stroke: #ef4444; stroke-width: 5; stroke-linecap: round; }
+      .rod { stroke: #2563eb; stroke-width: 5; stroke-linecap: round; }
+      .foot { stroke: #0f766e; stroke-width: 7; stroke-linecap: round; }
+      .guide { stroke: #94a3b8; stroke-width: 1.5; stroke-dasharray: 7 6; fill: none; }
+      .point-fixed { fill: #f97316; stroke: #7c2d12; stroke-width: 2; }
+      .point-crank { fill: #ef4444; stroke: #7f1d1d; stroke-width: 2; }
+      .point-foot { fill: #14b8a6; stroke: #134e4a; stroke-width: 2; }
+      .label { fill: #0f172a; font: 16px sans-serif; }
+      .small { fill: #334155; font: 13px sans-serif; }
+      .tiny { fill: #475569; font: 12px sans-serif; }
+      .title { fill: #0f172a; font: 700 22px sans-serif; }
+      .mono { fill: #0f172a; font: 14px monospace; }
+      .badge-crank { fill: #fee2e2; stroke: #fecaca; }
+      .badge-rod { fill: #dbeafe; stroke: #bfdbfe; }
+      .badge-foot { fill: #ccfbf1; stroke: #99f6e4; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="980" height="760"/>
+  <rect class="panel" x="28" y="24" width="924" height="704" rx="8"/>
+
+  <text class="title" x="58" y="64">Ankle parallel mechanism IK geometry</text>
+  <text class="small" x="58" y="91">Rear view projection: Y+ is left, Z+ is up, X is out of page.</text>
+
+  <!-- Coordinate axes -->
+  <line class="axis" x1="120" y1="650" x2="120" y2="570"/>
+  <line class="axis" x1="120" y1="650" x2="55" y2="650"/>
+  <text class="small" x="130" y="580">Z+</text>
+  <text class="small" x="58" y="672">Y+</text>
+  <circle cx="120" cy="650" r="5" fill="#334155"/>
+  <text class="small" x="135" y="655">X axis points out of page</text>
+
+  <!-- Shank/fixed frame -->
+  <line class="frame" x1="490" y1="82" x2="490" y2="280"/>
+  <line class="guide" x1="250" y1="82" x2="690" y2="82"/>
+  <line class="guide" x1="250" y1="239" x2="690" y2="239"/>
+  <line class="guide" x1="250" y1="616" x2="690" y2="616"/>
+  <text class="tiny" x="705" y="86">z approx 206</text>
+  <text class="tiny" x="705" y="243">z approx 149</text>
+  <text class="tiny" x="705" y="620">z = 9 foot plate</text>
+
+  <!-- Crank rotation circles in YZ projection -->
+  <circle class="guide" cx="491" cy="104" r="126"/>
+  <circle class="guide" cx="491" cy="261" r="125"/>
+  <path class="guide" d="M 534 112 A 48 48 0 0 1 555 150"/>
+  <path class="guide" d="M 448 251 A 48 48 0 0 0 422 289"/>
+  <text class="tiny" x="558" y="150">theta1</text>
+  <text class="tiny" x="395" y="291">theta2</text>
+
+  <!-- Mechanism lines -->
+  <line class="crank" x1="491" y1="104" x2="372" y2="82"/>
+  <line class="rod" x1="372" y1="82" x2="365" y2="616"/>
+  <line class="crank" x1="491" y1="261" x2="609" y2="239"/>
+  <line class="rod" x1="609" y1="239" x2="615" y2="616"/>
+  <line class="foot" x1="365" y1="616" x2="615" y2="616"/>
+
+  <!-- Points -->
+  <circle class="point-fixed" cx="491" cy="104" r="8"/>
+  <circle class="point-fixed" cx="491" cy="261" r="8"/>
+  <circle class="point-crank" cx="372" cy="82" r="8"/>
+  <circle class="point-crank" cx="609" cy="239" r="8"/>
+  <circle class="point-foot" cx="365" cy="616" r="8"/>
+  <circle class="point-foot" cx="615" cy="616" r="8"/>
+
+  <!-- Labels -->
+  <text class="label" x="506" y="100">A1 motor pivot</text>
+  <text class="small" x="506" y="121">(-13.45, -0.16, 198)</text>
+  <text class="label" x="506" y="258">A2 motor pivot</text>
+  <text class="small" x="506" y="279">(-13.45, -0.16, 140)</text>
+
+  <text class="label" x="245" y="76">B1 crank end</text>
+  <text class="small" x="237" y="97">A1B1 = crank vector V1</text>
+  <text class="label" x="626" y="235">B2 crank end</text>
+  <text class="small" x="626" y="256">A2B2 = crank vector V2</text>
+
+  <text class="label" x="278" y="640">C1 foot joint</text>
+  <text class="small" x="270" y="661">y = +25</text>
+  <text class="label" x="625" y="640">C2 foot joint</text>
+  <text class="small" x="625" y="661">y = -25</text>
+
+  <rect class="badge-crank" x="56" y="126" width="226" height="44" rx="6"/>
+  <line class="crank" x1="72" y1="148" x2="118" y2="148"/>
+  <text class="small" x="132" y="145">Crank: A1-B1 / A2-B2</text>
+  <text class="tiny" x="132" y="163">rotated by motor angle theta</text>
+
+  <rect class="badge-rod" x="56" y="184" width="226" height="44" rx="6"/>
+  <line class="rod" x1="72" y1="206" x2="118" y2="206"/>
+  <text class="small" x="132" y="203">Rod: B1-C1 / B2-C2</text>
+  <text class="tiny" x="132" y="221">fixed length L1=197, L2=140</text>
+
+  <rect class="badge-foot" x="56" y="242" width="226" height="44" rx="6"/>
+  <line class="foot" x1="72" y1="264" x2="118" y2="264"/>
+  <text class="small" x="132" y="261">Foot plate: C1-C2</text>
+  <text class="tiny" x="132" y="279">rotated by roll and pitch</text>
+
+  <!-- Foot axes / roll-pitch note -->
+  <line class="axis" x1="365" y1="582" x2="615" y2="582"/>
+  <text class="small" x="460" y="574">Pitch axis is along Y</text>
+  <circle cx="490" cy="616" r="7" fill="none" stroke="#0f172a" stroke-width="2"/>
+  <circle cx="490" cy="616" r="2.5" fill="#0f172a"/>
+  <text class="small" x="506" y="611">Roll axis is X</text>
+
+  <!-- Formula panel -->
+  <rect class="panel" x="56" y="338" width="338" height="166" rx="8"/>
+  <text class="label" x="76" y="368">IK relation in this file</text>
+  <text class="mono" x="76" y="400">C1 = Ry(pitch) Rx(roll) C1_zero</text>
+  <text class="mono" x="76" y="425">C2 = Ry(pitch) Rx(roll) C2_zero</text>
+  <text class="mono" x="76" y="458">solve theta1: |B1(theta1)-C1|=L1</text>
+  <text class="mono" x="76" y="483">solve theta2: |B2(theta2)-C2|=L2</text>
+
+  <rect class="panel" x="640" y="338" width="268" height="166" rx="8"/>
+  <text class="label" x="660" y="368">Naming check</text>
+  <text class="small" x="660" y="399">L1 is not the crank length.</text>
+  <text class="small" x="660" y="425">L1 is the rod length B1-C1.</text>
+  <text class="small" x="660" y="457">The crank is A1-B1, stored as</text>
+  <text class="mono" x="660" y="482">kV1 = kB1Zero - kA1</text>
+</svg>
