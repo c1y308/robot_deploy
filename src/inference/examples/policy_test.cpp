@@ -113,9 +113,9 @@ inference::RobotInterfaceConfig make_robot_config()
 
     cfg.policy_cycle_time_s = 0.02;
 
-    //  按照电机 DOF 顺序配置电机方向，1 表示方向一致，-1 表示方向相反；为空时全部按 1
+    //  按照 DOF 顺序配置电机方向，1 表示方向一致，-1 表示方向相反；为空时全部按 1
     cfg.motor_to_model_direction = {
-         1, -1, 1,  1, -1,  1,
+         1, -1, 1,  1, -1, -1,
         -1,  1, 1, -1, -1, -1
     };
 
@@ -136,8 +136,8 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.body_ang_vel_scale = {0.2, 0.2, 0.2};
     cfg.euler_scale = {1.0, 1.0, 1.0};
 
-    cfg.mit_kp.assign(12, 400);
-    cfg.mit_kd.assign(12, 30);
+    cfg.mit_kp.assign(12, 200);
+    cfg.mit_kd.assign(12, 10);
 
     /* 启用脚踝并联机构 IK/FK 特殊处理 */
     cfg.ankle_parallel_kinematics_enabled = true;
@@ -238,7 +238,7 @@ int main()
         return 1;
     }
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50000));
 
     std::cout << "[INFO] Entering policy loop. Press Ctrl+C to stop.\n";
     using Clock = std::chrono::steady_clock;
