@@ -65,21 +65,13 @@ inference::RobotInterfaceConfig make_robot_config()
 
     cfg.print_motors_info = false;
 
-#if POLICY_V3
-    cfg.model_to_motor_index = {0, 1, 2, 3, 4, 5,
-                                6, 7, 8, 9, 11, 10};
-    cfg.left_ankle_parallel = {8, 10, 8, 11};
-    cfg.right_ankle_parallel = {9, 11, 9, 10};
-#else
     //  把模型 DOF 顺序映射到电机逻辑索引，长度必须为 12 且不可重复；按模型 DOF 序号使用
     cfg.model_to_motor_index = {0, 6, 1, 7,  2, 8,
                                 3, 9, 4, 10, 5, 11};
+
     cfg.left_ankle_parallel = {8, 10, 4, 5};
     cfg.right_ankle_parallel = {9, 11, 10, 11};
 
-    // cfg.model_to_motor_index = {0, 1, 2, 3,  4,  5,
-    //                             6, 7, 8, 9, 11, 10};
-#endif
     cfg.print_motor_ids = {0, 1, 2, 3, 4, 5,
                            6, 7, 8, 9, 10, 11};
 
@@ -106,10 +98,10 @@ inference::RobotInterfaceConfig make_robot_config()
     };
     cfg.action_scale = {
         0.08, 0.08,
-        0.45, 0.45,
+        0.30, 0.30,
         0.08, 0.08,
-        0.45, 0.45,
-        0.20, 0.20,
+        0.30, 0.30,
+        0.15, 0.15,
         0.08, 0.08
     };
     // joint_min/max 是相对 stand_pose_rad 的偏移限位。
@@ -127,7 +119,7 @@ inference::RobotInterfaceConfig make_robot_config()
 
     // 以下 12 维策略配置均按模型 DOF 序号填写
     cfg.stand_pose_rad = {
-     0.0,  0.0, -0.1, -0.1,
+     0.0,  0.0, -0.3, -0.3,
      0.0,  0.0,  0.3,  0.3,
     -0.2, -0.2,  0.0,  0.0
     };
@@ -295,8 +287,8 @@ int main()
             safe_shutdown(robot, true);
             return 1;
         }
-        robot.set_target_velocity(0, 0, 0);
-        // robot.set_target_velocity(command.vx, command.vy, command.yaw_rate);
+        // robot.set_target_velocity(0, 0, 0);
+        robot.set_target_velocity(command.vx, command.vy, command.yaw_rate);
 
         const auto step_start = Clock::now();
         if (!robot.policy_step()) {
@@ -314,12 +306,12 @@ int main()
 
         const auto now = Clock::now();
         if (now - last_report >= std::chrono::seconds(1)) {
-            std::cout << std::fixed << std::setprecision(3)
-                      << "[INFO] raw_abs_x=" << command.raw_abs_x
-                      << " raw_abs_y=" << command.raw_abs_y
-                      << " vx=" << command.vx
-                      << " vy=" << command.vy
-                      << " yaw_rate=" << command.yaw_rate;
+            // std::cout << std::fixed << std::setprecision(3)
+            //           << "[INFO] raw_abs_x=" << command.raw_abs_x
+            //           << " raw_abs_y=" << command.raw_abs_y
+            //           << " vx=" << command.vx
+            //           << " vy=" << command.vy
+            //           << " yaw_rate=" << command.yaw_rate;
             if (kPrintPolicyTiming && steps > 0) {
                 std::cout << " avg_policy_step_ms="
                           << total_step_ms / static_cast<double>(steps)

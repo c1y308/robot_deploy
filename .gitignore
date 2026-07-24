@@ -14,6 +14,9 @@ compile_commands.json
 # Local third-party SDKs
 src/inference/third_party/
 
+# Log files
+src/inference/log/
+
 # Compiled objects and binaries
 *.o
 *.o.d
