@@ -13,6 +13,7 @@ endif()
 
 set(LOCAL_LIBTORCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libtorch)
 set(LOCAL_PYTORCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/python_torch/torch)
+set(LOCAL_PYTORCH_LIBS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/python_torch/torch.libs)
 set(TORCH_PREFIX_HINTS)
 
 if(EXISTS "${LOCAL_LIBTORCH_DIR}/share/cmake/Torch/TorchConfig.cmake")
@@ -81,7 +82,22 @@ target_link_libraries(robot_interface
     ${TORCH_LIBRARIES}
     pthread
 )
+if(EXISTS "${LOCAL_PYTORCH_LIBS_DIR}")
+    target_link_libraries(robot_interface
+        PUBLIC
+        "-Wl,-rpath-link,${LOCAL_PYTORCH_LIBS_DIR}"
+        "-Wl,-rpath,${LOCAL_PYTORCH_LIBS_DIR}"
+    )
+endif()
 
+if(NOT TARGET xbox_control_core)
+    add_library(xbox_control_core STATIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/../xbox_control/src/xbox_controller.cpp
+    )
+    target_include_directories(xbox_control_core PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/../xbox_control/include
+    )
+endif()
 
 add_executable(imu_only_test
     examples/imu_test.cpp
@@ -96,4 +112,7 @@ target_link_libraries(motors_test PRIVATE robot_interface)
 add_executable(policy_test
     examples/policy_test.cpp
 )
-target_link_libraries(policy_test PRIVATE robot_interface)
+target_link_libraries(policy_test PRIVATE
+    robot_interface
+    xbox_control_core
+)

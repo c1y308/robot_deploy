@@ -1,10 +1,12 @@
 #include "robot_interface.hpp"
+#include "xbox_controller.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <csignal>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -15,9 +17,9 @@
 namespace {
 
 #if POLICY_V3
-constexpr const char* kPolicyModelPath = "../model/policy_v3.pt";
+constexpr const char* kPolicyModelFile = "policy_v3.pt";
 #else
-constexpr const char* kPolicyModelPath = "../model/policy.pt";
+constexpr const char* kPolicyModelFile = "policy.pt";
 #endif
 
 constexpr const char* kEthercatIfname = "enp8s0";
@@ -26,9 +28,6 @@ constexpr int kImuBaudrate = 921600;
 
 constexpr double kPolicyHz = 50.0;
 constexpr double kPolicyPeriodSec = 1.0 / kPolicyHz;
-constexpr double kCommandVx = 0.0;
-constexpr double kCommandVy = 0.0;
-constexpr double kCommandYawRate = 0.0;
 constexpr bool kPrintPolicyTiming = false;
 
 std::atomic<bool> g_stop_requested{false};
@@ -36,6 +35,13 @@ std::atomic<bool> g_stop_requested{false};
 void signal_handler(int)
 {
     g_stop_requested.store(true);
+}
+
+std::filesystem::path policy_model_path()
+{
+    return std::filesystem::path(__FILE__).parent_path()
+        .parent_path()
+        .parent_path() / "inference" / "model" / kPolicyModelFile;
 }
 
 bool file_readable(const std::string& path)
@@ -55,9 +61,9 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.imu_print_ahrs  = false;
     cfg.imu_print_stats = false;
 
-    cfg.policy_model_path = kPolicyModelPath;
+    cfg.policy_model_path = policy_model_path().string();
 
-    cfg.print_motors_info = true;
+    cfg.print_motors_info = false;
 
 #if POLICY_V3
     cfg.model_to_motor_index = {0, 1, 2, 3, 4, 5,
@@ -100,10 +106,10 @@ inference::RobotInterfaceConfig make_robot_config()
     };
     cfg.action_scale = {
         0.08, 0.08,
-        0.30, 0.30,
+        0.45, 0.45,
         0.08, 0.08,
-        0.30, 0.30,
-        0.15, 0.15,
+        0.45, 0.45,
+        0.20, 0.20,
         0.08, 0.08
     };
     // joint_min/max 是相对 stand_pose_rad 的偏移限位。
@@ -121,7 +127,7 @@ inference::RobotInterfaceConfig make_robot_config()
 
     // 以下 12 维策略配置均按模型 DOF 序号填写
     cfg.stand_pose_rad = {
-     0.0,  0.0, -0.3, -0.3,
+     0.0,  0.0, -0.1, -0.1,
      0.0,  0.0,  0.3,  0.3,
     -0.2, -0.2,  0.0,  0.0
     };
@@ -164,8 +170,21 @@ bool safety_countdown()
     return !g_stop_requested.load();
 }
 
-void safe_shutdown(inference::RobotInterface& robot)
+void send_zero_velocity(inference::RobotInterface& robot)
 {
+    robot.set_target_velocity(0.0, 0.0, 0.0);
+    if (!robot.policy_step()) {
+        std::cerr << "[WARN] Failed to send one final zero-velocity policy step.\n";
+    }
+}
+
+void safe_shutdown(inference::RobotInterface& robot, bool send_zero)
+{
+    if (send_zero) {
+        send_zero_velocity(robot);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
     std::cout << "[INFO] Stopping motors and releasing hardware...\n";
     robot.stop_motors(-1);
     robot.deinit_motors();
@@ -180,14 +199,17 @@ int main()
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
+    xbox_control::XboxController controller;
+    if (!controller.open_device()) {
+        std::cerr << "[ERROR] " << controller.last_error() << "\n";
+        return 1;
+    }
+
     const inference::RobotInterfaceConfig cfg = make_robot_config();
 
     if (!file_readable(cfg.policy_model_path)) {
         std::cerr << "[ERROR] Policy model is not readable: "
-                  << cfg.policy_model_path << "\n"
-                  << "[ERROR] Put the TorchScript model at "
-                  << "src/inference/model/policy.pt and run from "
-                  << "src/inference/build.\n";
+                  << cfg.policy_model_path << "\n";
         return 1;
     }
 
@@ -201,55 +223,59 @@ int main()
     std::cout << "[INFO] Starting EtherCAT motors...\n";
     if (!robot.initial_and_start_motors()) {
         std::cerr << "[ERROR] initial_and_start_motors() failed.\n";
-        safe_shutdown(robot);
+        safe_shutdown(robot, false);
         return 1;
     }
 
     std::cout << "[INFO] Loading policy...\n";
     if (!robot.load_policy()) {
         std::cerr << "[ERROR] load_policy() failed.\n";
-        safe_shutdown(robot);
+        safe_shutdown(robot, false);
         return 1;
     }
 
     std::cout << "[INFO] Restarting motors...\n";
     if (!robot.restart_motors(-1)) {
         std::cerr << "[ERROR] restart_motors(-1) failed.\n";
-        safe_shutdown(robot);
+        safe_shutdown(robot, false);
         return 1;
     }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     if (g_stop_requested.load()) {
-        safe_shutdown(robot);
+        safe_shutdown(robot, false);
         return 0;
     }
 
-        std::cout << "[INFO] Starting IMU...\n";
+    std::cout << "[INFO] Starting IMU...\n";
     if (!robot.initial_and_start_imu()) {
         std::cerr << "[ERROR] initial_and_start_imu() failed.\n";
+        safe_shutdown(robot, false);
         return 1;
     }
 
     std::cout << "[INFO] Waiting 1 second for IMU/AHRS warmup...\n";
     std::this_thread::sleep_for(std::chrono::seconds(1));
     if (g_stop_requested.load()) {
-        safe_shutdown(robot);
+        safe_shutdown(robot, false);
         return 0;
     }
 
     std::cout << "[INFO] Resetting joints to stand_pose_rad...\n";
     if (!robot.reset_joints()) {
         std::cerr << "[ERROR] reset_joints() failed.\n";
-        safe_shutdown(robot);
+        safe_shutdown(robot, false);
         return 1;
     }
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(50000));
+    std::cout << "[INFO] Waiting 50 seconds before entering policy loop...\n";
+    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+    if (g_stop_requested.load()) {
+        safe_shutdown(robot, false);
+        return 0;
+    }
 
-    robot.set_target_velocity(kCommandVx, kCommandVy, kCommandYawRate);
-
-    std::cout << "[INFO] Entering policy loop. Press Ctrl+C to stop.\n";
+    std::cout << "[INFO] Entering Xbox policy loop. Press Ctrl+C to stop.\n";
     using Clock = std::chrono::steady_clock;
     const auto period = std::chrono::duration_cast<Clock::duration>(
         std::chrono::duration<double>(kPolicyPeriodSec));
@@ -259,38 +285,58 @@ int main()
     std::uint64_t steps = 0;
     double total_step_ms = 0.0;
     double max_step_ms = 0.0;
+    xbox_control::VelocityCommand command;
 
     while (!g_stop_requested.load()) {
         next_tick += period;
 
+        if (!controller.poll(command)) {
+            std::cerr << "[ERROR] " << controller.last_error() << "\n";
+            safe_shutdown(robot, true);
+            return 1;
+        }
+        robot.set_target_velocity(0, 0, 0);
+        // robot.set_target_velocity(command.vx, command.vy, command.yaw_rate);
+
         const auto step_start = Clock::now();
         if (!robot.policy_step()) {
             std::cerr << "[ERROR] policy_step() failed at step " << steps << ".\n";
-            safe_shutdown(robot);
+            safe_shutdown(robot, false);
             return 1;
         }
         const auto step_end = Clock::now();
 
-        const double step_ms = std::chrono::duration<double, std::milli>(step_end - step_start).count();
+        const double step_ms =
+            std::chrono::duration<double, std::milli>(step_end - step_start).count();
         total_step_ms += step_ms;
         max_step_ms = std::max(max_step_ms, step_ms);
         ++steps;
 
         const auto now = Clock::now();
-        if (kPrintPolicyTiming && now - last_report >= std::chrono::seconds(1)) {
-            const double avg_step_ms = total_step_ms / static_cast<double>(steps);
+        if (now - last_report >= std::chrono::seconds(1)) {
             std::cout << std::fixed << std::setprecision(3)
-                      << "[INFO] steps=" << steps
-                      << " avg_policy_step_ms=" << avg_step_ms
-                      << " max_policy_step_ms=" << max_step_ms << "\n";
+                      << "[INFO] raw_abs_x=" << command.raw_abs_x
+                      << " raw_abs_y=" << command.raw_abs_y
+                      << " vx=" << command.vx
+                      << " vy=" << command.vy
+                      << " yaw_rate=" << command.yaw_rate;
+            if (kPrintPolicyTiming && steps > 0) {
+                std::cout << " avg_policy_step_ms="
+                          << total_step_ms / static_cast<double>(steps)
+                          << " max_policy_step_ms=" << max_step_ms;
+            }
+            std::cout << "\n";
             last_report = now;
         }
 
         std::this_thread::sleep_until(next_tick);
+        if (Clock::now() > next_tick + period) {
+            next_tick = Clock::now();
+        }
     }
 
     std::cout << "[INFO] Exiting policy loop. total_steps=" << steps << "\n";
 
-    safe_shutdown(robot);
+    safe_shutdown(robot, true);
     return 0;
 }

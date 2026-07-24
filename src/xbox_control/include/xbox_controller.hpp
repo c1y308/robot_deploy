@@ -23,29 +23,45 @@ struct VelocityCommand {
 
 class XboxController {
 public:
+    /* 构造 Xbox 手柄控制器对象，设备在 open_device() 中打开 */
     XboxController();
+    /* 析构时关闭已打开的设备文件描述符 */
     ~XboxController();
 
     XboxController(const XboxController&) = delete;
     XboxController& operator=(const XboxController&) = delete;
 
+    /* 打开手柄输入设备，并初始化当前摇杆轴状态 */
     bool open_device();
+    /* 关闭手柄输入设备 */
     void close_device();
+    /* 判断手柄输入设备是否已经打开 */
     bool is_open() const;
 
+    /* 轮询手柄事件，更新并输出当前速度指令 */
     bool poll(VelocityCommand& command);
+    /* 获取最近一次计算出的速度指令 */
     const VelocityCommand& command() const { return command_; }
+    /* 获取当前使用的手柄设备路径 */
     const std::string& device_path() const { return device_path_; }
+    /* 获取最近一次设备操作失败的错误信息 */
     const std::string& last_error() const { return last_error_; }
 
+    /* 将原始摇杆轴值映射为速度值 */
     static double axis_to_speed(int raw_value);
+    /* 根据 X/Y 轴原始值生成速度控制指令 */
     static VelocityCommand map_axes(int abs_x, int abs_y);
 
 private:
+    /* 读取设备当前轴值，作为初始控制状态 */
     void initialize_axis_values();
+    /* 根据缓存的轴值刷新速度控制指令 */
     void refresh_command();
 
+
+    /* 文件描述符 */
     int fd_ = -1;
+    /* 设备路径 */
     std::string device_path_ = kXboxDevicePath;
     std::string last_error_;
     VelocityCommand command_;
