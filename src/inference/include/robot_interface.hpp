@@ -154,6 +154,9 @@ public:
     bool load_policy();
     void unload_policy();
     void reset_policy_state();
+    void set_target_velocity(double vx, double vy, double yaw_rate);
+    std::array<double, 3> get_target_velocity() const;
+    bool policy_step();
     bool policy_step(double vx, double vy, double yaw_rate);
 
 
@@ -199,6 +202,8 @@ private:
     /*  Policy 运行器 智能指针 */
     std::unique_ptr<TorchPolicyRunner> policy_runner_;
     mutable std::mutex policy_mutex_;
+    mutable std::mutex target_velocity_mutex_;
+    std::array<double, 3> target_velocity_{0.0, 0.0, 0.0};  // [vx, vy, yaw_rate]
     std::array<float, kPolicyDof> last_action_raw_{};  // 记录上一周期动作值
     std::array<float, kPolicyObservationSize> observation_history_{};
     bool observation_history_ready_ = false;

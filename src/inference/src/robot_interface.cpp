@@ -159,6 +159,18 @@ RobotInterface::~RobotInterface() {
     deinit_motors();
 }
 
+/* 保存策略使用的机器人目标速度指令，顺序为 [vx, vy, yaw_rate]。 */
+void RobotInterface::set_target_velocity(double vx, double vy, double yaw_rate) {
+    std::lock_guard<std::mutex> lock(target_velocity_mutex_);
+    target_velocity_ = {vx, vy, yaw_rate};
+}
+
+/* 获取当前保存的机器人目标速度指令。 */
+std::array<double, 3> RobotInterface::get_target_velocity() const {
+    std::lock_guard<std::mutex> lock(target_velocity_mutex_);
+    return target_velocity_;
+}
+
 
 
 /********************************************************************* */
@@ -1160,8 +1172,16 @@ void RobotInterface::log_motor_pos_error(const std::vector<double>& target_rad) 
     ++motor_pos_error_frame_index_;
 }
 
-/* 执行一次策略闭环：构建观测、模型推理并下发目标关节角。 */
+/* 兼容旧接口：先保存外部传入的速度指令，再按保存值执行策略闭环。 */
 bool RobotInterface::policy_step(double vx, double vy, double yaw_rate) {
+    set_target_velocity(vx, vy, yaw_rate);
+    return policy_step();
+}
+
+/* 执行一次策略闭环：使用保存的目标速度构建观测、模型推理并下发目标关节角。 */
+bool RobotInterface::policy_step() {
+    const std::array<double, 3> target_velocity = get_target_velocity();
+
     std::lock_guard<std::mutex> lock(policy_mutex_);
 
     if (!policy_runner_ || !policy_runner_->is_loaded()) {
@@ -1170,7 +1190,10 @@ bool RobotInterface::policy_step(double vx, double vy, double yaw_rate) {
 
     // 单次策略闭环：状态采样 -> 帧观测 -> 模型推理 -> 目标关节角 -> CSP 下发。
     std::array<float, kPolicyObservationSize> observation = {};
-    if (!build_policy_observation(vx, vy, yaw_rate, observation)) {
+    if (!build_policy_observation(target_velocity[0],
+                                  target_velocity[1],
+                                  target_velocity[2],
+                                  observation)) {
         return handle_policy_step_failure("failed to build policy observation");
     }
 
