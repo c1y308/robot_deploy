@@ -103,8 +103,8 @@ Motor2 (下层 z=140)
 
 | 项目 | 左腿 | 右腿 | 来源 |
 |------|------|------|------|
-| Motor1 (上层) | Motor 4 | Motor 11 | model_to_motor_index[8/9] |
-| Motor2 (下层) | Motor 5 | Motor 10 | model_to_motor_index[10/11] |
+| Motor1 (上层) | Motor 4 | Motor 11 | left/right_ankle_parallel.upper_motor_index |
+| Motor2 (下层) | Motor 5 | Motor 10 | left/right_ankle_parallel.lower_motor_index |
 | Pitch DOF | DOF 8 | DOF 9 | 模型输出 |
 | Roll DOF | DOF 10 | DOF 11 | 模型输出 |
 

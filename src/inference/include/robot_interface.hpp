@@ -59,8 +59,6 @@ struct RobotInterfaceConfig {
     std::vector<double> mit_kp;
     std::vector<double> mit_kd;
 
-    /* 是否启用脚踝并联机构运动学；启用后 action 走 IK，observation/reset 起点走 FK */
-    bool ankle_parallel_kinematics_enabled = true;
     /* 并联脚踝显式映射：模型姿态 DOF 与两条物理驱动链电机分开配置 */
     AnkleParallelMap left_ankle_parallel;
     AnkleParallelMap right_ankle_parallel;
@@ -77,7 +75,7 @@ struct RobotInterfaceConfig {
     /* TorchScript 策略配置 */
     /* .pt 模型文件路径，由 torch.jit.script/trace 导出 */
     std::string policy_model_path;
-    /* 模型关节维度到电机逻辑索引的映射，长度必须为 12 且不可重复；并联脚踝驱动链由 AnkleParallelMap 指定 */
+    /* 普通单关节模型 DOF 到电机逻辑索引的映射；按非脚踝模型 DOF 顺序填写，当前为 8 个值 */
     std::vector<int> model_to_motor_index;
     /* 电机物理/控制器 ID 到模型关节方向的符号；1 表示方向一致，-1 表示方向相反；为空时全部按 1 */
     std::vector<int> motor_to_model_direction;
@@ -220,6 +218,7 @@ private:
     bool build_action_target_rad(const std::vector<double>& target_q_model_rad,
                                  std::vector<double>& target_rad) const;
     bool is_parallel_ankle_model_dof(int model_index) const;
+    int direct_model_mapping_slot(int model_index) const;
     bool build_policy_observation(double vx,
                                   double vy,
                                   double yaw_rate,
