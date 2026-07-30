@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cerrno>
-#include <cmath>
 #include <cstring>
 #include <fcntl.h>
 #include <sstream>
@@ -23,20 +22,22 @@ std::string errno_message(const std::string& prefix)
     return stream.str();
 }
 
-/* 将超过正向死区的原始轴值归一化到 0.0 到 1.0 */
+/* 将超过中心正向死区的原始轴值归一化到 0.0 到 1.0 */
 double positive_axis_scale(int raw_value)
 {
     const double usable_range =
-        static_cast<double>(kAxisMax - kDeadzone);
-    return static_cast<double>(raw_value - kDeadzone) / usable_range;
+        static_cast<double>(kAxisMax - kAxisCenter - kDeadzone);
+    return static_cast<double>(raw_value - kAxisCenter - kDeadzone) /
+           usable_range;
 }
 
-/* 将超过负向死区的原始轴值归一化到 -1.0 到 0.0 */
+/* 将超过中心负向死区的原始轴值归一化到 -1.0 到 0.0 */
 double negative_axis_scale(int raw_value)
 {
     const double usable_range =
-        static_cast<double>(std::abs(kAxisMin) - kDeadzone);
-    return static_cast<double>(raw_value + kDeadzone) / usable_range;
+        static_cast<double>(kAxisCenter - kAxisMin - kDeadzone);
+    return static_cast<double>(raw_value - kAxisCenter + kDeadzone) /
+           usable_range;
 }
 
 }  // namespace
@@ -138,9 +139,9 @@ bool XboxController::poll(VelocityCommand& command)
 double XboxController::axis_to_speed(int raw_value)
 {
     double normalized = 0.0;
-    if (raw_value > kDeadzone) {
+    if (raw_value > kAxisCenter + kDeadzone) {
         normalized = positive_axis_scale(raw_value);
-    } else if (raw_value < -kDeadzone) {
+    } else if (raw_value < kAxisCenter - kDeadzone) {
         normalized = negative_axis_scale(raw_value);
     }
 
