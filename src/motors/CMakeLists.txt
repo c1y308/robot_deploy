@@ -42,6 +42,10 @@ add_executable(raw_pos_test examples/raw_pos_test.cpp)
 add_executable(squat_stand examples/squat_stand.cpp)
 add_executable(MIT_test examples/MIT_test.cpp)
 add_executable(mit_pos_test examples/mit_pos_test.cpp)
+add_executable(motor_response_latency_test examples/motor_response_latency_test.cpp)
+target_include_directories(motor_response_latency_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../inference/include
+)
 
 # 链接库
 target_link_libraries(simple_test MYACTUA_EtherCat)
@@ -51,3 +55,4 @@ target_link_libraries(raw_pos_test MYACTUA_EtherCat)
 target_link_libraries(squat_stand MYACTUA_EtherCat)
 target_link_libraries(MIT_test MYACTUA_EtherCat)
 target_link_libraries(mit_pos_test MYACTUA_EtherCat)
+target_link_libraries(motor_response_latency_test MYACTUA_EtherCat)
