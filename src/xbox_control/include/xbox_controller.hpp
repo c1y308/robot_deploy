@@ -90,8 +90,8 @@ private:
     mutable std::mutex io_mutex_;
     mutable std::mutex state_mutex_;
 
-    std::atomic<bool> polling_active_{false};
-    std::atomic<bool> stop_polling_requested_{false};
+    std::atomic<bool> polling_active_{false};           // 后台线程现在是否处于运行状态
+    std::atomic<bool> stop_polling_requested_{false};   // 后台线程是否被请求退出(polling_loop中检测)
 
     std::thread polling_thread_;
 };

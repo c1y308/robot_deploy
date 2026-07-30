@@ -49,24 +49,6 @@ double negative_axis_scale(int raw_value)
 /* 构造控制器对象，实际设备打开由 open_device() 完成 */
 XboxController::XboxController() = default;
 
-/* 析构时确保设备文件描述符被释放 */
-XboxController::~XboxController()
-{
-    close_device();
-}
-
-/* 关闭已经打开的设备文件描述符 */
-void XboxController::close_device()
-{
-    stop_polling();
-
-    std::lock_guard<std::mutex> io_lock(io_mutex_);
-    if (fd_ >= 0) {
-        ::close(fd_);
-        fd_ = -1;
-    }
-}
-
 /* 打开手柄事件设备，并读取当前轴值初始化速度指令 */
 bool XboxController::open_device()
 {
@@ -91,20 +73,13 @@ bool XboxController::open_device()
 }
 
 
-/* 判断当前是否持有有效的设备文件描述符 */
-bool XboxController::is_open() const
-{
-    std::lock_guard<std::mutex> io_lock(io_mutex_);
-    return fd_ >= 0;
-}
-
 /* 启动后台线程，将设备事件读取从控制主循环中移出。 */
 bool XboxController::start_polling(std::chrono::milliseconds wait_timeout)
 {
     if (is_polling()) {
         return true;
     }
-
+    /* 如果后台线程已经存在，退出后台线程 */
     if (polling_thread_.joinable()) {
         polling_thread_.join();
     }
@@ -118,9 +93,12 @@ bool XboxController::start_polling(std::chrono::milliseconds wait_timeout)
         std::lock_guard<std::mutex> state_lock(state_mutex_);
         last_error_.clear();
     }
+
+    /* 关闭退出信号，启动后台线程活跃信号 */
     stop_polling_requested_.store(false);
     polling_active_.store(true);
 
+    /* 创建后台线程 */
     try {
         polling_thread_ = std::thread(&XboxController::polling_loop, this, wait_timeout);
     } catch (...) {
@@ -131,88 +109,6 @@ bool XboxController::start_polling(std::chrono::milliseconds wait_timeout)
     }
 
     return true;
-}
-
-/* 请求后台读取线程退出，并等待当前 poll 等待周期结束。 */
-void XboxController::stop_polling()
-{
-    stop_polling_requested_.store(true);
-    if (polling_thread_.joinable()) {
-        polling_thread_.join();
-    }
-    polling_active_.store(false);
-}
-
-/* 判断后台读取线程是否仍在运行。 */
-bool XboxController::is_polling() const
-{
-    return polling_active_.load();
-}
-
-/* 获取后台线程维护的最近一次速度指令。 */
-bool XboxController::latest_command(VelocityCommand& command) const
-{
-    std::lock_guard<std::mutex> state_lock(state_mutex_);
-    command = command_;
-    return last_error_.empty();
-}
-
-/* 获取最近一次计算出的速度指令。 */
-VelocityCommand XboxController::command() const
-{
-    VelocityCommand latest;
-    latest_command(latest);
-    return latest;
-}
-
-/* 获取最近一次设备操作失败的错误信息。 */
-std::string XboxController::last_error() const
-{
-    std::lock_guard<std::mutex> state_lock(state_mutex_);
-    return last_error_;
-}
-
-/* 非阻塞读取当前已经就绪的手柄事件。 */
-bool XboxController::read_available_events()
-{
-    std::lock_guard<std::mutex> io_lock(io_mutex_);
-    if (fd_ < 0) {
-        set_error("controller device is not open");
-        return false;
-    }
-
-    while (true) {
-        input_event event = {};
-        const ssize_t bytes = ::read(fd_, &event, sizeof(event));
-
-        if (bytes == static_cast<ssize_t>(sizeof(event))) {
-            if (event.type == EV_ABS) {
-                process_abs_event(event.code, event.value);
-            }
-            continue;
-        }
-
-        if (bytes < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                std::lock_guard<std::mutex> state_lock(state_mutex_);
-                last_error_.clear();
-                return true;
-            }
-            if (errno == EINTR) {
-                continue;
-            }
-            set_error(errno_message("read " + device_path_ + " failed"));
-            return false;
-        }
-
-        if (bytes == 0) {
-            set_error("controller device returned EOF");
-            return false;
-        }
-
-        set_error("short read from controller device");
-        return false;
-    }
 }
 
 /* 后台线程等待设备可读，再一次性消费当前积压的事件。 */
@@ -272,6 +168,119 @@ void XboxController::polling_loop(std::chrono::milliseconds wait_timeout)
 
     polling_active_.store(false);
 }
+
+/* 非阻塞读取当前已经就绪的手柄事件。 */
+bool XboxController::read_available_events()
+{
+    std::lock_guard<std::mutex> io_lock(io_mutex_);
+    if (fd_ < 0) {
+        set_error("controller device is not open");
+        return false;
+    }
+
+    while (true) {
+        input_event event = {};
+        const ssize_t bytes = ::read(fd_, &event, sizeof(event));
+
+        if (bytes == static_cast<ssize_t>(sizeof(event))) {
+            if (event.type == EV_ABS) {
+                process_abs_event(event.code, event.value);
+            }
+            continue;
+        }
+
+        if (bytes < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                std::lock_guard<std::mutex> state_lock(state_mutex_);
+                last_error_.clear();
+                return true;
+            }
+            if (errno == EINTR) {
+                continue;
+            }
+            set_error(errno_message("read " + device_path_ + " failed"));
+            return false;
+        }
+
+        if (bytes == 0) {
+            set_error("controller device returned EOF");
+            return false;
+        }
+
+        set_error("short read from controller device");
+        return false;
+    }
+}
+
+
+/* 析构时确保设备文件描述符被释放 */
+XboxController::~XboxController()
+{
+    close_device();
+}
+
+/* 关闭已经打开的设备文件描述符 */
+void XboxController::close_device()
+{
+    stop_polling();
+
+    std::lock_guard<std::mutex> io_lock(io_mutex_);
+    if (fd_ >= 0) {
+        ::close(fd_);
+        fd_ = -1;
+    }
+}
+
+
+/* 请求后台读取线程退出，并等待当前 poll 等待周期结束。 */
+void XboxController::stop_polling()
+{
+    stop_polling_requested_.store(true);
+    if (polling_thread_.joinable()) {
+        polling_thread_.join();
+    }
+    polling_active_.store(false);
+}
+
+
+/* 判断当前是否持有有效的设备文件描述符 */
+bool XboxController::is_open() const
+{
+    std::lock_guard<std::mutex> io_lock(io_mutex_);
+    return fd_ >= 0;
+}
+
+
+
+/* 判断后台读取线程是否仍在运行。 */
+bool XboxController::is_polling() const
+{
+    return polling_active_.load();
+}
+
+/* 获取后台线程维护的最近一次速度指令。 */
+bool XboxController::latest_command(VelocityCommand& command) const
+{
+    std::lock_guard<std::mutex> state_lock(state_mutex_);
+    command = command_;
+    return last_error_.empty();
+}
+
+/* 获取最近一次计算出的速度指令。 */
+VelocityCommand XboxController::command() const
+{
+    VelocityCommand latest;
+    latest_command(latest);
+    return latest;
+}
+
+/* 获取最近一次设备操作失败的错误信息。 */
+std::string XboxController::last_error() const
+{
+    std::lock_guard<std::mutex> state_lock(state_mutex_);
+    return last_error_;
+}
+
 
 /* 按死区和最大速度限制，将原始摇杆轴值转换为线速度 */
 double XboxController::axis_to_speed(int raw_value)
