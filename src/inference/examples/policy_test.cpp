@@ -16,11 +16,7 @@
 
 namespace {
 
-#if POLICY_V3
-constexpr const char* kPolicyModelFile = "policy_v3.pt";
-#else
 constexpr const char* kPolicyModelFile = "policy.pt";
-#endif
 
 constexpr const char* kEthercatIfname = "enp8s0";
 constexpr const char* kImuDevice = "/dev/ttyUSB0";
@@ -71,8 +67,16 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.left_ankle_parallel = {8, 10, 4, 5};
     cfg.right_ankle_parallel = {9, 11, 10, 11};
 
+    cfg.mit_kp.assign(12, 180);
+    cfg.mit_kd.assign(12, 5);
+
     cfg.print_motor_ids = {0, 1, 2, 3, 4, 5,
                            6, 7, 8, 9, 10, 11};
+
+    // 以下 12 维策略配置均按模型 DOF 序号填写
+    cfg.stand_pose_rad = {
+        0.0, 0.0, -0.0, -0.0, 0.0, 0.0, 0.05, 0.05, -0.0, -0.0, 0.0, 0.0
+    };
 
 
     // 按模型 DOF 顺序限制 raw_action * action_scale 后的动作偏移: [lower, upper]
@@ -80,35 +84,32 @@ inference::RobotInterfaceConfig make_robot_config()
         {-0.12, 0.12},
         {-0.12, 0.12},
 
-        {-0.40, 0.40},
-        {-0.40, 0.40},
+        {-0.30, 0.30},
+        {-0.30, 0.30},
 
         {-0.12, 0.12},
         {-0.12, 0.12},
 
-        {0.00, 0.85},
-        {0.00, 0.85},
+        {0.00, 0.45},
+        {0.00, 0.45},
 
-        {-0.18, 0.18},
-        {-0.18, 0.18},
+        {-0.25, 0.25},
+        {-0.25, 0.25},
 
         {-0.08, 0.08},
         {-0.08, 0.08},
     };
     cfg.action_scale = {
         0.08, 0.08,
-        0.30, 0.30,
+        0.40, 0.40,
         0.08, 0.08,
-        0.30, 0.30,
-        0.15, 0.15,
+        0.40, 0.40,
+        0.25, 0.25,
         0.08, 0.08
     };
     // joint_min/max 是相对 stand_pose_rad 的偏移限位。
     cfg.joint_min_rad.assign(12, -0.45);
     cfg.joint_max_rad.assign(12,  0.45);
-
-
-    cfg.policy_cycle_time_s = 0.02;
 
     //  按照 DOF 顺序配置电机方向，1 表示方向一致，-1 表示方向相反；为空时全部按 1
     cfg.motor_to_model_direction = {
@@ -116,32 +117,14 @@ inference::RobotInterfaceConfig make_robot_config()
         -1,  1, 1, -1, -1, -1
     };
 
-    // 以下 12 维策略配置均按模型 DOF 序号填写
-    cfg.stand_pose_rad = {
-     0.0,  0.0, -0.3, -0.3,
-     0.0,  0.0,  0.3,  0.3,
-    -0.2, -0.2,  0.0,  0.0
-    };
+    /******************************************************************* */
+    cfg.command_scale = {1.0, 1.0, 1.0};
+    cfg.body_ang_vel_scale = {0.2, 0.2, 0.2};
 
-
-    // cfg.stand_pose_rad = {
-    //     0.0,  0.0, -0.0, -0.0,
-    //     0.0,  0.0,  0.0,  0.0,
-    //     -0.0, -0.0,  0.0,  0.0
-    // };
 
     // 电机观测缩放系数
     cfg.dof_pos_scale.assign(12, 1.0);
     cfg.dof_vel_scale.assign(12, 0.05);
-
-
-    /******************************************************************* */
-    cfg.command_scale = {1.0, 1.0, 1.0};
-    cfg.body_ang_vel_scale = {0.2, 0.2, 0.2};
-    cfg.euler_scale = {1.0, 1.0, 1.0};
-
-    cfg.mit_kp.assign(12, 200);
-    cfg.mit_kd.assign(12, 10);
 
     return cfg;
 }
@@ -264,6 +247,13 @@ int main()
         return 0;
     }
 
+    std::cout << "[INFO] Starting Xbox polling thread...\n";
+    if (!controller.start_polling(std::chrono::milliseconds(20))) {
+        std::cerr << "[ERROR] " << controller.last_error() << "\n";
+        safe_shutdown(robot, true);
+        return 1;
+    }
+
     std::cout << "[INFO] Entering Xbox policy loop. Press Ctrl+C to stop.\n";
     using Clock = std::chrono::steady_clock;
     const auto period = std::chrono::duration_cast<Clock::duration>(
@@ -279,8 +269,9 @@ int main()
     while (!g_stop_requested.load()) {
         next_tick += period;
 
-        if (!controller.poll(command)) {
+        if (!controller.latest_command(command)) {
             std::cerr << "[ERROR] " << controller.last_error() << "\n";
+            controller.stop_polling();
             safe_shutdown(robot, true);
             return 1;
         }
@@ -290,6 +281,7 @@ int main()
         const auto step_start = Clock::now();
         if (!robot.policy_step()) {
             std::cerr << "[ERROR] policy_step() failed at step " << steps << ".\n";
+            controller.stop_polling();
             safe_shutdown(robot, false);
             return 1;
         }
@@ -303,12 +295,10 @@ int main()
 
         const auto now = Clock::now();
         if (now - last_report >= std::chrono::seconds(1)) {
-            // std::cout << std::fixed << std::setprecision(3)
-            //           << "[INFO] raw_abs_x=" << command.raw_abs_x
-            //           << " raw_abs_y=" << command.raw_abs_y
-            //           << " vx=" << command.vx
-            //           << " vy=" << command.vy
-            //           << " yaw_rate=" << command.yaw_rate;
+            std::cout << std::fixed << std::setprecision(3)
+                      << " vx=" << command.vx
+                      << " vy=" << command.vy
+                      << " yaw_rate=" << command.yaw_rate;
             if (kPrintPolicyTiming && steps > 0) {
                 std::cout << " avg_policy_step_ms="
                           << total_step_ms / static_cast<double>(steps)
@@ -326,6 +316,7 @@ int main()
 
     std::cout << "[INFO] Exiting policy loop. total_steps=" << steps << "\n";
 
+    controller.stop_polling();
     safe_shutdown(robot, true);
     return 0;
 }

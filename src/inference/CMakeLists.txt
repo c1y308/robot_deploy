@@ -4,12 +4,6 @@ project(robot_inference_hw_interface CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)
-option(POLICY_V3 "Build policy_test with policy_v3.pt input layout" OFF)
-if(POLICY_V3)
-    set(POLICY_V3_VALUE 1)
-else()
-    set(POLICY_V3_VALUE 0)
-endif()
 
 set(LOCAL_LIBTORCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libtorch)
 set(LOCAL_PYTORCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/python_torch/torch)
@@ -64,10 +58,10 @@ target_include_directories(imu_a100_core PUBLIC
 target_link_libraries(imu_a100_core PUBLIC m pthread)
 
 add_library(robot_interface STATIC
+    src/async_csv_logger.cpp
     src/robot_interface.cpp
     src/torch_policy_runner.cpp
 )
-target_compile_definitions(robot_interface PUBLIC POLICY_V3=${POLICY_V3_VALUE})
 target_include_directories(robot_interface PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
@@ -97,6 +91,7 @@ if(NOT TARGET xbox_control_core)
     target_include_directories(xbox_control_core PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/../xbox_control/include
     )
+    target_link_libraries(xbox_control_core PUBLIC pthread)
 endif()
 
 add_executable(imu_only_test

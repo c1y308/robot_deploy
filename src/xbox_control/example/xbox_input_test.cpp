@@ -55,14 +55,20 @@ int main()
     std::cout << "[INFO] Reading Xbox controller from "
               << controller.device_path() << ". Press Ctrl+C to stop.\n";
 
+    if (!controller.start_polling(std::chrono::milliseconds(20))) {
+        std::cerr << "[ERROR] " << controller.last_error() << "\n";
+        return 1;
+    }
+
     using Clock = std::chrono::steady_clock;
     auto last_print = Clock::now() - std::chrono::seconds(1);
     xbox_control::VelocityCommand last_printed;
 
     while (!g_stop_requested.load()) {
         xbox_control::VelocityCommand command;
-        if (!controller.poll(command)) {
+        if (!controller.latest_command(command)) {
             std::cerr << "[ERROR] " << controller.last_error() << "\n";
+            controller.stop_polling();
             return 1;
         }
 
@@ -77,6 +83,7 @@ int main()
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 
+    controller.stop_polling();
     std::cout << "[INFO] xbox_input_test stopped.\n";
     return 0;
 }

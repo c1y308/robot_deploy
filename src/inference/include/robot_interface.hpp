@@ -1,4 +1,5 @@
 #pragma once
+#include "async_csv_logger.hpp"
 #include "EthercatAdapterIGH.hpp"
 #include "imu_reader.hpp"
 #include "motor_control.hpp"
@@ -9,7 +10,6 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -83,8 +83,6 @@ struct RobotInterfaceConfig {
     std::vector<std::array<double, 2>> action_clip;
     /* 模型原始输出动作的缩放系数，长度必须为 12；按模型 DOF 序号使用 */
     std::vector<double> action_scale;
-    /* 步态相位周期，单位 s；phase = fmod(elapsed / policy_cycle_time_s, 1) */
-    double policy_cycle_time_s = 0.02;
     /* DOF Pos 缩放，长度必须为 12；按模型 DOF 序号使用 */
     std::vector<double> dof_pos_scale;
     /* DOF Vel 缩放，长度必须为 12；按模型 DOF 序号使用 */
@@ -101,12 +99,12 @@ struct RobotInterfaceConfig {
         0.2,
         0.2
     };
-    /* 机身欧拉角缩放，对应 AHRS roll、pitch、heading */
-    std::array<double, 3> euler_scale = {
-        1,
-        1,
-        1
-    };
+
+    /* CSV logs are disabled by default to keep the control loop free of file I/O. */
+    bool enable_policy_output_log = false;
+    bool enable_motor_pos_error_log = false;
+    int async_log_flush_interval_ms = 1000;
+    std::size_t async_log_queue_depth = 4096;
 };
 
 
@@ -160,13 +158,8 @@ public:
 
 private:
     static constexpr int kPolicyDof = 12;  // 模型输出的动作维度，必须与电机数量一致
-#if POLICY_V3
-    static constexpr int kPolicySingleObservationSize = 47;  // 单帧模型观测维度
-    static constexpr int kPolicyFrameStack = 15;             // 模型输入使用 15 帧观测
-#else
     static constexpr int kPolicySingleObservationSize = 45;  // 单周期各 observation term 总维度
     static constexpr int kPolicyFrameStack = 5;              // policy.pt 每个 term 使用 5 帧历史
-#endif
     static constexpr int kPolicyObservationSize = kPolicySingleObservationSize * kPolicyFrameStack;
 
     /* 机器人接口配置 */
@@ -206,10 +199,10 @@ private:
     std::array<float, kPolicyObservationSize> observation_history_{};
     bool observation_history_ready_ = false;
     std::chrono::steady_clock::time_point policy_start_time_{};
-    std::ofstream policy_output_log_;
+    AsyncCsvLogger policy_output_logger_;
     std::uint64_t policy_output_frame_index_ = 0;
     bool policy_output_log_failed_ = false;
-    std::ofstream motor_pos_error_log_;
+    AsyncCsvLogger motor_pos_error_logger_;
     std::uint64_t motor_pos_error_frame_index_ = 0;
     bool motor_pos_error_log_failed_ = false;
     std::chrono::steady_clock::time_point motor_pos_error_log_start_time_{};
@@ -237,11 +230,13 @@ private:
                                     std::array<float, kPolicyDof>& joint_vel_rel);
     void reset_ankle_fk_state();
     void reset_policy_output_log();
+    bool start_policy_output_log();
     bool ensure_policy_output_log();
     void log_policy_output(const std::array<float, kPolicyDof>& raw_action,
                            const std::vector<double>& target_q_model_rad,
                            const std::vector<double>& target_rad);
     void reset_motor_pos_error_log();
+    bool start_motor_pos_error_log();
     bool ensure_motor_pos_error_log();
     void log_motor_pos_error(const std::vector<double>& target_rad);
     bool handle_policy_step_failure(const std::string& message);

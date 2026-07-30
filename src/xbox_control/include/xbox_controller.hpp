@@ -1,6 +1,10 @@
 #pragma once
 
+#include <atomic>
+#include <chrono>
+#include <mutex>
 #include <string>
+#include <thread>
 
 namespace xbox_control {
 
@@ -9,7 +13,7 @@ constexpr int kAxisMin = 0;
 constexpr int kAxisCenter = 128;
 constexpr int kAxisMax = 255;
 constexpr int kDeadzone = 0;
-constexpr double kMaxSpeedMps = 0.3;
+constexpr double kMaxSpeedMps = 0.5;
 constexpr double kYawRate = 0.0;
 
 struct VelocityCommand {
@@ -39,14 +43,20 @@ public:
     /* 判断手柄输入设备是否已经打开 */
     bool is_open() const;
 
-    /* 轮询手柄事件，更新并输出当前速度指令 */
-    bool poll(VelocityCommand& command);
+    /* 启动后台线程读取手柄事件 */
+    bool start_polling(std::chrono::milliseconds wait_timeout = std::chrono::milliseconds(20));
+    /* 停止后台读取线程 */
+    void stop_polling();
+    /* 判断后台读取线程是否仍在运行 */
+    bool is_polling() const;
+    /* 获取后台线程维护的最近一次速度指令 */
+    bool latest_command(VelocityCommand& command) const;
     /* 获取最近一次计算出的速度指令 */
-    const VelocityCommand& command() const { return command_; }
+    VelocityCommand command() const;
     /* 获取当前使用的手柄设备路径 */
     const std::string& device_path() const { return device_path_; }
     /* 获取最近一次设备操作失败的错误信息 */
-    const std::string& last_error() const { return last_error_; }
+    std::string last_error() const;
 
     /* 将原始摇杆轴值映射为速度值 */
     static double axis_to_speed(int raw_value);
@@ -56,16 +66,34 @@ public:
 private:
     /* 读取设备当前轴值，作为初始控制状态 */
     void initialize_axis_values();
+    /* 读取当前已经就绪的设备事件 */
+    bool read_available_events();
+    /* 后台线程循环，等待并消费手柄事件 */
+    void polling_loop(std::chrono::milliseconds wait_timeout);
+    /* 处理单个绝对轴事件 */
+    void process_abs_event(int code, int value);
+    /* 写入最近一次错误 */
+    void set_error(std::string error);
     /* 根据缓存的轴值刷新速度控制指令 */
-    void refresh_command();
+    void refresh_command_locked();
 
 
     /* 文件描述符 */
     int fd_ = -1;
     /* 设备路径 */
     std::string device_path_ = kXboxDevicePath;
+    /* 错误信息 */
     std::string last_error_;
+
     VelocityCommand command_;
+
+    mutable std::mutex io_mutex_;
+    mutable std::mutex state_mutex_;
+
+    std::atomic<bool> polling_active_{false};
+    std::atomic<bool> stop_polling_requested_{false};
+
+    std::thread polling_thread_;
 };
 
 }  // namespace xbox_control

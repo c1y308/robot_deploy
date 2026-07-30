@@ -6,7 +6,6 @@
 #include <chrono>
 #include <cstddef>
 #include <cmath>
-#include <ctime>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -18,8 +17,6 @@
 
 namespace inference {
 namespace {
-
-constexpr double kPi = 3.14159265358979323846;
 
 /* policy_step 推理输出和 apply_action 映射后的电机目标写到这里。 */
 const std::filesystem::path& policy_output_log_dir()
@@ -37,23 +34,6 @@ const std::filesystem::path& motor_pos_error_log_dir()
         std::filesystem::path(__FILE__).parent_path().parent_path() /
         "log" / "motor_pos_error";
     return path;
-}
-
-/* 生成适合文件名使用的本地时间戳。 */
-std::string local_timestamp_for_filename()
-{
-    const auto now = std::chrono::system_clock::now();
-    const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
-    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now.time_since_epoch()).count() % 1000;
-
-    std::tm local_time = {};
-    localtime_r(&now_time, &local_time);
-
-    std::ostringstream stream;
-    stream << std::put_time(&local_time, "%Y%m%d_%H%M%S")
-           << '_' << std::setw(3) << std::setfill('0') << ms;
-    return stream.str();
 }
 
 void append_indexed_columns(std::ostream& stream,
@@ -324,6 +304,7 @@ bool RobotInterface::initial_and_start_motors() {
     motors_initialized_.store(true);
     motion_enabled_.store(false);
     reset_motor_pos_error_log();
+    start_motor_pos_error_log();
 
     return true;
 }
@@ -790,6 +771,8 @@ bool RobotInterface::load_policy() {
     }
 
     policy_runner_ = std::move(runner);
+    start_policy_output_log();
+    start_motor_pos_error_log();
     return true;
 }
 
@@ -807,11 +790,6 @@ bool RobotInterface::validate_policy_config() const {
     if (config_.policy_model_path.empty()) {
         return fail("policy_model_path is empty");
     }
-#if POLICY_V3
-    if (!std::isfinite(config_.policy_cycle_time_s) || config_.policy_cycle_time_s <= 0.0) {
-        return fail("policy_cycle_time_s must be finite and > 0");
-    }
-#endif
     if (config_.action_clip.size() != static_cast<std::size_t>(kPolicyDof)) {
         return fail("action_clip must have 12 ranges");
     }
@@ -850,12 +828,6 @@ bool RobotInterface::validate_policy_config() const {
     if (!valid_motor_direction_values(config_.motor_to_model_direction)) {
         return fail("motor_to_model_direction values must be 1 or -1");
     }
-#if POLICY_V3
-    if (!finite_array3(config_.euler_scale)) {
-        return fail("command/body_ang_vel/euler scales must be finite");
-    }
-#endif
-
     if (!ankle_parallel_map_indices_in_range(config_.left_ankle_parallel, kPolicyDof) ||
         !ankle_parallel_map_indices_in_range(config_.right_ankle_parallel, kPolicyDof)) {
         return fail("ankle parallel maps contain an out-of-range index");
@@ -985,6 +957,8 @@ void RobotInterface::reset_policy_state() {
     right_ankle_last_lower_motor_ = 0.0;
 
     reset_ankle_fk_state();
+    start_policy_output_log();
+    start_motor_pos_error_log();
 }
 
 void RobotInterface::reset_ankle_fk_state() {
@@ -1007,57 +981,60 @@ void RobotInterface::reset_ankle_fk_state() {
     ankle_fk_last_time_ = {};
 }
 
-/* 关闭当前策略输出日志，下次成功调用时重新创建新文件。 */
+/* Stop the current async policy output log and reset its frame counter. */
 void RobotInterface::reset_policy_output_log() {
-    if (policy_output_log_.is_open()) {
-        policy_output_log_.close();
-    }
+    policy_output_logger_.stop();
     policy_output_frame_index_ = 0;
     policy_output_log_failed_ = false;
 }
 
-/* 确保策略输出日志文件已经打开并写入表头。 */
-bool RobotInterface::ensure_policy_output_log() {
-    if (policy_output_log_failed_) {
+bool RobotInterface::start_policy_output_log() {
+    if (!config_.enable_policy_output_log || policy_output_log_failed_) {
         return false;
     }
-    if (policy_output_log_.is_open()) {
+    if (policy_output_logger_.is_running()) {
         return true;
     }
 
-    try {
-        std::filesystem::create_directories(policy_output_log_dir());
-    } catch (const std::filesystem::filesystem_error& error) {
-        std::cerr << "[RobotInterface] failed to create policy output log dir: "
-                  << error.what() << "\n";
-        policy_output_log_failed_ = true;
-        return false;
-    }
+    std::ostringstream header;
+    write_policy_output_csv_header(header);
 
-    const std::filesystem::path log_path =
-        policy_output_log_dir() /
-        ("policy_output_" + local_timestamp_for_filename() + ".csv");
-    policy_output_log_.open(log_path, std::ios::out);
-    if (!policy_output_log_) {
+    AsyncCsvLogger::Config logger_config;
+    logger_config.directory = policy_output_log_dir();
+    logger_config.file_prefix = "policy_output";
+    logger_config.header = header.str();
+    logger_config.flush_interval = std::chrono::milliseconds(
+        std::max(1, config_.async_log_flush_interval_ms));
+    logger_config.max_queue_depth = config_.async_log_queue_depth;
+
+    if (!policy_output_logger_.start(std::move(logger_config))) {
         std::cerr << "[RobotInterface] failed to open policy output log: "
-                  << log_path << "\n";
+                  << policy_output_logger_.last_error() << "\n";
         policy_output_log_failed_ = true;
         return false;
     }
 
-    write_policy_output_csv_header(policy_output_log_);
-    policy_output_log_ << std::setprecision(9);
     std::cout << "[RobotInterface] policy output log: "
-              << log_path << "\n";
+              << policy_output_logger_.log_path() << "\n";
     return true;
 }
 
-/* 记录 policy_step 的 raw_action、target_q_model_rad 和 apply_action 的 target_rad。 */
+bool RobotInterface::ensure_policy_output_log() {
+    if (!config_.enable_policy_output_log || policy_output_log_failed_) {
+        return false;
+    }
+    if (policy_output_logger_.is_running()) {
+        return true;
+    }
+    return start_policy_output_log();
+}
+
+/* Queue policy raw_action, model target, and motor target for async CSV output. */
 void RobotInterface::log_policy_output(
     const std::array<float, kPolicyDof>& raw_action,
     const std::vector<double>& target_q_model_rad,
     const std::vector<double>& target_rad) {
-    if (!ensure_policy_output_log()) {
+    if (!config_.enable_policy_output_log || !ensure_policy_output_log()) {
         return;
     }
 
@@ -1066,23 +1043,23 @@ void RobotInterface::log_policy_output(
         std::chrono::duration_cast<std::chrono::microseconds>(
             now - policy_start_time_).count();
 
-    policy_output_log_ << policy_output_frame_index_ << ','
-                       << elapsed_us;
+    std::ostringstream row;
+    row << std::setprecision(9)
+        << policy_output_frame_index_ << ','
+        << elapsed_us;
     for (float value : raw_action) {
-        policy_output_log_ << ',' << value;
+        row << ',' << value;
     }
     for (double value : target_q_model_rad) {
-        policy_output_log_ << ',' << value;
+        row << ',' << value;
     }
     for (double value : target_rad) {
-        policy_output_log_ << ',' << value;
+        row << ',' << value;
     }
-    policy_output_log_ << '\n';
-    policy_output_log_.flush();
 
-    if (!policy_output_log_) {
-        std::cerr << "[RobotInterface] failed to write policy output log\n";
-        policy_output_log_.close();
+    if (!policy_output_logger_.enqueue(row.str())) {
+        std::cerr << "[RobotInterface] failed to queue policy output log: "
+                  << policy_output_logger_.last_error() << "\n";
         policy_output_log_failed_ = true;
         return;
     }
@@ -1090,56 +1067,61 @@ void RobotInterface::log_policy_output(
     ++policy_output_frame_index_;
 }
 
-/* Close the current motor position error log; the next action opens a new file. */
+/* Stop the current async motor position error log and reset its frame counter. */
 void RobotInterface::reset_motor_pos_error_log() {
-    if (motor_pos_error_log_.is_open()) {
-        motor_pos_error_log_.close();
-    }
+    motor_pos_error_logger_.stop();
     motor_pos_error_frame_index_ = 0;
     motor_pos_error_log_failed_ = false;
     motor_pos_error_log_start_time_ = std::chrono::steady_clock::now();
 }
 
-/* Ensure the TAR_ERR_DEG CSV exists and has a header. */
-bool RobotInterface::ensure_motor_pos_error_log() {
-    if (motor_pos_error_log_failed_) {
+bool RobotInterface::start_motor_pos_error_log() {
+    if (!config_.enable_motor_pos_error_log || motor_pos_error_log_failed_) {
         return false;
     }
-    if (motor_pos_error_log_.is_open()) {
+    if (motor_pos_error_logger_.is_running()) {
         return true;
     }
 
-    try {
-        std::filesystem::create_directories(motor_pos_error_log_dir());
-    } catch (const std::filesystem::filesystem_error& error) {
-        std::cerr << "[RobotInterface] failed to create motor position error log dir: "
-                  << error.what() << "\n";
-        motor_pos_error_log_failed_ = true;
-        return false;
-    }
+    std::ostringstream header;
+    write_motor_pos_error_csv_header(header, config_.num_motors);
 
-    const std::filesystem::path log_path =
-        motor_pos_error_log_dir() /
-        ("motor_pos_error_" + local_timestamp_for_filename() + ".csv");
-    motor_pos_error_log_.open(log_path, std::ios::out);
-    if (!motor_pos_error_log_) {
-        std::cerr << "[RobotInterface] failed to open motor position error log: "
-                  << log_path << "\n";
-        motor_pos_error_log_failed_ = true;
-        return false;
-    }
+    AsyncCsvLogger::Config logger_config;
+    logger_config.directory = motor_pos_error_log_dir();
+    logger_config.file_prefix = "motor_pos_error";
+    logger_config.header = header.str();
+    logger_config.flush_interval = std::chrono::milliseconds(
+        std::max(1, config_.async_log_flush_interval_ms));
+    logger_config.max_queue_depth = config_.async_log_queue_depth;
 
     motor_pos_error_log_start_time_ = std::chrono::steady_clock::now();
-    write_motor_pos_error_csv_header(motor_pos_error_log_, config_.num_motors);
-    motor_pos_error_log_ << std::setprecision(9);
+    if (!motor_pos_error_logger_.start(std::move(logger_config))) {
+        std::cerr << "[RobotInterface] failed to open motor position error log: "
+                  << motor_pos_error_logger_.last_error() << "\n";
+        motor_pos_error_log_failed_ = true;
+        return false;
+    }
+
     std::cout << "[RobotInterface] motor position error log: "
-              << log_path << "\n";
+              << motor_pos_error_logger_.log_path() << "\n";
     return true;
 }
 
-/* Record target position, feedback position, and TAR_ERR_DEG in motor order. */
+bool RobotInterface::ensure_motor_pos_error_log() {
+    if (!config_.enable_motor_pos_error_log || motor_pos_error_log_failed_) {
+        return false;
+    }
+    if (motor_pos_error_logger_.is_running()) {
+        return true;
+    }
+    return start_motor_pos_error_log();
+}
+
+/* Queue target position, feedback position, and TAR_ERR_DEG for async CSV output. */
 void RobotInterface::log_motor_pos_error(const std::vector<double>& target_rad) {
-    if (!controller_ || static_cast<int>(target_rad.size()) != config_.num_motors) {
+    if (!config_.enable_motor_pos_error_log ||
+        !controller_ ||
+        static_cast<int>(target_rad.size()) != config_.num_motors) {
         return;
     }
     if (!ensure_motor_pos_error_log()) {
@@ -1150,7 +1132,7 @@ void RobotInterface::log_motor_pos_error(const std::vector<double>& target_rad) 
     if (static_cast<int>(status.size()) != config_.num_motors) {
         std::cerr << "[RobotInterface] failed to write motor position error log: "
                   << "status size mismatch\n";
-        motor_pos_error_log_.close();
+        motor_pos_error_logger_.stop();
         motor_pos_error_log_failed_ = true;
         return;
     }
@@ -1170,23 +1152,23 @@ void RobotInterface::log_motor_pos_error(const std::vector<double>& target_rad) 
         std::chrono::duration_cast<std::chrono::microseconds>(
             now - motor_pos_error_log_start_time_).count();
 
-    motor_pos_error_log_ << motor_pos_error_frame_index_ << ','
-                         << elapsed_us;
+    std::ostringstream row;
+    row << std::setprecision(9)
+        << motor_pos_error_frame_index_ << ','
+        << elapsed_us;
     for (double value : target_pos_deg) {
-        motor_pos_error_log_ << ',' << value;
+        row << ',' << value;
     }
     for (double value : rx_pos_deg) {
-        motor_pos_error_log_ << ',' << value;
+        row << ',' << value;
     }
     for (double value : tar_err_deg) {
-        motor_pos_error_log_ << ',' << value;
+        row << ',' << value;
     }
-    motor_pos_error_log_ << '\n';
-    motor_pos_error_log_.flush();
 
-    if (!motor_pos_error_log_) {
-        std::cerr << "[RobotInterface] failed to write motor position error log\n";
-        motor_pos_error_log_.close();
+    if (!motor_pos_error_logger_.enqueue(row.str())) {
+        std::cerr << "[RobotInterface] failed to queue motor position error log: "
+                  << motor_pos_error_logger_.last_error() << "\n";
         motor_pos_error_log_failed_ = true;
         return;
     }
@@ -1224,11 +1206,7 @@ bool RobotInterface::policy_step() {
         return handle_policy_step_failure(policy_runner_->last_error());
     }
 
-#if POLICY_V3
-    // last_action_raw_ 保存模型原始输出，下一周期作为 v3 单帧观测的 last_action 输入。
-#else
     // last_action_raw_ 保存模型原始输出，下一周期进入 policy.pt 观测的 165-224 维。
-#endif
     last_action_raw_ = raw_action;
 
     std::vector<double> target_q_model_rad(config_.num_motors, 0.0);
@@ -1245,12 +1223,13 @@ bool RobotInterface::policy_step() {
             config_.stand_pose_rad[model_index] + clipped_action_offset;
     }
 
-    std::vector<double> target_rad;
-    if (!build_action_target_rad(target_q_model_rad, target_rad)) {
-        return handle_policy_step_failure("failed to build action target rad");
+    if (config_.enable_policy_output_log) {
+        std::vector<double> target_rad;
+        if (!build_action_target_rad(target_q_model_rad, target_rad)) {
+            return handle_policy_step_failure("failed to build action target rad");
+        }
+        log_policy_output(raw_action, target_q_model_rad, target_rad);
     }
-
-    log_policy_output(raw_action, target_q_model_rad, target_rad);
 
     if (!apply_action(target_q_model_rad)) {
         return handle_policy_step_failure("failed to apply policy target action");
@@ -1419,81 +1398,17 @@ bool RobotInterface::build_policy_observation(
     }
 
     std::array<double, 3> body_ang_vel = {};
-    std::array<double, 3> euler = {};
     std::array<double, 3> projected_gravity_double = {};
     bool projected_gravity_valid = false;
     {
         std::lock_guard<std::mutex> lock(imu_mutex_);
         body_ang_vel = body_ang_vel_;
-        euler = euler_;
         projected_gravity_double = projected_gravity_;
         projected_gravity_valid = projected_gravity_valid_;
     }
 
     const auto now = std::chrono::steady_clock::now();
 
-#if POLICY_V3
-    if (!finite_vector(q_rad) || !finite_vector(dq_rad_s) ||
-        !finite_array3(body_ang_vel) || !finite_array3(euler)) {
-        std::cerr << "[RobotInterface] policy observation rejected: sensor value is not finite\n";
-        return false;
-    }
-
-    const double elapsed_s =
-        std::chrono::duration<double>(now - policy_start_time_).count();
-    double phase = std::fmod(elapsed_s * 0.1 / config_.policy_cycle_time_s, 1.0);
-    if (phase < 0.0) {
-        phase += 1.0;
-    }
-    // 单帧观测顺序必须和训练完全一致：phase、command、q、dq、last_action、IMU。
-    std::array<float, kPolicySingleObservationSize> current_observation = {};
-    current_observation[0] = static_cast<float>(std::sin(2.0 * kPi * phase));
-    current_observation[1] = static_cast<float>(std::cos(2.0 * kPi * phase));
-
-    current_observation[2] = static_cast<float>(vx * config_.command_scale[0]);
-    current_observation[3] = static_cast<float>(vy * config_.command_scale[1]);
-    current_observation[4] = static_cast<float>(yaw_rate * config_.command_scale[2]);
-
-    std::array<float, kPolicyDof> joint_pos_rel = {};
-    std::array<float, kPolicyDof> joint_vel_rel = {};
-    build_joint_observation_terms(q_rad, dq_rad_s, now, joint_pos_rel, joint_vel_rel);
-
-    for (int model_index = 0; model_index < kPolicyDof; ++model_index) {
-        current_observation[5 + model_index] = joint_pos_rel[model_index];
-        current_observation[17 + model_index] = joint_vel_rel[model_index];
-        current_observation[29 + model_index] = last_action_raw_[model_index];
-    }
-
-    for (int i = 0; i < 3; ++i) {
-        current_observation[41 + i] =
-            static_cast<float>(body_ang_vel[i] * config_.body_ang_vel_scale[i]);
-        current_observation[44 + i] =
-            static_cast<float>(euler[i] * config_.euler_scale[i]);
-    }
-
-    /* 填充观测历史，首次填充用当前观测值来填满 */
-    if (!observation_history_ready_) {
-        for (int frame = 0; frame < kPolicyFrameStack; ++frame) {
-            std::copy(current_observation.begin(),
-                       current_observation.end(),
-                     observation_history_.begin() + frame * kPolicySingleObservationSize);
-        }
-        observation_history_ready_ = true;
-    } 
-    /* 之后把当前观测帧添加到末尾 */
-    else {
-        std::copy(observation_history_.begin() + kPolicySingleObservationSize,
-                   observation_history_.end(),
-                 observation_history_.begin());
-        std::copy(current_observation.begin(),
-                   current_observation.end(),
-                 observation_history_.end() - kPolicySingleObservationSize);
-    }
-
-    observation = observation_history_;
-    return true;
-
-#else
     if (!finite_vector(q_rad) || !finite_vector(dq_rad_s) ||
         !finite_array3(body_ang_vel) || !finite_array3(projected_gravity_double)) {
         std::cerr << "[RobotInterface] policy observation rejected: sensor value is not finite\n";
@@ -1574,8 +1489,6 @@ bool RobotInterface::build_policy_observation(
 
     observation = observation_history_;
     return true;
-
-#endif
 }
 
 /* 处理策略执行失败：打印错误并停止全部电机。 */

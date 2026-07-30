@@ -11,6 +11,7 @@ add_library(xbox_control_core STATIC
 target_include_directories(xbox_control_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+target_link_libraries(xbox_control_core PUBLIC pthread)
 
 add_executable(xbox_input_test
     example/xbox_input_test.cpp
