@@ -67,15 +67,20 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.left_ankle_parallel = {8, 10, 4, 5};
     cfg.right_ankle_parallel = {9, 11, 10, 11};
 
-    cfg.mit_kp.assign(12, 180);
-    cfg.mit_kd.assign(12, 5);
+    cfg.mit_kp = { 180.0, 180.0, 180.0, 180.0,
+                   187.0, 187.0, 180.0, 180.0,
+                   180.0, 180.0, 187.0, 187.0};
+    
+    cfg.mit_kd = {  10.0, 10.0, 10.0, 10.0,
+                    9.07, 9.07, 10.0, 10.0,
+                    10.0, 10.0, 9.07, 9.07};
 
     cfg.print_motor_ids = {0, 1, 2, 3, 4, 5,
                            6, 7, 8, 9, 10, 11};
 
     // 以下 12 维策略配置均按模型 DOF 序号填写
     cfg.stand_pose_rad = {
-        0.0, 0.0, -0.0, -0.0, 0.0, 0.0, 0.05, 0.05, -0.0, -0.0, 0.0, 0.0
+        0.0, 0.0, -0.2, -0.2, 0.0, 0.0, 0.2, 0.2, -0.05, -0.05, 0.0, 0.0
     };
 
 
@@ -84,32 +89,32 @@ inference::RobotInterfaceConfig make_robot_config()
         {-0.12, 0.12},
         {-0.12, 0.12},
 
-        {-0.30, 0.30},
-        {-0.30, 0.30},
+        {-0.35, 0.35},
+        {-0.35, 0.35},
 
         {-0.12, 0.12},
         {-0.12, 0.12},
 
-        {0.00, 0.45},
-        {0.00, 0.45},
+        {0.00, 0.5},
+        {0.00, 0.5},
 
-        {-0.25, 0.25},
-        {-0.25, 0.25},
+        {-0.12, 0.12},
+        {-0.12, 0.12},
 
         {-0.08, 0.08},
         {-0.08, 0.08},
     };
     cfg.action_scale = {
         0.08, 0.08,
-        0.40, 0.40,
+        0.30, 0.30,
         0.08, 0.08,
-        0.40, 0.40,
-        0.25, 0.25,
-        0.08, 0.08
+        0.32, 0.32,
+        0.16, 0.16,
+        0.07, 0.07
     };
     // joint_min/max 是相对 stand_pose_rad 的偏移限位。
-    cfg.joint_min_rad.assign(12, -0.45);
-    cfg.joint_max_rad.assign(12,  0.45);
+    cfg.joint_min_rad.assign(12, -0.7);
+    cfg.joint_max_rad.assign(12,  0.7);
 
     //  按照 DOF 顺序配置电机方向，1 表示方向一致，-1 表示方向相反；为空时全部按 1
     cfg.motor_to_model_direction = {
@@ -120,6 +125,8 @@ inference::RobotInterfaceConfig make_robot_config()
     /******************************************************************* */
     cfg.command_scale = {1.0, 1.0, 1.0};
     cfg.body_ang_vel_scale = {0.2, 0.2, 0.2};
+    cfg.policy_step_dt = kPolicyPeriodSec;
+    cfg.gait_phase_period = 0.74;
 
 
     // 电机观测缩放系数
@@ -275,8 +282,8 @@ int main()
             safe_shutdown(robot, true);
             return 1;
         }
-        // robot.set_target_velocity(0, 0, 0);
-        robot.set_target_velocity(command.vx, command.vy, command.yaw_rate);
+        robot.set_target_velocity(0, 0, 0);
+        // robot.set_target_velocity(command.vx, command.vy, command.yaw_rate);
 
         const auto step_start = Clock::now();
         if (!robot.policy_step()) {

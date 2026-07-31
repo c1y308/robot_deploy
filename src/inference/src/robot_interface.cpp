@@ -5,6 +5,7 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cmath>
 #include <filesystem>
 #include <iomanip>
@@ -117,6 +118,19 @@ bool ankle_parallel_map_indices_in_range(
            index_in_range(ankle_map.model_roll_dof, count) &&
            index_in_range(ankle_map.upper_motor_index, count) &&
            index_in_range(ankle_map.lower_motor_index, count);
+}
+
+std::array<float, 2> gait_phase_observation(std::uint64_t episode_length,
+                                            double step_dt,
+                                            double period)
+{
+    constexpr double kTwoPi = 6.28318530717958647692;
+    const double global_phase =
+        std::fmod(static_cast<double>(episode_length) * step_dt, period) / period;
+    return {
+        static_cast<float>(std::sin(global_phase * kTwoPi)),
+        static_cast<float>(std::cos(global_phase * kTwoPi))
+    };
 }
 
 
@@ -755,6 +769,7 @@ bool RobotInterface::load_policy() {
     last_action_raw_.fill(0.0F);
     observation_history_.fill(0.0F);
     observation_history_ready_ = false;
+    policy_episode_length_ = 0;
     policy_start_time_ = std::chrono::steady_clock::now();
     reset_motor_pos_error_log();
 
@@ -824,6 +839,12 @@ bool RobotInterface::validate_policy_config() const {
     if (!finite_array3(config_.command_scale) ||
         !finite_array3(config_.body_ang_vel_scale)) {
         return fail("command/body_ang_vel scales must be finite");
+    }
+    if (!std::isfinite(config_.policy_step_dt) ||
+        !std::isfinite(config_.gait_phase_period) ||
+        config_.policy_step_dt <= 0.0 ||
+        config_.gait_phase_period <= 0.0) {
+        return fail("policy_step_dt and gait_phase_period must be finite positive values");
     }
     if (!valid_motor_direction_values(config_.motor_to_model_direction)) {
         return fail("motor_to_model_direction values must be 1 or -1");
@@ -920,6 +941,7 @@ void RobotInterface::unload_policy() {
     last_action_raw_.fill(0.0F);
     observation_history_.fill(0.0F);
     observation_history_ready_ = false;
+    policy_episode_length_ = 0;
     reset_policy_output_log();
     reset_motor_pos_error_log();
 
@@ -942,6 +964,7 @@ void RobotInterface::reset_policy_state() {
     last_action_raw_.fill(0.0F);
     observation_history_.fill(0.0F);
     observation_history_ready_ = false;
+    policy_episode_length_ = 0;
     policy_start_time_ = std::chrono::steady_clock::now();
     reset_policy_output_log();
     reset_motor_pos_error_log();
@@ -1206,7 +1229,7 @@ bool RobotInterface::policy_step() {
         return handle_policy_step_failure(policy_runner_->last_error());
     }
 
-    // last_action_raw_ 保存模型原始输出，下一周期进入 policy.pt 观测的 165-224 维。
+    // last_action_raw_ 保存模型原始输出，下一周期进入 policy.pt 观测的 175-234 维。
     last_action_raw_ = raw_action;
 
     std::vector<double> target_q_model_rad(config_.num_motors, 0.0);
@@ -1235,6 +1258,7 @@ bool RobotInterface::policy_step() {
         return handle_policy_step_failure("failed to apply policy target action");
     }
 
+    ++policy_episode_length_;
     return true;
 }
 
@@ -1426,6 +1450,10 @@ bool RobotInterface::build_policy_observation(
         static_cast<float>(vy * config_.command_scale[1]),
         static_cast<float>(yaw_rate * config_.command_scale[2])
     };
+    const std::array<float, 2> gait_phase =
+        gait_phase_observation(policy_episode_length_,
+                               config_.policy_step_dt,
+                               config_.gait_phase_period);
     std::array<float, kPolicyDof> joint_pos_rel = {};
     std::array<float, kPolicyDof> joint_vel_rel = {};
 
@@ -1437,26 +1465,13 @@ bool RobotInterface::build_policy_observation(
 
     build_joint_observation_terms(q_rad, dq_rad_s, now, joint_pos_rel, joint_vel_rel);
 
-    std::array<float, kPolicySingleObservationSize> current_observation = {};
-    std::copy(base_ang_vel.begin(), base_ang_vel.end(),
-              current_observation.begin());
-    std::copy(projected_gravity.begin(), projected_gravity.end(),
-              current_observation.begin() + 3);
-    std::copy(velocity_commands.begin(), velocity_commands.end(),
-              current_observation.begin() + 6);
-    std::copy(joint_pos_rel.begin(), joint_pos_rel.end(),
-              current_observation.begin() + 9);
-    std::copy(joint_vel_rel.begin(), joint_vel_rel.end(),
-              current_observation.begin() + 21);
-    std::copy(last_action_raw_.begin(), last_action_raw_.end(),
-              current_observation.begin() + 33);
-
     constexpr std::size_t kBaseAngVelOffset = 0;
     constexpr std::size_t kProjectedGravityOffset = 15;
     constexpr std::size_t kVelocityCommandsOffset = 30;
-    constexpr std::size_t kJointPosRelOffset = 45;
-    constexpr std::size_t kJointVelRelOffset = 105;
-    constexpr std::size_t kLastActionOffset = 165;
+    constexpr std::size_t kGaitPhaseOffset = 45;
+    constexpr std::size_t kJointPosRelOffset = 55;
+    constexpr std::size_t kJointVelRelOffset = 115;
+    constexpr std::size_t kLastActionOffset = 175;
 
     if (!observation_history_ready_) {
         fill_term_history(observation_history_, kBaseAngVelOffset,
@@ -1465,6 +1480,8 @@ bool RobotInterface::build_policy_observation(
                           kPolicyFrameStack, projected_gravity);
         fill_term_history(observation_history_, kVelocityCommandsOffset,
                           kPolicyFrameStack, velocity_commands);
+        fill_term_history(observation_history_, kGaitPhaseOffset,
+                          kPolicyFrameStack, gait_phase);
         fill_term_history(observation_history_, kJointPosRelOffset,
                           kPolicyFrameStack, joint_pos_rel);
         fill_term_history(observation_history_, kJointVelRelOffset,
@@ -1479,6 +1496,8 @@ bool RobotInterface::build_policy_observation(
                             kPolicyFrameStack, projected_gravity);
         append_term_history(observation_history_, kVelocityCommandsOffset,
                             kPolicyFrameStack, velocity_commands);
+        append_term_history(observation_history_, kGaitPhaseOffset,
+                            kPolicyFrameStack, gait_phase);
         append_term_history(observation_history_, kJointPosRelOffset,
                             kPolicyFrameStack, joint_pos_rel);
         append_term_history(observation_history_, kJointVelRelOffset,

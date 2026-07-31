@@ -99,6 +99,9 @@ struct RobotInterfaceConfig {
         0.2,
         0.2
     };
+    /* 策略控制周期和步态周期，用于生成 gait_phase = [sin, cos] */
+    double policy_step_dt = 0.02;
+    double gait_phase_period = 0.74;
 
     /* CSV logs are disabled by default to keep the control loop free of file I/O. */
     bool enable_policy_output_log = false;
@@ -158,7 +161,7 @@ public:
 
 private:
     static constexpr int kPolicyDof = 12;  // 模型输出的动作维度，必须与电机数量一致
-    static constexpr int kPolicySingleObservationSize = 45;  // 单周期各 observation term 总维度
+    static constexpr int kPolicySingleObservationSize = 47;  // 单周期各 observation term 总维度
     static constexpr int kPolicyFrameStack = 5;              // policy.pt 每个 term 使用 5 帧历史
     static constexpr int kPolicyObservationSize = kPolicySingleObservationSize * kPolicyFrameStack;
 
@@ -198,6 +201,7 @@ private:
     std::array<float, kPolicyDof> last_action_raw_{};  // 记录上一周期动作值
     std::array<float, kPolicyObservationSize> observation_history_{};
     bool observation_history_ready_ = false;
+    std::uint64_t policy_episode_length_ = 0;
     std::chrono::steady_clock::time_point policy_start_time_{};
     AsyncCsvLogger policy_output_logger_;
     std::uint64_t policy_output_frame_index_ = 0;
