@@ -783,9 +783,9 @@ void MYACTUA::print_motors_info(void){
     printf("\033[2J\033[H");
 
     printf("\033[1;36m============================ MOTOR REAL-TIME MONITOR ============================\033[0m\n");
-    printf("%-6s | %-10s | %-16s | %-22s | %-8s | %-8s | %-7s | %-16s | %-14s | %-14s\n",
+    printf("%-6s | %-10s | %-16s | %-22s | %-8s | %-8s | %-7s | %-16s | %-14s | %-14s | %-14s\n",
         "ID", "OFFLINE_CNT", "STEP", "MODE_SWITCH_STEP", "RX_MODE", "TX_MODE", "DES_EN",
-        "TX_TARGET", "RX_POS_DEG", "TAR_ERR_DEG");
+        "TX_TARGET", "RX_TQ_PCT", "RX_POS_DEG", "TAR_ERR_DEG");
     printf("------------------------------------------------------------------------------------------------------------------------------------------------------\n");
 
     for (const auto& m : _motors) {
@@ -865,7 +865,7 @@ void MYACTUA::print_motors_info(void){
                 break;
         }
 
-        printf("M %-4d | %-10u | %s%-16s\033[0m | %s%-22s\033[0m | %-8s | %-8s | %-7s | %-16s | %-14.3f | %-14.3f\n",
+        printf("M %-4d | %-10u | %s%-16s\033[0m | %s%-22s\033[0m | %-8s | %-8s | %-7s | %-16s | %-13.1f%% | %-14.3f | %-14.3f\n",
             m.slave_index,
             static_cast<unsigned int>(m.comm_offline_total_count),
             color_code,
@@ -876,6 +876,7 @@ void MYACTUA::print_motors_info(void){
             tx_mode_name,
             m.desired.enabled ? "Y" : "N",
             tx_target_info,
+            static_cast<double>(m.rx.torque) / 10.0,
             rx_pos_deg,
             target_error_deg);
     }

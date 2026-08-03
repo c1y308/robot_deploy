@@ -59,7 +59,7 @@ inference::RobotInterfaceConfig make_robot_config()
 
     cfg.policy_model_path = policy_model_path().string();
 
-    cfg.print_motors_info = false;
+    cfg.print_motors_info = true;
 
     // 普通单关节 DOF 到电机逻辑索引；脚踝并联 DOF 由 left/right_ankle_parallel 指定
     cfg.model_to_motor_index = {0, 6, 1, 7, 2, 8, 3, 9};
@@ -86,31 +86,31 @@ inference::RobotInterfaceConfig make_robot_config()
 
     // 按模型 DOF 顺序限制 raw_action * action_scale 后的动作偏移: [lower, upper]
     cfg.action_clip = {
-        {-0.12, 0.12},
-        {-0.12, 0.12},
+        {-0.16, 0.16},
+        {-0.16, 0.16},
 
-        {-0.35, 0.35},
-        {-0.35, 0.35},
+        {-0.2, 0.3},
+        {-0.2, 0.3},
 
-        {-0.12, 0.12},
-        {-0.12, 0.12},
+        {-0.15, 0.15},
+        {-0.15, 0.15},
 
-        {0.00, 0.5},
-        {0.00, 0.5},
+        {-0.2, 0.3},
+        {-0.2, 0.3},
 
-        {-0.12, 0.12},
-        {-0.12, 0.12},
+        {-0.1, 0.16},
+        {-0.1, 0.16},
 
-        {-0.08, 0.08},
-        {-0.08, 0.08},
+        {-0.1, 0.1},
+        {-0.1, 0.1},
     };
     cfg.action_scale = {
-        0.08, 0.08,
+        0.12, 0.12,
         0.30, 0.30,
-        0.08, 0.08,
+        0.1, 0.1,
         0.32, 0.32,
         0.16, 0.16,
-        0.07, 0.07
+        0.09, 0.09
     };
     // joint_min/max 是相对 stand_pose_rad 的偏移限位。
     cfg.joint_min_rad.assign(12, -0.7);
