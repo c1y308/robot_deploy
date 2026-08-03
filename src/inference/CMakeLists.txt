@@ -5,6 +5,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)
 
+option(ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS
+       "Include gait phase in policy observation history, using 235 input dimensions instead of 225"
+       OFF)
+
 set(LOCAL_LIBTORCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libtorch)
 set(LOCAL_PYTORCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/python_torch/torch)
 set(LOCAL_PYTORCH_LIBS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/python_torch/torch.libs)
@@ -68,6 +72,9 @@ target_include_directories(robot_interface PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/src/drivers/myact
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/src/protocol/ethercat
     ${CMAKE_CURRENT_SOURCE_DIR}/../imu/a100/include
+)
+target_compile_definitions(robot_interface PUBLIC
+    ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=$<BOOL:${ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS}>
 )
 target_link_libraries(robot_interface
     PUBLIC

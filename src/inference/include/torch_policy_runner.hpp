@@ -1,5 +1,7 @@
 #pragma once
 
+#include "policy_observation_config.hpp"
+
 #include <array>
 #include <cstddef>
 #include <memory>
@@ -9,8 +11,8 @@ namespace inference {
 
 class TorchPolicyRunner {
 public:
-    static constexpr std::size_t kInputSize  = 47 * 5;
-    static constexpr std::size_t kOutputSize = 12;
+    static constexpr std::size_t kInputSize  = policy_observation::kObservationSize;
+    static constexpr std::size_t kOutputSize = policy_observation::kDof;
 
     TorchPolicyRunner();
     ~TorchPolicyRunner();

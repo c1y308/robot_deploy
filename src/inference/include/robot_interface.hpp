@@ -5,6 +5,7 @@
 #include "motor_control.hpp"
 #include "ankle_motor_fk.hpp"
 #include "ankle_motor_ik.hpp"
+#include "policy_observation_config.hpp"
 
 #include <array>
 #include <atomic>
@@ -99,7 +100,7 @@ struct RobotInterfaceConfig {
         0.2,
         0.2
     };
-    /* 策略控制周期和步态周期，用于生成 gait_phase = [sin, cos] */
+    /* 策略控制周期；启用 gait phase 观测时用 gait_phase_period 生成 [sin, cos] */
     double policy_step_dt = 0.02;
     double gait_phase_period = 0.74;
 
@@ -160,9 +161,12 @@ public:
 
 
 private:
-    static constexpr int kPolicyDof = 12;  // 模型输出的动作维度，必须与电机数量一致
-    static constexpr int kPolicySingleObservationSize = 47;  // 单周期各 observation term 总维度
-    static constexpr int kPolicyFrameStack = 5;              // policy.pt 每个 term 使用 5 帧历史
+    static constexpr int kPolicyDof =
+        static_cast<int>(policy_observation::kDof);  // 模型输出的动作维度，必须与电机数量一致
+    static constexpr int kPolicySingleObservationSize =
+        static_cast<int>(policy_observation::kSingleObservationSize);  // 单周期各 observation term 总维度
+    static constexpr int kPolicyFrameStack =
+        static_cast<int>(policy_observation::kFrameStack);             // policy.pt 每个 term 使用 5 帧历史
     static constexpr int kPolicyObservationSize = kPolicySingleObservationSize * kPolicyFrameStack;
 
     /* 机器人接口配置 */

@@ -59,7 +59,7 @@ inference::RobotInterfaceConfig make_robot_config()
 
     cfg.policy_model_path = policy_model_path().string();
 
-    cfg.print_motors_info = true;
+    cfg.print_motors_info = false;
 
     // 普通单关节 DOF 到电机逻辑索引；脚踝并联 DOF 由 left/right_ankle_parallel 指定
     cfg.model_to_motor_index = {0, 6, 1, 7, 2, 8, 3, 9};
@@ -80,38 +80,41 @@ inference::RobotInterfaceConfig make_robot_config()
 
     // 以下 12 维策略配置均按模型 DOF 序号填写
     cfg.stand_pose_rad = {
-        0.0, 0.0, -0.2, -0.2, 0.0, 0.0, 0.2, 0.2, -0.05, -0.05, 0.0, 0.0
+        0.0,  0.0, -0.3, -0.3,
+        0.0,  0.0,  0.3,  0.3,
+        -0.2, -0.2,  0.0,  0.0
     };
 
 
     // 按模型 DOF 顺序限制 raw_action * action_scale 后的动作偏移: [lower, upper]
-    cfg.action_clip = {
-        {-0.16, 0.16},
-        {-0.16, 0.16},
+cfg.action_clip = {
+        {-0.12, 0.12},
+        {-0.12, 0.12},
 
-        {-0.2, 0.3},
-        {-0.2, 0.3},
+        {-0.40, 0.40},
+        {-0.40, 0.40},
 
-        {-0.15, 0.15},
-        {-0.15, 0.15},
+        {-0.12, 0.12},
+        {-0.12, 0.12},
 
-        {-0.2, 0.3},
-        {-0.2, 0.3},
+        {0.00, 0.85},
+        {0.00, 0.85},
 
-        {-0.1, 0.16},
-        {-0.1, 0.16},
+        {-0.18, 0.18},
+        {-0.18, 0.18},
 
-        {-0.1, 0.1},
-        {-0.1, 0.1},
+        {-0.08, 0.08},
+        {-0.08, 0.08},
     };
     cfg.action_scale = {
-        0.12, 0.12,
+        0.08, 0.08,
         0.30, 0.30,
-        0.1, 0.1,
-        0.32, 0.32,
-        0.16, 0.16,
-        0.09, 0.09
+        0.08, 0.08,
+        0.30, 0.30,
+        0.15, 0.15,
+        0.08, 0.08
     };
+
     // joint_min/max 是相对 stand_pose_rad 的偏移限位。
     cfg.joint_min_rad.assign(12, -0.7);
     cfg.joint_max_rad.assign(12,  0.7);
@@ -282,8 +285,8 @@ int main()
             safe_shutdown(robot, true);
             return 1;
         }
-        robot.set_target_velocity(0, 0, 0);
-        // robot.set_target_velocity(command.vx, command.vy, command.yaw_rate);
+        // robot.set_target_velocity(0, 0, 0);
+        robot.set_target_velocity(command.vx, command.vy, command.yaw_rate);
 
         const auto step_start = Clock::now();
         if (!robot.policy_step()) {
