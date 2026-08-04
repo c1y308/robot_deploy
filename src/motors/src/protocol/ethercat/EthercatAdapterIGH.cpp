@@ -94,9 +94,9 @@ ec_pdo_info_t EthercatAdapterIGH::device_pdos[] = {
 
 ec_sync_info_t EthercatAdapterIGH::device_syncs[] = {
     {0, EC_DIR_OUTPUT, 0, NULL, EC_WD_DISABLE},
-    {1, EC_DIR_INPUT, 0, NULL, EC_WD_DISABLE},
+    {1, EC_DIR_INPUT,  0, NULL, EC_WD_DISABLE},
     {2, EC_DIR_OUTPUT, 1, &EthercatAdapterIGH::device_pdos[0], EC_WD_ENABLE},
-    {3, EC_DIR_INPUT, 1, &EthercatAdapterIGH::device_pdos[1], EC_WD_DISABLE},
+    {3, EC_DIR_INPUT,  1, &EthercatAdapterIGH::device_pdos[1], EC_WD_DISABLE},
     {0xff, EC_DIR_INVALID, 0, nullptr, EC_WD_DEFAULT}
 };    
 
@@ -144,6 +144,7 @@ bool EthercatAdapterIGH::init(const char* ifname)
     // 配置从站实体
     for (std::size_t i = 0; i < kNumSlaves; i++) 
     {
+        /* 得到物理总线上电机的 ID */
         const uint16_t position = kSlavePositions[i];
         /* 配置从站索引 */
         sc[i] = ecrt_master_slave_config(master, 0, position, VID_PID);
@@ -178,10 +179,10 @@ bool EthercatAdapterIGH::init(const char* ifname)
             { 0, position, VID_PID, 0x6041, 0, &slave_offsets[i].off_status_word, nullptr},
             { 0, position, VID_PID, 0x6064, 0, &slave_offsets[i].off_pos, nullptr},
             { 0, position, VID_PID, 0x606C, 0, &slave_offsets[i].off_vel, nullptr},
-            {0, position, VID_PID, 0x6077, 0, &slave_offsets[i].off_torque, nullptr},
-            {0, position, VID_PID, 0x603F, 0, &slave_offsets[i].off_error, nullptr},
-            {0, position, VID_PID, 0x6061, 0, &slave_offsets[i].off_mode_disp, nullptr},
-            {0, 0, 0, 0, 0, 0, nullptr, nullptr} // 结束标志
+            { 0, position, VID_PID, 0x6077, 0, &slave_offsets[i].off_torque, nullptr},
+            { 0, position, VID_PID, 0x603F, 0, &slave_offsets[i].off_error, nullptr},
+            { 0, position, VID_PID, 0x6061, 0, &slave_offsets[i].off_mode_disp, nullptr},
+            { 0, 0, 0, 0, 0, 0, nullptr, nullptr} // 结束标志
         };
         if (ecrt_domain_reg_pdo_entry_list(domain1, reg)) 
         {
@@ -258,7 +259,7 @@ RxPDO EthercatAdapterIGH::receive(int index)
     return pdo;
 }
 
-void EthercatAdapterIGH::receivePhysical() {
+void EthercatAdapterIGH::receive_physical() {
     if (!is_initialized || !master || !domain1 || !domain1_pd) {
         return;
     }
@@ -280,7 +281,7 @@ void EthercatAdapterIGH::receivePhysical() {
 }
 
 
-void EthercatAdapterIGH::sendPhysical() {
+void EthercatAdapterIGH::send_physical() {
     if (!is_initialized || !master || !domain1 || !domain1_pd) {
         return;
     }
@@ -345,7 +346,7 @@ void EthercatAdapterIGH::sendPhysical() {
 }
 
 // 检查特定从站的配置状态
-bool EthercatAdapterIGH::isConfigured(int index) {
+bool EthercatAdapterIGH::is_configured(int index) {
     if (index < 0 || index >= static_cast<int>(kNumSlaves)) {
         return false;
     }

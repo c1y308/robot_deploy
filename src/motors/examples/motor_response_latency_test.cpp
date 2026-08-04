@@ -366,7 +366,7 @@ void send_mit_targets(myactua::MYACTUA& controller,
                       const std::array<double, kNumMotors>& target_rad)
 {
     controller.send_command(
-        myactua::ControlCommand::SetMitSetpoints(make_mit_setpoints(target_rad)));
+        myactua::ControlCommand::set_mit_setpoints(make_mit_setpoints(target_rad)));
 }
 
 bool read_motor_positions(myactua::MYACTUA& controller,
@@ -454,7 +454,7 @@ bool wait_all_running(myactua::MYACTUA& controller,
 void send_mode_all(myactua::MYACTUA& controller, myactua::ControlMode mode)
 {
     for (int i = 0; i < kNumMotors; ++i) {
-        controller.send_command(myactua::ControlCommand::SetMode(mode, i));
+        controller.send_command(myactua::ControlCommand::set_mode(mode, i));
     }
 }
 
@@ -548,7 +548,7 @@ void safe_stop(myactua::MYACTUA& controller, bool started)
 {
     g_recorder.set_recording(false);
     if (started) {
-        controller.send_command(myactua::ControlCommand::Stop());
+        controller.send_command(myactua::ControlCommand::stop());
         force_sleep_ms(500);
         controller.shutdown();
     }
@@ -704,7 +704,7 @@ int main()
     controller_started = true;
 
     std::cout << "[flow] stop all motors before mode switch\n";
-    controller.send_command(myactua::ControlCommand::Stop());
+    controller.send_command(myactua::ControlCommand::stop());
     sleep_ms(kWarmupMs);
 
     std::cout << "[flow] switch all motors to PVT/MIT\n";
@@ -728,7 +728,7 @@ int main()
     sleep_ms(200);
 
     std::cout << "[flow] restart all motors\n";
-    controller.send_command(myactua::ControlCommand::Restart());
+    controller.send_command(myactua::ControlCommand::restart());
     sleep_ms(kRestartWaitMs);
     if (!wait_all_running(controller, myactua::ControlMode::PVT, 4000)) {
         std::cerr << "[error] not all motors reached operation enabled in PVT/MIT mode\n";
@@ -795,7 +795,7 @@ int main()
     force_sleep_ms(40);
 
     std::cout << "[flow] stop all motors\n";
-    controller.send_command(myactua::ControlCommand::Stop());
+    controller.send_command(myactua::ControlCommand::stop());
     force_sleep_ms(500);
     controller.shutdown();
     controller.set_status_callback({});

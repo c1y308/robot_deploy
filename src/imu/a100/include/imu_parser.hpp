@@ -34,8 +34,8 @@ public:
     static void print_ahrs_data(const AHRSData_t& ahrs);
 
 private:
-    uint8_t  CRC8_Table(const std::vector<uint8_t>& data);
-    uint16_t CRC16_Table(const std::vector<uint8_t>& data);
+    uint8_t  crc8_table(const std::vector<uint8_t>& data);
+    uint16_t crc16_table(const std::vector<uint8_t>& data);
 
     bool parse_imu_frame(const uint8_t* data);
     bool parse_ahrs_frame(const uint8_t* data);

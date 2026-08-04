@@ -301,7 +301,7 @@ bool RobotInterface::initial_and_start_motors() {
     /* 设置电机控制模式 */
     for (int i = 0; i < config_.num_motors; ++i) {
         controller_->send_command(
-            myactua::ControlCommand::SetMode(config_.motor_control_mode, i));
+            myactua::ControlCommand::set_mode(config_.motor_control_mode, i));
     }
 
     /* 根据配置决定是否打印电机信息 */
@@ -314,7 +314,7 @@ bool RobotInterface::initial_and_start_motors() {
     /* 启动实时线程 */
     controller_->start();
 
-    controller_->send_command(myactua::ControlCommand::Stop());
+    controller_->send_command(myactua::ControlCommand::stop());
     motors_initialized_.store(true);
     motion_enabled_.store(false);
     reset_motor_pos_error_log();
@@ -391,7 +391,7 @@ bool RobotInterface::stop_motors(int slave_index) {
         return false;
     }
 
-    controller_->send_command(myactua::ControlCommand::Stop(slave_index));
+    controller_->send_command(myactua::ControlCommand::stop(slave_index));
     if (slave_index < 0) {
         motion_enabled_.store(false);
     }
@@ -409,7 +409,7 @@ bool RobotInterface::restart_motors(int slave_index) {
         return false;
     }
 
-    controller_->send_command(myactua::ControlCommand::Restart(slave_index));
+    controller_->send_command(myactua::ControlCommand::restart(slave_index));
     if (slave_index < 0 || config_.num_motors == 1) {
         motion_enabled_.store(true);
     }
@@ -612,7 +612,7 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
                                                     config_.mit_kp[i],
                                                     config_.mit_kd[i]);
         }
-        controller_->send_command(myactua::ControlCommand::SetMitSetpoints(std::move(mit_setpoints)));
+        controller_->send_command(myactua::ControlCommand::set_mit_setpoints(std::move(mit_setpoints)));
         log_motor_pos_error(target_rad);
         return true;
     }
@@ -628,7 +628,7 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
         target_deg[i] = myactua::MYACTUA::rad_to_deg(target_rad[i]);
     }
 
-    controller_->send_command(myactua::ControlCommand::SetScalarSetpoints(std::move(target_deg)));
+    controller_->send_command(myactua::ControlCommand::set_scalar_setpoints(std::move(target_deg)));
     log_motor_pos_error(target_rad);
     return true;
 }

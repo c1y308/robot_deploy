@@ -18,16 +18,6 @@
 namespace myactua{
 
 
-enum class MotorStep {
-    IDLE,
-    ENABLING,
-    RUNNING,
-    STOPPED,
-    FAULT,
-    MODE_SWITCHING
-};
-
-
 class MYACTUA {
 public:
     /* 所有命令的本质都是操作这个结构体，在process_single_motor中进行下一步处理 */
@@ -71,13 +61,11 @@ public:
 
         bool comm_ok;
         uint32_t comm_offline_total_count;
-        
-        bool print_info;
 
         MotorState(int index)
         : slave_index(index), desired(), observed(), step(MotorStep::IDLE),
-          mode_switch_step(ModeSwitchStep::IDLE), tx({}), rx({}), comm_ok(false),
-          comm_offline_total_count(0), print_info(false) {}
+          mode_switch_step(ModeSwitchStep::IDLE), tx({}), rx({}),
+          comm_ok(false), comm_offline_total_count(0) {}
     };
 
     MYACTUA(std::shared_ptr<EthercatAdapter> adapter, int num_motors);
@@ -126,14 +114,22 @@ private:
 
     std::thread rt_thread_;
     std::atomic<bool> running_{false};  // 实时线程运行标志
+    std::thread monitor_thread_;
+    std::atomic<bool> monitor_running_{false};  // 普通监控打印线程运行标志
     
     std::vector<MotorStatusSnapshot> status_snapshot_;
 
     std::vector<int> print_motor_ids_;
+    mutable std::mutex print_mutex_;
     
     StatusCallback status_callback_;
 
     void rt_thread_func();
+    void monitor_thread_func();
+    void start_monitor_thread();
+    void stop_monitor_thread();
+    bool has_print_motor_ids() const;
+    std::vector<int> get_print_motor_ids() const;
     void process_commands();
     void update(const std::vector<double>& setvalues);
     void update_status_snapshot();

@@ -39,15 +39,15 @@ sudo ./ID_test
 先看 `ID_test.cpp` 的等待逻辑。程序在 30 秒内循环调用：
 
 ```cpp
-adapter->receivePhysical();
-adapter->sendPhysical();
+adapter->receive_physical();
+adapter->send_physical();
 
-if (adapter->isConfigured(i)) {
+if (adapter->is_configured(i)) {
     ++ready_count;
 }
 ```
 
-`isConfigured(i)` 在 `EthercatAdapterIGH` 中不是读 DS402 状态字，而是读 IGH 的 slave config state：
+`is_configured(i)` 在 `EthercatAdapterIGH` 中不是读 DS402 状态字，而是读 IGH 的 slave config state：
 
 ```cpp
 const bool ok = sc_state[i].online && sc_state[i].operational;
@@ -304,4 +304,3 @@ AL status 0x0025: Invalid Output Mapping
 ```
 
 如果系统长期维护，推荐优先做固件/对象字典统一。混合 PDO 兼容可以作为短期过渡方案，但会增加控制层对不同电机版本的分支处理。
-

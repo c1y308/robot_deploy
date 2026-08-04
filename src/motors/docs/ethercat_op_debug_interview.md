@@ -12,7 +12,7 @@
 
 这个问题的关键是把“从站不进 OP”拆成 EtherCAT 状态机、过程数据、对象字典三个层次来看。
 
-第一步，我先确认程序里“已就绪”的定义。`ID_test` 等待 12 个从站进入 OP，它并不是通过 DS402 状态字判断电机是否 enable，而是调用 `adapter->isConfigured(i)`。继续追到 `EthercatAdapterIGH` 后发现，这个标志来自 `ecrt_slave_config_state`，条件是 `online && operational`。所以 `9/12` 代表的是 EtherCAT 从站配置层面只有 9 台进入 OP，而不是电机还没使能。
+第一步，我先确认程序里“已就绪”的定义。`ID_test` 等待 12 个从站进入 OP，它并不是通过 DS402 状态字判断电机是否 enable，而是调用 `adapter->is_configured(i)`。继续追到 `EthercatAdapterIGH` 后发现，这个标志来自 `ecrt_slave_config_state`，条件是 `online && operational`。所以 `9/12` 代表的是 EtherCAT 从站配置层面只有 9 台进入 OP，而不是电机还没使能。
 
 第二步，我打开 `MYACTUA_ECAT_DIAG`，让程序打印每个逻辑电机的状态。稳定后发现只有 `M0/M6/M7` 的 `cfg=0`，且状态字一直是 `0x0000`。Domain working counter 稳定在 `27/36`，和 9 台成功电机对应。这样就从“有 3 台失败”缩小到具体逻辑索引。
 
@@ -87,7 +87,7 @@ object does not exist in the object directory
 
 ### 为什么 `9/12` 可以对应到具体 3 台？
 
-`ID_test` 的 ready count 来自 `adapter->isConfigured(i)`，而 `isConfigured` 来自每个 slave config 的 `online && operational`。打开 `MYACTUA_ECAT_DIAG` 后，每个逻辑电机都会打印 `cfg`，所以可以直接看到 `M0/M6/M7` 是 `cfg=0`，其它 9 台是 `cfg=1`。
+`ID_test` 的 ready count 来自 `adapter->is_configured(i)`，而 `is_configured` 来自每个 slave config 的 `online && operational`。打开 `MYACTUA_ECAT_DIAG` 后，每个逻辑电机都会打印 `cfg`，所以可以直接看到 `M0/M6/M7` 是 `cfg=0`，其它 9 台是 `cfg=1`。
 
 ### 为什么需要看 `dmesg`？
 
@@ -190,4 +190,3 @@ position 1/8/9 使用旧 0x1600 映射
 失败从站不支持当前主站配置的 0x1601，仅支持旧 0x1600，
 并给出固件统一与混合 PDO 兼容两类修复方案。
 ```
-

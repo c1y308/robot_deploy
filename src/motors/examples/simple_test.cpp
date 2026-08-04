@@ -27,31 +27,31 @@ int main() {
     
     // 1. 停止 1 秒
     std::cout << "[阶段1] 停止电机，等待 1 秒..." << std::endl;
-    controller.send_command(myactua::ControlCommand::Stop());
+    controller.send_command(myactua::ControlCommand::stop());
     std::this_thread::sleep_for(std::chrono::seconds(1));
     
     // 2. 以速度 50 运行 5 秒
     std::cout << "[阶段2] 正在进行RESTART..." << std::endl;
-    controller.send_command(myactua::ControlCommand::Restart());
+    controller.send_command(myactua::ControlCommand::restart());
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
     // 3. 停止
     std::cout << "[阶段3] 停止电机..." << std::endl;
-    controller.send_command(myactua::ControlCommand::Stop());
+    controller.send_command(myactua::ControlCommand::stop());
     std::this_thread::sleep_for(std::chrono::seconds(1));
     
     std::cout << "正在设置电机 CSP 模式..." << std::endl;
-    controller.send_command(myactua::ControlCommand::SetMode(myactua::ControlMode::CSP));
+    controller.send_command(myactua::ControlCommand::set_mode(myactua::ControlMode::CSP));
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
     std::cout << "电机以位置模式运行复位..." << std::endl;
-    controller.send_command(myactua::ControlCommand::Restart());
-    controller.send_command(myactua::ControlCommand::SetScalarSetpoints(std::vector<double>{0}));
+    controller.send_command(myactua::ControlCommand::restart());
+    controller.send_command(myactua::ControlCommand::set_scalar_setpoints(std::vector<double>{0}));
     std::this_thread::sleep_for(std::chrono::seconds(5));
 
     // 3. 停止
     std::cout << "停止电机..." << std::endl;
-    controller.send_command(myactua::ControlCommand::Stop());
+    controller.send_command(myactua::ControlCommand::stop());
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
 

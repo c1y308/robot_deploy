@@ -34,6 +34,17 @@ enum ControlMode : int8_t{
 };
 
 
+/* 电机控制状态机主状态 */
+enum class MotorStep {
+    IDLE,
+    ENABLING,
+    RUNNING,
+    STOPPED,
+    FAULT,
+    MODE_SWITCHING
+};
+
+
 /* 定义状态字位 */
 enum StatusWordBits : uint16_t {
     BIT_READY_TO_SWITCH_ON = 0x0001,

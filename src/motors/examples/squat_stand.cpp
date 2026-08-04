@@ -53,7 +53,7 @@ void signal_handler(int)
 void send_mode_all(myactua::MYACTUA& controller, myactua::ControlMode mode)
 {
     for (int i = 0; i < kNumMotors; ++i) {
-        controller.send_command(myactua::ControlCommand::SetMode(mode, i));
+        controller.send_command(myactua::ControlCommand::set_mode(mode, i));
     }
 }
 
@@ -106,7 +106,7 @@ void stream_pose_segment(myactua::MYACTUA& controller,
         const std::vector<double> pose_deg = interpolate_pose(start_deg, end_deg, alpha);
 
         controller.send_command(
-            myactua::ControlCommand::SetScalarSetpoints(pose_deg));
+            myactua::ControlCommand::set_scalar_setpoints(pose_deg));
 
         const std::vector<double> measured_rad = controller.get_joint_q_rad();
         const std::size_t motor_count = std::min(pose_deg.size(), measured_rad.size());
@@ -127,7 +127,7 @@ void stream_pose_segment(myactua::MYACTUA& controller,
     }
 
     controller.send_command(
-        myactua::ControlCommand::SetScalarSetpoints(end_deg));
+        myactua::ControlCommand::set_scalar_setpoints(end_deg));
 
     const std::vector<double> measured_rad = controller.get_joint_q_rad();
     const std::size_t motor_count = std::min(end_deg.size(), measured_rad.size());
@@ -179,7 +179,7 @@ int main()
     controller.start();
 
     std::cout << "[flow] stop all motors" << std::endl;
-    controller.send_command(myactua::ControlCommand::Stop());
+    controller.send_command(myactua::ControlCommand::stop());
     std::this_thread::sleep_for(std::chrono::milliseconds(kWarmupMs));
 
     std::cout << "[flow] switch all motors to CSP" << std::endl;
@@ -191,11 +191,11 @@ int main()
 
     // 先发送零位目标，再使能电机，保证动作从初始姿态开始。
     controller.send_command(
-        myactua::ControlCommand::SetScalarSetpoints(zero_pose_deg));
+        myactua::ControlCommand::set_scalar_setpoints(zero_pose_deg));
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     std::cout << "[flow] restart motors" << std::endl;
-    controller.send_command(myactua::ControlCommand::Restart());
+    controller.send_command(myactua::ControlCommand::restart());
     std::this_thread::sleep_for(std::chrono::milliseconds(kRestartWaitMs));
 
     stream_pose_segment(
@@ -204,7 +204,7 @@ int main()
     if (!g_should_stop) {
         std::cout << "[hold] keep squat pose for " << kHoldBottomMs << " ms" << std::endl;
         controller.send_command(
-            myactua::ControlCommand::SetScalarSetpoints(squat_pose_deg));
+            myactua::ControlCommand::set_scalar_setpoints(squat_pose_deg));
         std::this_thread::sleep_for(std::chrono::milliseconds(kHoldBottomMs));
     }
 
@@ -214,7 +214,7 @@ int main()
     }
 
     std::cout << "[flow] stop all motors" << std::endl;
-    controller.send_command(myactua::ControlCommand::Stop());
+    controller.send_command(myactua::ControlCommand::stop());
     controller.shutdown();
 
     std::cout << "[done] squat/stand demo finished" << std::endl;

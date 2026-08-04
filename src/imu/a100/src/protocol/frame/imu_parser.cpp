@@ -140,7 +140,7 @@ void IMUParser::feed(const uint8_t* data, int len) {
             /* 进行CRC8校验 */
             if(rx_index_ == 5){
                 std::vector<uint8_t> crc8_data(rx_buffer_.begin(), rx_buffer_.begin() + 4);
-                uint8_t calculated_crc8 = CRC8_Table(crc8_data);
+                uint8_t calculated_crc8 = crc8_table(crc8_data);
                 uint8_t received_crc8 = rx_buffer_[4];
 
                 if (calculated_crc8 != received_crc8) {
@@ -157,7 +157,7 @@ void IMUParser::feed(const uint8_t* data, int len) {
             /* 进行CRC16校验 */
             if (frame_length_ > 0 && rx_index_ == frame_length_ - 1) {
                 std::vector<uint8_t> crc16_data(rx_buffer_.begin() + 7, rx_buffer_.begin() + 7 + payload_length_);
-                uint16_t calculated_crc16 = CRC16_Table(crc16_data);
+                uint16_t calculated_crc16 = crc16_table(crc16_data);
                 uint16_t received_crc16 = rx_buffer_[5] << 8 | rx_buffer_[6];
 
                 if (calculated_crc16 != received_crc16) {
@@ -401,7 +401,7 @@ uint64_t IMUParser::data_to_u64(uint8_t d1, uint8_t d2, uint8_t d3, uint8_t d4,
 }
 
 
-uint8_t IMUParser::CRC8_Table(const std::vector<uint8_t>& data) {
+uint8_t IMUParser::crc8_table(const std::vector<uint8_t>& data) {
     uint8_t crc8 = 0x00;
     for (uint8_t value : data) {
         crc8 = CRC8Table[crc8 ^ value];
@@ -409,7 +409,7 @@ uint8_t IMUParser::CRC8_Table(const std::vector<uint8_t>& data) {
     return crc8;
 }
 
-uint16_t IMUParser::CRC16_Table(const std::vector<uint8_t>& data) 
+uint16_t IMUParser::crc16_table(const std::vector<uint8_t>& data)
 {
     uint16_t crc16 = 0;
     for (uint8_t value : data) 

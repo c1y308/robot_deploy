@@ -59,7 +59,7 @@ struct ControlCommand {
     std::vector<MitSetpoint> mit_setpoints;  // MIT/PVT目标值
     ControlMode mode;                    // 目标电机模式，仅 SET_MODE 使用
 
-    static ControlCommand Stop(int slave_index = kAllSlaves) {
+    static ControlCommand stop(int slave_index = kAllSlaves) {
         ControlCommand cmd;
         cmd.kind = ControlCommandKind::DISCRETE;
         cmd.discrete_type = DiscreteCommandType::STOP;
@@ -67,7 +67,7 @@ struct ControlCommand {
         return cmd;
     }
 
-    static ControlCommand Restart(int slave_index = kAllSlaves) {
+    static ControlCommand restart(int slave_index = kAllSlaves) {
         ControlCommand cmd;
         cmd.kind = ControlCommandKind::DISCRETE;
         cmd.discrete_type = DiscreteCommandType::RESTART;
@@ -75,7 +75,7 @@ struct ControlCommand {
         return cmd;
     }
 
-    static ControlCommand SetMode(ControlMode mode, int slave_index = kAllSlaves) {
+    static ControlCommand set_mode(ControlMode mode, int slave_index = kAllSlaves) {
         ControlCommand cmd;
         cmd.kind = ControlCommandKind::DISCRETE;
         cmd.discrete_type = DiscreteCommandType::SET_MODE;
@@ -84,7 +84,7 @@ struct ControlCommand {
         return cmd;
     }
 
-    static ControlCommand SetScalarSetpoints(std::vector<double> values) {
+    static ControlCommand set_scalar_setpoints(std::vector<double> values) {
         ControlCommand cmd;
         cmd.kind = ControlCommandKind::SETPOINT;
         cmd.setpoint_type = SetpointCommandType::SCALAR_SETPOINTS;
@@ -93,7 +93,7 @@ struct ControlCommand {
         return cmd;
     }
 
-    static ControlCommand SetScalarSetpoint(int slave_index, double value) {
+    static ControlCommand set_scalar_setpoint(int slave_index, double value) {
         ControlCommand cmd;
         cmd.kind = ControlCommandKind::SETPOINT;
         cmd.setpoint_type = SetpointCommandType::SCALAR_SETPOINTS;
@@ -102,7 +102,7 @@ struct ControlCommand {
         return cmd;
     }
 
-    static ControlCommand SetMitSetpoints(std::vector<MitSetpoint> values) {
+    static ControlCommand set_mit_setpoints(std::vector<MitSetpoint> values) {
         ControlCommand cmd;
         cmd.kind = ControlCommandKind::SETPOINT;
         cmd.setpoint_type = SetpointCommandType::MIT_SETPOINTS;
@@ -111,7 +111,7 @@ struct ControlCommand {
         return cmd;
     }
 
-    static ControlCommand SetMitSetpoint(int slave_index, const MitSetpoint& value) {
+    static ControlCommand set_mit_setpoint(int slave_index, const MitSetpoint& value) {
         ControlCommand cmd;
         cmd.kind = ControlCommandKind::SETPOINT;
         cmd.setpoint_type = SetpointCommandType::MIT_SETPOINTS;
@@ -183,9 +183,6 @@ struct DiscreteCommand {
 };
 
 
-
-
-
 /* 电机状态快照 */
 struct MotorStatusSnapshot {
     int     slave_index;    // ID
@@ -197,10 +194,24 @@ struct MotorStatusSnapshot {
     uint16_t error_code;    // 错误代码
     ControlMode op_mode;    // 当前模式
     ControlMode target_mode;// 目标模式
+    ControlMode tx_mode;    // 本周期下发模式
+    MotorStep step;         // 控制状态机主状态
+    ModeSwitchStep mode_switch_step;  // 模式切换子状态
+    bool desired_enabled;   // 期望使能
+    uint32_t offline_count; // 离线累计次数
+    int32_t tx_target_pos;  // 本周期下发位置目标(raw)
+    int32_t tx_target_vel;  // 本周期下发速度目标(raw)
+    int16_t tx_target_torque;  // 本周期下发力矩目标(raw)
+    int32_t tx_pvt_kp;      // 本周期下发 PVT Kp(raw)
+    int32_t tx_pvt_kd;      // 本周期下发 PVT Kd(raw)
 
     MotorStatusSnapshot() 
         : slave_index(-1), position(0), velocity(0), torque(0), comm_ok(false), status_word(0), error_code(0), 
-          op_mode(ControlMode::NONE), target_mode(ControlMode::NONE) {}
+          op_mode(ControlMode::NONE), target_mode(ControlMode::NONE),
+          tx_mode(ControlMode::NONE), step(MotorStep::IDLE),
+          mode_switch_step(ModeSwitchStep::IDLE), desired_enabled(false),
+          offline_count(0), tx_target_pos(0), tx_target_vel(0),
+          tx_target_torque(0), tx_pvt_kp(0), tx_pvt_kd(0) {}
 };
 
 } // namespace myactua

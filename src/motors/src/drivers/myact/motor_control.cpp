@@ -1,6 +1,7 @@
 #include "motor_control.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -42,6 +43,45 @@ int16_t double_to_i16(double value)
     const double hi = static_cast<double>(std::numeric_limits<int16_t>::max());
     return static_cast<int16_t>(std::llround(std::max(lo, std::min(hi, value))));
 }
+
+const char* motor_step_name(MotorStep step)
+{
+    switch (step) {
+        case MotorStep::IDLE: return "IDLE";
+        case MotorStep::ENABLING: return "ENABLING";
+        case MotorStep::RUNNING: return "RUNNING";
+        case MotorStep::STOPPED: return "STOPPED";
+        case MotorStep::FAULT: return "FAULT";
+        case MotorStep::MODE_SWITCHING: return "MODE_SWITCHING";
+    }
+    return "UNKNOWN";
+}
+
+const char* mode_switch_step_name(ModeSwitchStep step)
+{
+    switch (step) {
+        case ModeSwitchStep::IDLE: return "IDLE";
+        case ModeSwitchStep::SET_MODE: return "SET_MODE";
+        case ModeSwitchStep::CLEAR: return "CLEAR";
+        case ModeSwitchStep::DISABLE: return "DISABLE";
+        case ModeSwitchStep::ENABLE: return "ENABLE";
+        case ModeSwitchStep::OPERATING: return "OPERATING";
+        case ModeSwitchStep::DONE: return "DONE";
+    }
+    return "N/A";
+}
+
+const char* control_mode_name(ControlMode mode)
+{
+    switch (mode) {
+        case ControlMode::NONE: return "NONE";
+        case ControlMode::PVT: return "PVT";
+        case ControlMode::CSP: return "CSP";
+        case ControlMode::CSV: return "CSV";
+        case ControlMode::CST: return "CST";
+    }
+    return "UNKNOWN";
+}
 }
 
 /* 电机控制器构造函数 */
@@ -50,7 +90,6 @@ MYACTUA::MYACTUA(std::shared_ptr<EthercatAdapter> adapter, int num_motors) : _ad
     /* 初始化电机状态列表 */
     for (int i = 0; i < num_motors; i++) {
         _motors.emplace_back(i);
-        print_motor_ids_.push_back(i);
     }
     status_snapshot_.resize(num_motors);
     discrete_cmd_queues_.resize(num_motors);
@@ -101,12 +140,12 @@ bool MYACTUA::wait_all_slaves_ready(
             return false;
         }
 
-        _adapter->receivePhysical();
-        _adapter->sendPhysical();
+        _adapter->receive_physical();
+        _adapter->send_physical();
 
         int ready_count = 0;
         for (int i = 0; i < static_cast<int>(_motors.size()); ++i) {
-            if (_adapter->isConfigured(i)) {
+            if (_adapter->is_configured(i)) {
                 ++ready_count;
             }
         }
@@ -150,13 +189,13 @@ void MYACTUA::rt_thread_func()
 
     while (running_) {
         // 1. 收取本周期 EtherCAT 输入
-        _adapter->receivePhysical();
+        _adapter->receive_physical();
         // 2.处理控制命令
         process_commands();
         // 3.执行控制周期
         update({});
         // 4. 发送本周期 EtherCAT 输出
-        _adapter->sendPhysical();
+        _adapter->send_physical();
         // 5.更新电机状态快照
         update_status_snapshot();
         // 6.调用回调函数
@@ -249,14 +288,13 @@ void MYACTUA::enqueue_discrete_command(const ControlCommand& cmd)
 
 void MYACTUA::update(const std::vector<double> &setvalues)
 {
-    static int print_count = 0;
     ++discrete_cmd_tick_;  // 离散命令时间戳增加
     std::vector<bool> comm_ok(_motors.size(), false);
 
     /* 接受电机回传数据，并记录当前周期通信状态 */
     for (size_t i = 0; i < _motors.size(); i++)
     {
-        comm_ok[i] = _adapter->isConfigured(_motors[i].slave_index);
+        comm_ok[i] = _adapter->is_configured(_motors[i].slave_index);
         if (!comm_ok[i]) {
             ++_motors[i].comm_offline_total_count;
         }
@@ -287,13 +325,6 @@ void MYACTUA::update(const std::vector<double> &setvalues)
     {
         if (!comm_ok[i]) continue;
         _adapter->send(_motors[i].slave_index, _motors[i].tx);
-    }
-
-    if (++print_count >= 200) {
-        print_count = 0;
-        if (!print_motor_ids_.empty()) {
-            print_motors_info();
-        }
     }
 }
 
@@ -684,6 +715,16 @@ void MYACTUA::update_status_snapshot()
         status_snapshot_[i].error_code  = m.rx.error;
         status_snapshot_[i].op_mode = (ControlMode)m.rx.op_mode;
         status_snapshot_[i].target_mode = m.desired.mode;
+        status_snapshot_[i].tx_mode = (ControlMode)m.tx.op_mode;
+        status_snapshot_[i].step = m.step;
+        status_snapshot_[i].mode_switch_step = m.mode_switch_step;
+        status_snapshot_[i].desired_enabled = m.desired.enabled;
+        status_snapshot_[i].offline_count = m.comm_offline_total_count;
+        status_snapshot_[i].tx_target_pos = m.tx.target_pos;
+        status_snapshot_[i].tx_target_vel = m.tx.target_vel;
+        status_snapshot_[i].tx_target_torque = m.tx.target_torque;
+        status_snapshot_[i].tx_pvt_kp = m.tx.pvt_kp;
+        status_snapshot_[i].tx_pvt_kd = m.tx.pvt_kd;
     }
 }
 
@@ -758,28 +799,107 @@ void MYACTUA::set_status_callback(StatusCallback cb)
 }
 
 
-/* 默认为不打印电机信息 */
+bool MYACTUA::has_print_motor_ids() const
+{
+    std::lock_guard<std::mutex> lock(print_mutex_);
+    return !print_motor_ids_.empty();
+}
+
+
+std::vector<int> MYACTUA::get_print_motor_ids() const
+{
+    std::lock_guard<std::mutex> lock(print_mutex_);
+    return print_motor_ids_;
+}
+
+
+/* 配置电机监控打印: 空列表关闭打印，-1 表示全部电机 */
 void MYACTUA::set_print_info(const std::vector<int>& slave_indices)
 {
-    for (auto& motor : _motors) {
-        motor.print_info = false;
-    }
-    print_motor_ids_.clear();
+    std::vector<int> normalized_ids;
+    const int motor_count = static_cast<int>(_motors.size());
+    const bool print_all = std::find(slave_indices.begin(), slave_indices.end(), -1) != slave_indices.end();
 
-    for (int slave_index : slave_indices) {
-        if (slave_index < 0 || slave_index >= static_cast<int>(_motors.size())) {
-            continue;
+    if (print_all) {
+        normalized_ids.reserve(_motors.size());
+        for (int i = 0; i < motor_count; ++i) {
+            normalized_ids.push_back(i);
         }
-        /* 去重 */
-        if (std::find(print_motor_ids_.begin(), print_motor_ids_.end(), slave_index) == print_motor_ids_.end()) {
-            print_motor_ids_.push_back(slave_index);
-            _motors[slave_index].print_info = true;
+    } else {
+        for (int slave_index : slave_indices) {
+            if (slave_index < 0 || slave_index >= motor_count) {
+                continue;
+            }
+            /* 去重 */
+            if (std::find(normalized_ids.begin(), normalized_ids.end(), slave_index) == normalized_ids.end()) {
+                normalized_ids.push_back(slave_index);
+            }
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(print_mutex_);
+        print_motor_ids_ = normalized_ids;
+    }
+
+    if (running_) {
+        if (normalized_ids.empty()) {
+            stop_monitor_thread();
+        } else {
+            start_monitor_thread();
         }
     }
 }
 
 
+void MYACTUA::monitor_thread_func()
+{
+    using Clock = std::chrono::steady_clock;
+    constexpr auto period = std::chrono::milliseconds(200);
+    auto next_tick = Clock::now();
+
+    while (monitor_running_) {
+        if (has_print_motor_ids()) {
+            print_motors_info();
+        }
+
+        next_tick += period;
+        std::this_thread::sleep_until(next_tick);
+        if (Clock::now() > next_tick + period) {
+            next_tick = Clock::now();
+        }
+    }
+}
+
+
+void MYACTUA::start_monitor_thread()
+{
+    bool expected = false;
+    if (!monitor_running_.compare_exchange_strong(expected, true)) {
+        return;
+    }
+    monitor_thread_ = std::thread(&MYACTUA::monitor_thread_func, this);
+}
+
+
+void MYACTUA::stop_monitor_thread()
+{
+    if (!monitor_running_.exchange(false)) {
+        return;
+    }
+    if (monitor_thread_.joinable()) {
+        monitor_thread_.join();
+    }
+}
+
+
 void MYACTUA::print_motors_info(void){
+    const std::vector<MotorStatusSnapshot> status = get_status();
+    const std::vector<int> print_motor_ids = get_print_motor_ids();
+    if (print_motor_ids.empty()) {
+        return;
+    }
+
     printf("\033[2J\033[H");
 
     printf("\033[1;36m============================ MOTOR REAL-TIME MONITOR ============================\033[0m\n");
@@ -788,8 +908,8 @@ void MYACTUA::print_motors_info(void){
         "TX_TARGET", "RX_TQ_PCT", "RX_POS_DEG", "TAR_ERR_DEG");
     printf("------------------------------------------------------------------------------------------------------------------------------------------------------\n");
 
-    for (const auto& m : _motors) {
-        if (std::find(print_motor_ids_.begin(), print_motor_ids_.end(), m.slave_index) == print_motor_ids_.end()) {
+    for (const auto& m : status) {
+        if (std::find(print_motor_ids.begin(), print_motor_ids.end(), m.slave_index) == print_motor_ids.end()) {
             continue;
         }
         const char* color_code = "\033[32m";
@@ -797,53 +917,12 @@ void MYACTUA::print_motors_info(void){
         if (m.step == MotorStep::STOPPED) color_code = "\033[35m";
         if (m.step == MotorStep::MODE_SWITCHING) color_code = "\033[33m";
 
-        const char* step_name = "UNKNOWN";
-        switch (m.step) {
-            case MotorStep::IDLE: step_name = "IDLE"; break;
-            case MotorStep::ENABLING: step_name = "ENABLING"; break;
-            case MotorStep::RUNNING: step_name = "RUNNING"; break;
-            case MotorStep::STOPPED: step_name = "STOPPED"; break;
-            case MotorStep::FAULT: step_name = "FAULT"; break;
-            case MotorStep::MODE_SWITCHING: step_name = "MODE_SWITCHING"; break;
-        }
-
-        const char* mode_switch_step_name = "N/A";
-        switch (m.mode_switch_step) {
-            case ModeSwitchStep::IDLE: mode_switch_step_name = "IDLE"; break;
-            case ModeSwitchStep::SET_MODE: mode_switch_step_name = "SET_MODE"; break;
-            case ModeSwitchStep::CLEAR: mode_switch_step_name = "CLEAR"; break;
-            case ModeSwitchStep::DISABLE: mode_switch_step_name = "DISABLE"; break;
-            case ModeSwitchStep::ENABLE: mode_switch_step_name = "ENABLE"; break;
-            case ModeSwitchStep::OPERATING: mode_switch_step_name = "OPERATING"; break;
-            case ModeSwitchStep::DONE: mode_switch_step_name = "DONE"; break;
-        }
-
-        const char* mode_name = "UNKNOWN";
-        switch (m.rx.op_mode) {
-            case ControlMode::NONE: mode_name = "NONE"; break;
-            case ControlMode::PVT: mode_name = "PVT"; break;
-            case ControlMode::CSP: mode_name = "CSP"; break;
-            case ControlMode::CSV: mode_name = "CSV"; break;
-            case ControlMode::CST: mode_name = "CST"; break;
-            default: break;
-        }
-
-        const char* tx_mode_name = "UNKNOWN";
-        switch (m.tx.op_mode) {
-            case ControlMode::NONE: tx_mode_name = "NONE"; break;
-            case ControlMode::PVT: tx_mode_name = "PVT"; break;
-            case ControlMode::CSP: tx_mode_name = "CSP"; break;
-            case ControlMode::CSV: tx_mode_name = "CSV"; break;
-            case ControlMode::CST: tx_mode_name = "CST"; break;
-            default: break;
-        }
-
-        const double rx_pos_rad = static_cast<double>(m.rx.pos) * kRawPosToRad;
+        const double rx_pos_rad = m.position * kRawPosToRad;
         const double rx_pos_deg = rx_pos_rad * kRadToDeg;
-        const double target_pos_deg = static_cast<double>(m.tx.target_pos) * kRawPosToRad * kRadToDeg;
+        const double target_pos_deg = static_cast<double>(m.tx_target_pos) * kRawPosToRad * kRadToDeg;
         const double target_error_deg = target_pos_deg - rx_pos_deg;
         char tx_target_info[64] = {};
-        switch (m.tx.op_mode) {
+        switch (m.tx_mode) {
             case ControlMode::PVT:
                 std::snprintf(tx_target_info, sizeof(tx_target_info), "%.3f",
                     target_pos_deg);
@@ -854,11 +933,11 @@ void MYACTUA::print_motors_info(void){
                 break;
             case ControlMode::CSV:
                 std::snprintf(tx_target_info, sizeof(tx_target_info), "%.3f rpm",
-                    static_cast<double>(m.tx.target_vel) * kRawVelToRpm);
+                    static_cast<double>(m.tx_target_vel) * kRawVelToRpm);
                 break;
             case ControlMode::CST:
                 std::snprintf(tx_target_info, sizeof(tx_target_info), "%d raw",
-                    static_cast<int>(m.tx.target_torque));
+                    static_cast<int>(m.tx_target_torque));
                 break;
             default:
                 std::snprintf(tx_target_info, sizeof(tx_target_info), "N/A");
@@ -867,16 +946,16 @@ void MYACTUA::print_motors_info(void){
 
         printf("M %-4d | %-10u | %s%-16s\033[0m | %s%-22s\033[0m | %-8s | %-8s | %-7s | %-16s | %-13.1f%% | %-14.3f | %-14.3f\n",
             m.slave_index,
-            static_cast<unsigned int>(m.comm_offline_total_count),
+            static_cast<unsigned int>(m.offline_count),
             color_code,
-            step_name,
+            motor_step_name(m.step),
             color_code,
-            mode_switch_step_name,
-            mode_name,
-            tx_mode_name,
-            m.desired.enabled ? "Y" : "N",
+            mode_switch_step_name(m.mode_switch_step),
+            control_mode_name(m.op_mode),
+            control_mode_name(m.tx_mode),
+            m.desired_enabled ? "Y" : "N",
             tx_target_info,
-            static_cast<double>(m.rx.torque) / 10.0,
+            m.torque / 10.0,
             rx_pos_deg,
             target_error_deg);
     }
@@ -895,7 +974,17 @@ void MYACTUA::start()
     
     struct sched_param param;
     param.sched_priority = 80;
-    pthread_setschedparam(rt_thread_.native_handle(), SCHED_FIFO, &param);
+    const int sched_result =
+        pthread_setschedparam(rt_thread_.native_handle(), SCHED_FIFO, &param);
+    if (sched_result != 0) {
+        std::cerr << "[MYACTUA] Warning: failed to set realtime scheduling "
+                  << "(SCHED_FIFO priority 80): "
+                  << std::strerror(sched_result) << std::endl;
+    }
+
+    if (has_print_motor_ids()) {
+        start_monitor_thread();
+    }
     
     std::cout << "[MYACTUA] 实时控制线程已启动" << std::endl;
 }
@@ -903,9 +992,10 @@ void MYACTUA::start()
 
 void MYACTUA::shutdown()
 {
-    if (!running_) return;
-    
-    running_ = false;
+    const bool was_running = running_.exchange(false);
+    stop_monitor_thread();
+    if (!was_running) return;
+
     if (rt_thread_.joinable()) {
         rt_thread_.join();
     }

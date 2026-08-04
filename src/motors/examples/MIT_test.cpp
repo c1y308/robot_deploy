@@ -65,17 +65,17 @@ int main()
     controller.start();
 
     std::cout << "[3/7] ..." << std::endl;
-    controller.send_command(myactua::ControlCommand::Stop());
+    controller.send_command(myactua::ControlCommand::stop());
     sleep_ms(kWarmupMs);
 
     std::cout << "[4/7] MIT/PVT ..." << std::endl;
-    controller.send_command(myactua::ControlCommand::SetMode(myactua::ControlMode::PVT));
+    controller.send_command(myactua::ControlCommand::set_mode(myactua::ControlMode::PVT));
     sleep_ms(kModeSwitchWaitMs);
 
     std::vector<double> init_pos = controller.get_joint_q_rad();
     if (init_pos.empty()) {
         std::cerr << "[ERROR] " << std::endl;
-        controller.send_command(myactua::ControlCommand::Stop());
+        controller.send_command(myactua::ControlCommand::stop());
         controller.shutdown();
         return -1;
     }
@@ -83,7 +83,7 @@ int main()
     std::cout << "[INFO] home = " << home_deg << " deg" << std::endl;
 
     std::cout << "[5/7] ..." << std::endl;
-    controller.send_command(myactua::ControlCommand::Restart());
+    controller.send_command(myactua::ControlCommand::restart());
     sleep_ms(kRestartWaitMs);
 
     constexpr double kTargetDeg = 60.0;
@@ -105,7 +105,7 @@ int main()
                 break;
 
             myactua::MitSetpoint sp(home_deg, 0.0, 0.0, kDefaultKp, kDefaultKd);
-            controller.send_command(myactua::ControlCommand::SetMitSetpoints({sp}));
+            controller.send_command(myactua::ControlCommand::set_mit_setpoints({sp}));
             next += std::chrono::milliseconds(kCommandPeriodMs);
             std::this_thread::sleep_until(next);
         }
@@ -130,7 +130,7 @@ int main()
             double p = home_deg + (target_deg - home_deg) * blend;
 
             myactua::MitSetpoint sp(p, 0.0, 0.0, kDefaultKp, kDefaultKd);
-            controller.send_command(myactua::ControlCommand::SetMitSetpoints({sp}));
+            controller.send_command(myactua::ControlCommand::set_mit_setpoints({sp}));
             next += std::chrono::milliseconds(kCommandPeriodMs);
             std::this_thread::sleep_until(next);
         }
@@ -155,7 +155,7 @@ int main()
             double p = start_deg + (home_deg - start_deg) * blend;
 
             myactua::MitSetpoint sp(p, 0.0, 0.0, kDefaultKp, kDefaultKd);
-            controller.send_command(myactua::ControlCommand::SetMitSetpoints({sp}));
+            controller.send_command(myactua::ControlCommand::set_mit_setpoints({sp}));
             next += std::chrono::milliseconds(kCommandPeriodMs);
             std::this_thread::sleep_until(next);
         }
@@ -164,12 +164,12 @@ int main()
     std::cout << "\n[6/7] hold home pose" << std::endl;
     {
         myactua::MitSetpoint sp(home_deg, 0.0, 0.0, kDefaultKp, kDefaultKd);
-        controller.send_command(myactua::ControlCommand::SetMitSetpoints({sp}));
+        controller.send_command(myactua::ControlCommand::set_mit_setpoints({sp}));
     }
     sleep_ms(500);
 
     std::cout << "[7/7] stop" << std::endl;
-    controller.send_command(myactua::ControlCommand::Stop());
+    controller.send_command(myactua::ControlCommand::stop());
     sleep_ms(500);
 
     controller.shutdown();

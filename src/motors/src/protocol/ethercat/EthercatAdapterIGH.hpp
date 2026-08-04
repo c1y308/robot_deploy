@@ -85,7 +85,7 @@ private:
     std::vector<SlaveOffsets> slave_offsets;
 
 
-    // 应用层先写 shadow，sendPhysical() 在控制主循环内统一落盘到 domain1_pd
+    // 应用层先写 shadow，send_physical() 在控制主循环内统一落盘到 domain1_pd
     std::array<TxPDO, kNumSlaves> tx_shadow = {};
     std::mutex tx_shadow_mutex;
     void write_txpdo_to_domain(std::size_t index, const TxPDO& pdo);
@@ -106,9 +106,9 @@ public:
     void  send(int index, const TxPDO& pdo) override;
     RxPDO receive(int index) override;
 
-    void receivePhysical() override;
-    void sendPhysical() override;
-    bool isConfigured(int index) override;
+    void receive_physical() override;
+    void send_physical() override;
+    bool is_configured(int index) override;
 };
 
 }

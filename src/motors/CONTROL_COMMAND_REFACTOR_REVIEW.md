@@ -46,7 +46,7 @@ ControlCommand(CommandType::SET_MODE, -1, mit_setpoints);
 从控制系统角度看，这个改动也更符合真实语义：
 
 - `STOP`、`RESTART`、`SET_MODE` 是离散状态命令，需要进入离散命令队列，等待状态字或模式回读确认。
-- `SetScalarSetpoints` 和 `SetMitSetpoints` 是连续目标值更新，主要写入 `DesiredState`，不应该混入离散状态机。
+- `set_scalar_setpoints` 和 `set_mit_setpoints` 是连续目标值更新，主要写入 `DesiredState`，不应该混入离散状态机。
 
 ## 3. 核心设计变化
 
@@ -73,13 +73,13 @@ enum class SetpointCommandType {
 `ControlCommand` 不再暴露旧构造方式，只允许通过静态工厂函数创建：
 
 ```cpp
-ControlCommand::Stop();
-ControlCommand::Restart();
-ControlCommand::SetMode(ControlMode::CSP, i);
-ControlCommand::SetScalarSetpoints(target_deg);
-ControlCommand::SetScalarSetpoint(i, target);
-ControlCommand::SetMitSetpoints(mit_setpoints);
-ControlCommand::SetMitSetpoint(i, mit_setpoint);
+ControlCommand::stop();
+ControlCommand::restart();
+ControlCommand::set_mode(ControlMode::CSP, i);
+ControlCommand::set_scalar_setpoints(target_deg);
+ControlCommand::set_scalar_setpoint(i, target);
+ControlCommand::set_mit_setpoints(mit_setpoints);
+ControlCommand::set_mit_setpoint(i, mit_setpoint);
 ```
 
 同时保留 `ControlCommand::kAllSlaves = -1`，统一表达“全部电机”的含义。
@@ -138,7 +138,7 @@ controller.send_command(
 
 ```cpp
 controller.send_command(
-    ControlCommand::SetMode(ControlMode::CSP, i));
+    ControlCommand::set_mode(ControlMode::CSP, i));
 ```
 
 旧写法：
@@ -152,7 +152,7 @@ controller.send_command(
 
 ```cpp
 controller.send_command(
-    ControlCommand::SetScalarSetpoints(target_deg));
+    ControlCommand::set_scalar_setpoints(target_deg));
 ```
 
 旧写法：
@@ -166,7 +166,7 @@ controller.send_command(
 
 ```cpp
 controller.send_command(
-    ControlCommand::SetMitSetpoints(sp));
+    ControlCommand::set_mit_setpoints(sp));
 ```
 
 ## 5. 修改后的收益
@@ -179,11 +179,11 @@ controller.send_command(
 
 调用点从“看参数猜语义”变成“函数名表达语义”：
 
-- `Stop()`
-- `Restart()`
-- `SetMode(...)`
-- `SetScalarSetpoints(...)`
-- `SetMitSetpoints(...)`
+- `stop()`
+- `restart()`
+- `set_mode(...)`
+- `set_scalar_setpoints(...)`
+- `set_mit_setpoints(...)`
 
 这对控制代码很重要，因为读代码的人需要快速判断当前命令是否会改变电机状态、是否会下发连续目标值。
 
@@ -207,8 +207,8 @@ controller.send_command(
 
 setpoint 的单位语义保持不变：
 
-- `SetScalarSetpoints` 的单位仍由当前 `ControlMode` 决定。
-- `SetMitSetpoints` 使用 `MitSetpoint` 字段中的单位定义。
+- `set_scalar_setpoints` 的单位仍由当前 `ControlMode` 决定。
+- `set_mit_setpoints` 使用 `MitSetpoint` 字段中的单位定义。
 
 这是为了避免在同一次重构中混入“单位系统重构”，控制改动风险。
 
@@ -241,7 +241,7 @@ grep -R "enum class CommandType\|myactua::CommandType\|ControlCommand(myactua::"
 
 > 我在电机控制接口里发现 `ControlCommand` 是一个典型的手写 tagged union：一个 `CommandType` 配多个可选字段。短期看很方便，但随着命令类型变多，它会允许很多非法组合，比如 STOP 命令携带 setpoint、SET_MODE 命令携带 MIT 参数。编译器无法约束这些状态，后续维护时容易把错误藏到运行时分支里。
 >
-> 所以我把命令拆成两类：离散命令和连续 setpoint 命令。离散命令包括 STOP、RESTART、SET_MODE，需要进入状态机并等待状态确认；setpoint 命令只负责更新 desired target。然后我移除了旧构造函数，改成 `ControlCommand::Stop()`、`SetMode()`、`SetScalarSetpoints()`、`SetMitSetpoints()` 这类静态工厂函数，让调用点直接表达意图。
+> 所以我把命令拆成两类：离散命令和连续 setpoint 命令。离散命令包括 STOP、RESTART、SET_MODE，需要进入状态机并等待状态确认；setpoint 命令只负责更新 desired target。然后我移除了旧构造函数，改成 `ControlCommand::stop()`、`set_mode()`、`set_scalar_setpoints()`、`set_mit_setpoints()` 这类静态工厂函数，让调用点直接表达意图。
 >
 > 这个方案没有大改 `send_command()` 和线程安全队列，因此对实时控制框架影响较小，但显著提升了类型安全和可读性。最后我同步迁移了所有示例和 inference 层调用，并通过 motors、inference 两套 CMake build 和旧接口残留检查验证。
 
@@ -255,7 +255,7 @@ grep -R "enum class CommandType\|myactua::CommandType\|ControlCommand(myactua::"
 
 ## 9. 后续可继续优化
 
-- 给 `SetScalarSetpoints` 进一步拆出 `SetPositionDeg`、`SetVelocityRpm`、`SetTorqueRaw`，把单位也放进类型或函数名。
+- 给 `set_scalar_setpoints` 进一步拆出 `SetPositionDeg`、`SetVelocityRpm`、`SetTorqueRaw`，把单位也放进类型或函数名。
 - 给命令增加轻量校验函数，例如指定单轴时要求 payload 至少有一个元素。
 - 如果命令 payload 继续复杂化，可以考虑 `std::variant` 版本，彻底避免无效字段常驻结构体。
 - 为 `process_commands()` 增加单元测试或仿真测试，覆盖批量 setpoint、单轴 setpoint、STOP/RESTART/SET_MODE 入队逻辑。
