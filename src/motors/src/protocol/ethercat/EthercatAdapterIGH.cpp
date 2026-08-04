@@ -49,20 +49,6 @@ uint64_t parse_diag_interval_from_env(uint64_t default_value)
     return static_cast<uint64_t>(parsed);
 }
 
-const char* wc_state_to_string(ec_wc_state_t state)
-{
-    switch (state) {
-        case EC_WC_ZERO:
-            return "ZERO";
-        case EC_WC_INCOMPLETE:
-            return "INCOMPLETE";
-        case EC_WC_COMPLETE:
-            return "COMPLETE";
-        default:
-            return "UNKNOWN";
-    }
-}
-
 } // namespace
 
 // ---定义静态配置模板---
@@ -105,8 +91,6 @@ EthercatAdapterIGH::EthercatAdapterIGH() {
     slave_offsets.resize(kNumSlaves);
     for (std::size_t i = 0; i < kNumSlaves; ++i) {
         slave_configured[i].store(false, std::memory_order_relaxed);
-        diag_last_send_cw[i].store(0, std::memory_order_relaxed);
-        diag_send_counter[i].store(0, std::memory_order_relaxed);
         tx_shadow[i] = {};
         tx_shadow[i].control_word = CMD_SHUTDOWN;
         tx_shadow[i].target_pos = 0;
@@ -229,18 +213,24 @@ void EthercatAdapterIGH::write_txpdo_to_domain(std::size_t index, const TxPDO& p
     EC_WRITE_S8(domain1_pd + off.off_mode_of_op, pdo.op_mode);
 }
 
+void EthercatAdapterIGH::emit_rt_event(const RtEvent& event)
+{
+    if (rt_event_sink) {
+        rt_event_sink(rt_event_context, event);
+    }
+}
+
+void EthercatAdapterIGH::set_rt_event_sink(void* context, RtEventSink sink)
+{
+    rt_event_context = context;
+    rt_event_sink = sink;
+}
+
 void EthercatAdapterIGH::send(int index, const TxPDO& pdo)
 {
     if (index < 0 || static_cast<std::size_t>(index) >= slave_offsets.size()) return;
 
-    if (diag_enabled) {
-        diag_last_send_cw[index].store(pdo.control_word, std::memory_order_relaxed);
-        diag_send_counter[index].fetch_add(1, std::memory_order_relaxed);
-    }
-    {
-        std::lock_guard<std::mutex> lock(tx_shadow_mutex);
-        tx_shadow[index] = pdo;
-    }
+    tx_shadow[index] = pdo;
 }
 
 RxPDO EthercatAdapterIGH::receive(int index)
@@ -286,14 +276,8 @@ void EthercatAdapterIGH::send_physical() {
         return;
     }
 
-    std::array<TxPDO, kNumSlaves> tx_snapshot = {};
-    {
-        std::lock_guard<std::mutex> lock(tx_shadow_mutex);
-        tx_snapshot = tx_shadow;
-    }
-
     for (std::size_t i = 0; i < kNumSlaves; ++i) {
-        write_txpdo_to_domain(i, tx_snapshot[i]);
+        write_txpdo_to_domain(i, tx_shadow[i]);
     }
 
     if (sync_ref_counter) {
@@ -313,32 +297,14 @@ void EthercatAdapterIGH::send_physical() {
                              (cycle % diag_interval_cycles == 0);
     if (sample_diag) {
         ecrt_domain_state(domain1, &domain1_state);
-        std::printf("[ECAT_DIAG] cycle=%llu wc=%u wc_state=%s\n",
-                    static_cast<unsigned long long>(cycle),
-                    domain1_state.working_counter,
-                    wc_state_to_string(domain1_state.wc_state));
-
-        for (std::size_t i = 0; i < kNumSlaves; ++i) {
-            const SlaveOffsets& off = slave_offsets[i];
-            const uint16_t app_cw = diag_last_send_cw[i].load(std::memory_order_relaxed);
-            const uint32_t app_send_cnt = diag_send_counter[i].load(std::memory_order_relaxed);
-            const uint16_t pd_cw = EC_READ_U16(domain1_pd + off.off_ctrl_word);
-            const uint16_t sw = EC_READ_U16(domain1_pd + off.off_status_word);
-            const uint16_t err = EC_READ_U16(domain1_pd + off.off_error);
-            const int8_t op = EC_READ_S8(domain1_pd + off.off_mode_disp);
-            std::printf(
-                "  M%zu send_cw=0x%04X send_cnt=%u pd_cw=0x%04X"
-                " status=0x%04X err=0x%04X op=%d cfg=%d\n",
-                i,
-                static_cast<unsigned>(app_cw),
-                static_cast<unsigned>(app_send_cnt),
-                static_cast<unsigned>(pd_cw),
-                static_cast<unsigned>(sw),
-                static_cast<unsigned>(err),
-                static_cast<int>(op),
-                slave_configured[i].load(std::memory_order_relaxed) ? 1 : 0);
-        }
-        std::fflush(stdout);
+        RtEvent event;
+        event.type = domain1_state.wc_state == EC_WC_COMPLETE
+            ? RtEventType::ECAT_DIAG_SAMPLE
+            : RtEventType::ECAT_DOMAIN_NOT_COMPLETE;
+        event.tick = cycle;
+        event.value = domain1_state.working_counter;
+        event.reason = static_cast<int>(domain1_state.wc_state);
+        emit_rt_event(event);
     }
 
     ecrt_domain_queue(domain1);

@@ -16,7 +16,15 @@ src/motors/
 │   │   └── myact/
 │   │       ├── motor_control.hpp
 │   │       ├── motor_control.cpp
-│   │       └── ThreadSafeQueue.hpp
+│   │       ├── motor_state.hpp
+│   │       ├── motor_status_channel.hpp
+│   │       ├── motor_status_channel.cpp
+│   │       ├── motor_status_monitor.hpp
+│   │       ├── motor_status_monitor.cpp
+│   │       ├── motor_units.hpp
+│   │       ├── realtime_queue.hpp
+│   │       ├── rt_event_dispatcher.hpp
+│   │       └── rt_event_dispatcher.cpp
 │   └── protocol/
 │       └── ethercat/
 │           ├── EthercatAdapter.hpp
@@ -26,6 +34,8 @@ src/motors/
 │   ├── simple_test.cpp
 │   ├── debug_tool.cpp
 │   └── ID_test.cpp
+├── tests/
+│   └── motor_realtime_channel_test.cpp
 └── datasheet/
     └── myact/
 ```

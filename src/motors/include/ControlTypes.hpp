@@ -1,17 +1,26 @@
 #pragma once
 
-#include <vector>
+#include <array>
 #include <cstdint>
+#include <cstddef>
 #include <utility>
+#include <vector>
 #include "MotorTypes.hpp"
 
 namespace myactua {
 
 class MYACTUA;
 
+constexpr std::size_t kMaxMotorCommandSetpoints = 12;
+
 enum class ControlCommandKind {
     DISCRETE,  // STOP/RESTART/SET_MODE 等需要闭环确认的离散命令
     SETPOINT   // 连续目标值命令
+};
+
+enum class SetpointCommandType {
+    SCALAR_SETPOINTS,  // CSP/CSV/CST 等单标量目标值
+    MIT_SETPOINTS      // MIT/PVT 目标值
 };
 
 enum class DiscreteCommandType {
@@ -20,9 +29,36 @@ enum class DiscreteCommandType {
     SET_MODE  // 设置电机模式
 };
 
-enum class SetpointCommandType {
-    SCALAR_SETPOINTS,  // CSP/CSV/CST 等单标量目标值
-    MIT_SETPOINTS      // MIT/PVT 目标值
+enum class CommandSubmitResult {
+    ACCEPTED,
+    QUEUE_FULL,
+    INVALID_COMMAND,
+    INVALID_PAYLOAD
+};
+
+enum class RtEventType {
+    DISCRETE_COMMAND_FAILED,
+    DISCRETE_QUEUE_FULL,
+    STATUS_FRAME_OVERWRITTEN,
+    ECAT_DIAG_SAMPLE,
+    ECAT_DOMAIN_NOT_COMPLETE
+};
+
+struct RtEvent {
+    RtEventType type;
+    uint64_t tick;
+    int motor_index;
+    DiscreteCommandType command_type;
+    int reason;
+    uint32_t value;
+
+    RtEvent()
+        : type(RtEventType::DISCRETE_COMMAND_FAILED),
+          tick(0),
+          motor_index(-1),
+          command_type(DiscreteCommandType::STOP),
+          reason(0),
+          value(0) {}
 };
 
 /* MIT/PVT 模式单轴目标值，外部使用角度制(deg) */
@@ -51,13 +87,21 @@ struct MitSetpoint {
 struct ControlCommand {
     static constexpr int kAllSlaves = -1;
 
-    ControlCommandKind kind;             // 命令大类
-    DiscreteCommandType discrete_type;   // 离散命令类型
-    SetpointCommandType setpoint_type;   // 连续目标值类型
-    int slave_index;                     // 电机索引，kAllSlaves 表示全部电机
-    std::vector<double> scalar_setpoints;  // 标量目标值，单位由当前控制模式决定
-    std::vector<MitSetpoint> mit_setpoints;  // MIT/PVT目标值
-    ControlMode mode;                    // 目标电机模式，仅 SET_MODE 使用
+    ControlCommandKind  kind;             // 命令大类
+    DiscreteCommandType discrete_type;    // 离散命令类型
+    SetpointCommandType setpoint_type;    // 连续目标值类型
+
+    int slave_index;                      // 电机索引，kAllSlaves 表示全部电机
+
+    std::size_t scalar_setpoint_count;
+    std::size_t mit_setpoint_count;
+    std::array<double, kMaxMotorCommandSetpoints> scalar_setpoints;  // 单位由当前控制模式决定
+    std::array<MitSetpoint, kMaxMotorCommandSetpoints> mit_setpoints;  // MIT/PVT目标值
+
+
+    ControlMode mode; // 目标电机模式，仅 SET_MODE 使用
+
+    bool payload_valid;
 
     static ControlCommand stop(int slave_index = kAllSlaves) {
         ControlCommand cmd;
@@ -89,7 +133,14 @@ struct ControlCommand {
         cmd.kind = ControlCommandKind::SETPOINT;
         cmd.setpoint_type = SetpointCommandType::SCALAR_SETPOINTS;
         cmd.slave_index = kAllSlaves;
-        cmd.scalar_setpoints = std::move(values);
+        if (values.size() > kMaxMotorCommandSetpoints) {
+            cmd.payload_valid = false;
+            return cmd;
+        }
+        cmd.scalar_setpoint_count = values.size();
+        for (std::size_t i = 0; i < values.size(); ++i) {
+            cmd.scalar_setpoints[i] = values[i];
+        }
         return cmd;
     }
 
@@ -98,7 +149,8 @@ struct ControlCommand {
         cmd.kind = ControlCommandKind::SETPOINT;
         cmd.setpoint_type = SetpointCommandType::SCALAR_SETPOINTS;
         cmd.slave_index = slave_index;
-        cmd.scalar_setpoints = {value};
+        cmd.scalar_setpoint_count = 1;
+        cmd.scalar_setpoints[0] = value;
         return cmd;
     }
 
@@ -107,7 +159,14 @@ struct ControlCommand {
         cmd.kind = ControlCommandKind::SETPOINT;
         cmd.setpoint_type = SetpointCommandType::MIT_SETPOINTS;
         cmd.slave_index = kAllSlaves;
-        cmd.mit_setpoints = std::move(values);
+        if (values.size() > kMaxMotorCommandSetpoints) {
+            cmd.payload_valid = false;
+            return cmd;
+        }
+        cmd.mit_setpoint_count = values.size();
+        for (std::size_t i = 0; i < values.size(); ++i) {
+            cmd.mit_setpoints[i] = values[i];
+        }
         return cmd;
     }
 
@@ -116,7 +175,8 @@ struct ControlCommand {
         cmd.kind = ControlCommandKind::SETPOINT;
         cmd.setpoint_type = SetpointCommandType::MIT_SETPOINTS;
         cmd.slave_index = slave_index;
-        cmd.mit_setpoints = {value};
+        cmd.mit_setpoint_count = 1;
+        cmd.mit_setpoints[0] = value;
         return cmd;
     }
 
@@ -128,7 +188,12 @@ private:
           discrete_type(DiscreteCommandType::STOP),
           setpoint_type(SetpointCommandType::SCALAR_SETPOINTS),
           slave_index(kAllSlaves),
-          mode(ControlMode::NONE) {}
+          scalar_setpoints{},
+          mit_setpoints{},
+          scalar_setpoint_count(0),
+          mit_setpoint_count(0),
+          mode(ControlMode::NONE),
+          payload_valid(true) {}
 };
 
 

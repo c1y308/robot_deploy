@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <vector>
 #include <atomic>
-#include <mutex>
 
 namespace myactua {
 
@@ -87,22 +86,23 @@ private:
 
     // 应用层先写 shadow，send_physical() 在控制主循环内统一落盘到 domain1_pd
     std::array<TxPDO, kNumSlaves> tx_shadow = {};
-    std::mutex tx_shadow_mutex;
     void write_txpdo_to_domain(std::size_t index, const TxPDO& pdo);
+    void emit_rt_event(const RtEvent& event);
+    void* rt_event_context = nullptr;
+    RtEventSink rt_event_sink = nullptr;
 
     
     // 诊断: 仅用于验证时序问题，不改变控制路径
     bool diag_enabled = false;
     uint64_t diag_interval_cycles = 500;
     std::atomic<uint64_t> diag_cycle_counter{0};
-    std::array<std::atomic<uint16_t>, kNumSlaves> diag_last_send_cw = {};
-    std::array<std::atomic<uint32_t>, kNumSlaves> diag_send_counter = {};
 
 public:
     EthercatAdapterIGH();
     ~EthercatAdapterIGH() override;
 
     bool  init(const char* ifname) override;
+    void set_rt_event_sink(void* context, RtEventSink sink) override;
     void  send(int index, const TxPDO& pdo) override;
     RxPDO receive(int index) override;
 

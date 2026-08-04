@@ -16,6 +16,9 @@ link_directories(
 # 编译静态/动态库
 add_library(MYACTUA_EtherCat
     src/drivers/myact/motor_control.cpp
+    src/drivers/myact/motor_status_channel.cpp
+    src/drivers/myact/motor_status_monitor.cpp
+    src/drivers/myact/rt_event_dispatcher.cpp
     src/protocol/ethercat/EthercatAdapterIGH.cpp
 )
 
@@ -43,6 +46,7 @@ add_executable(squat_stand examples/squat_stand.cpp)
 add_executable(MIT_test examples/MIT_test.cpp)
 add_executable(mit_pos_test examples/mit_pos_test.cpp)
 add_executable(motor_response_latency_test examples/motor_response_latency_test.cpp)
+add_executable(motor_realtime_channel_test tests/motor_realtime_channel_test.cpp)
 target_include_directories(motor_response_latency_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../inference/include
 )
@@ -56,3 +60,4 @@ target_link_libraries(squat_stand MYACTUA_EtherCat)
 target_link_libraries(MIT_test MYACTUA_EtherCat)
 target_link_libraries(mit_pos_test MYACTUA_EtherCat)
 target_link_libraries(motor_response_latency_test MYACTUA_EtherCat)
+target_link_libraries(motor_realtime_channel_test MYACTUA_EtherCat)
