@@ -1,4 +1,5 @@
 #include "robot_interface.hpp"
+#include "driver/myact/motor_control.hpp"
 #include "torch_policy_runner.hpp"
 
 #include <algorithm>
@@ -120,13 +121,13 @@ bool ankle_parallel_map_indices_in_range(
            index_in_range(ankle_map.lower_motor_index, count);
 }
 
-const char* command_submit_result_name(myactua::CommandSubmitResult result)
+const char* command_submit_result_name(motor_base::CommandSubmitResult result)
 {
     switch (result) {
-        case myactua::CommandSubmitResult::ACCEPTED: return "ACCEPTED";
-        case myactua::CommandSubmitResult::QUEUE_FULL: return "QUEUE_FULL";
-        case myactua::CommandSubmitResult::INVALID_COMMAND: return "INVALID_COMMAND";
-        case myactua::CommandSubmitResult::INVALID_PAYLOAD: return "INVALID_PAYLOAD";
+        case motor_base::CommandSubmitResult::ACCEPTED: return "ACCEPTED";
+        case motor_base::CommandSubmitResult::QUEUE_FULL: return "QUEUE_FULL";
+        case motor_base::CommandSubmitResult::INVALID_COMMAND: return "INVALID_COMMAND";
+        case motor_base::CommandSubmitResult::INVALID_PAYLOAD: return "INVALID_PAYLOAD";
     }
     return "UNKNOWN";
 }
@@ -145,10 +146,10 @@ std::array<float, 2> gait_phase_observation(std::uint64_t episode_length,
 }
 
 
-/* 判断当前电机控制模式是否走 MIT/PVT setpoint 下发路径。 */
-bool is_mit_mode(myactua::ControlMode mode)
+/* 判断当前电机控制模式是否走阻抗式 setpoint 下发路径。 */
+bool is_mit_mode(motor_base::MotorControlMode mode)
 {
-    return mode == myactua::ControlMode::PVT;
+    return mode == motor_base::MotorControlMode::IMPEDANCE;
 }
 
 }  // namespace
@@ -301,8 +302,8 @@ bool RobotInterface::initial_and_start_motors() {
         return false;
     }
 
-    if (!controller_->wait_all_slaves_ready(config_.wait_all_slaves_timeout_ms,
-                                            config_.wait_all_slaves_poll_ms)) {
+    if (!controller_->wait_all_motors_ready(config_.wait_all_motors_timeout_ms,
+                                            config_.wait_all_motors_poll_ms)) {
         std::cerr << "[RobotInterface] Not all slaves became ready in timeout.\n";
         controller_.reset();
         adapter_.reset();
@@ -312,7 +313,7 @@ bool RobotInterface::initial_and_start_motors() {
     /* 设置电机控制模式 */
     for (int i = 0; i < config_.num_motors; ++i) {
         if (!submit_motor_command(
-                myactua::ControlCommand::set_mode(config_.motor_control_mode, i),
+                motor_base::ControlCommand::set_mode(config_.motor_control_mode, i),
                 "set_mode")) {
             controller_.reset();
             adapter_.reset();
@@ -330,7 +331,7 @@ bool RobotInterface::initial_and_start_motors() {
     /* 启动实时线程 */
     controller_->start();
 
-    if (!submit_motor_command(myactua::ControlCommand::stop(), "initial_stop")) {
+    if (!submit_motor_command(motor_base::ControlCommand::stop(), "initial_stop")) {
         controller_.reset();
         adapter_.reset();
         return false;
@@ -343,7 +344,7 @@ bool RobotInterface::initial_and_start_motors() {
     return true;
 }
 
-/* 校验电机数量、方向和 MIT/PVT 控制参数是否满足下发要求。 */
+/* 校验电机数量、方向和复合控制参数是否满足下发要求。 */
 bool RobotInterface::validate_motor_config() const {
     if (config_.num_motors <= 0) {
         std::cerr << "[RobotInterface] num_motors must be positive\n";
@@ -400,13 +401,13 @@ void RobotInterface::deinit_motors() {
     reset_motor_pos_error_log();
 }
 
-bool RobotInterface::submit_motor_command(const myactua::ControlCommand& command,
+bool RobotInterface::submit_motor_command(const motor_base::ControlCommand& command,
                                           const char* context) {
     if (!controller_) {
         return false;
     }
-    const myactua::CommandSubmitResult result = controller_->send_command(command);
-    if (result == myactua::CommandSubmitResult::ACCEPTED) {
+    const motor_base::CommandSubmitResult result = controller_->send_command(command);
+    if (result == motor_base::CommandSubmitResult::ACCEPTED) {
         return true;
     }
 
@@ -416,41 +417,41 @@ bool RobotInterface::submit_motor_command(const myactua::ControlCommand& command
     return false;
 }
 
-/* 发送 STOP 指令；slave_index 为 -1 时停止全部电机并关闭运动使能。 */
-bool RobotInterface::stop_motors(int slave_index) {
+/* 发送 STOP 指令；motor_index 为 -1 时停止全部电机并关闭运动使能。 */
+bool RobotInterface::stop_motors(int motor_index) {
     if (!motors_initialized_.load() || !controller_) {
         return false;
     }
-    if (slave_index >= config_.num_motors) {
-        std::cerr << "[RobotInterface] stop_motors invalid slave_index="
-                  << slave_index << "\n";
+    if (motor_index >= config_.num_motors) {
+        std::cerr << "[RobotInterface] stop_motors invalid motor_index="
+                  << motor_index << "\n";
         return false;
     }
 
-    if (!submit_motor_command(myactua::ControlCommand::stop(slave_index), "stop_motors")) {
+    if (!submit_motor_command(motor_base::ControlCommand::stop(motor_index), "stop_motors")) {
         return false;
     }
-    if (slave_index < 0) {
+    if (motor_index < 0) {
         motion_enabled_.store(false);
     }
     return true;
 }
 
 /* 发送 RESTART 指令；全部电机重启成功后允许后续动作下发。 */
-bool RobotInterface::restart_motors(int slave_index) {
+bool RobotInterface::restart_motors(int motor_index) {
     if (!motors_initialized_.load() || !controller_) {
         return false;
     }
-    if (slave_index >= config_.num_motors) {
-        std::cerr << "[RobotInterface] restart_motors invalid slave_index="
-                  << slave_index << "\n";
+    if (motor_index >= config_.num_motors) {
+        std::cerr << "[RobotInterface] restart_motors invalid motor_index="
+                  << motor_index << "\n";
         return false;
     }
 
-    if (!submit_motor_command(myactua::ControlCommand::restart(slave_index), "restart_motors")) {
+    if (!submit_motor_command(motor_base::ControlCommand::restart(motor_index), "restart_motors")) {
         return false;
     }
-    if (slave_index < 0 || config_.num_motors == 1) {
+    if (motor_index < 0 || config_.num_motors == 1) {
         motion_enabled_.store(true);
     }
     return true;
@@ -644,16 +645,16 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
     }
 
     if (is_mit_mode(config_.motor_control_mode)) {
-        std::vector<myactua::MitSetpoint> mit_setpoints(config_.num_motors);
+        std::vector<motor_base::ImpedanceSetpoint> impedance_setpoints(config_.num_motors);
         for (int i = 0; i < config_.num_motors; ++i) {
-            mit_setpoints[i] = myactua::MitSetpoint(myactua::MYACTUA::rad_to_deg(target_rad[i]),
-                                                    0.0,
-                                                    0.0,
-                                                    config_.mit_kp[i],
-                                                    config_.mit_kd[i]);
+            impedance_setpoints[i] = motor_base::ImpedanceSetpoint(target_rad[i],
+                                                                0.0,
+                                                                0.0,
+                                                                config_.mit_kp[i],
+                                                                config_.mit_kd[i]);
         }
         if (!submit_motor_command(
-                myactua::ControlCommand::set_mit_setpoints(std::move(mit_setpoints)),
+                motor_base::ControlCommand::set_impedance_targets(std::move(impedance_setpoints)),
                 "apply_action_mit")) {
             return false;
         }
@@ -662,18 +663,13 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
     }
 
     /* 位置控制模式 */
-    if (config_.motor_control_mode != myactua::ControlMode::CSP) {
-        std::cerr << "[RobotInterface] apply_action supports only MIT/PVT or CSP mode\n";
+    if (config_.motor_control_mode != motor_base::MotorControlMode::POSITION) {
+        std::cerr << "[RobotInterface] apply_action supports only impedance or position mode\n";
         return false;
     }
 
-    std::vector<double> target_deg(config_.num_motors, 0.0);
-    for (int i = 0; i < config_.num_motors; ++i) {
-        target_deg[i] = myactua::MYACTUA::rad_to_deg(target_rad[i]);
-    }
-
     if (!submit_motor_command(
-            myactua::ControlCommand::set_scalar_setpoints(std::move(target_deg)),
+            motor_base::ControlCommand::set_position_targets_rad(std::move(target_rad)),
             "apply_action_csp")) {
         return false;
     }
@@ -701,14 +697,14 @@ std::vector<double> RobotInterface::get_joint_vel() const {
     return dq;
 }
 
-/* 获取当前关节力矩原始值；控制器未创建时返回零向量。 */
-std::vector<double> RobotInterface::get_joint_tau() const {
-    std::vector<double> tau(config_.num_motors, 0.0);
+/* 获取当前关节力矩反馈百分比；控制器未创建时返回零向量。 */
+std::vector<double> RobotInterface::get_joint_torque_percent() const {
+    std::vector<double> torque(config_.num_motors, 0.0);
     if (!controller_) {
-        return tau;
+        return torque;
     }
-    tau = controller_->get_joint_tau_raw();
-    return tau;
+    torque = controller_->get_joint_torque_percent();
+    return torque;
 }
 
 /* 按平滑插值将关节恢复到 stand_pose_rad 初始姿态。 */
@@ -1203,7 +1199,7 @@ void RobotInterface::log_motor_pos_error(const std::vector<double>& target_rad) 
         return;
     }
 
-    const std::vector<myactua::MotorStatusSnapshot> status = controller_->get_status();
+    const std::vector<motor_base::MotorStatusSnapshot> status = controller_->get_status();
     if (static_cast<int>(status.size()) != config_.num_motors) {
         std::cerr << "[RobotInterface] failed to write motor position error log: "
                   << "status size mismatch\n";
@@ -1215,10 +1211,12 @@ void RobotInterface::log_motor_pos_error(const std::vector<double>& target_rad) 
     std::vector<double> target_pos_deg(config_.num_motors, 0.0);
     std::vector<double> rx_pos_deg(config_.num_motors, 0.0);
     std::vector<double> tar_err_deg(config_.num_motors, 0.0);
+
+    // 使用 get_joint_q_rad() 获取物理量（rad），避免直接依赖原始 PDO 编码器值
+    const std::vector<double> q_rad = controller_->get_joint_q_rad();
     for (int i = 0; i < config_.num_motors; ++i) {
-        target_pos_deg[i] = myactua::MYACTUA::rad_to_deg(target_rad[i]);
-        rx_pos_deg[i] = myactua::MYACTUA::rad_to_deg(
-            myactua::MYACTUA::raw_pos_to_rad(status[i].position));
+        target_pos_deg[i] = motor_base::MotorControllerBase::rad_to_deg(target_rad[i]);
+        rx_pos_deg[i] = motor_base::MotorControllerBase::rad_to_deg(q_rad[i]);
         tar_err_deg[i] = target_pos_deg[i] - rx_pos_deg[i];
     }
 

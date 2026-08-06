@@ -1,8 +1,8 @@
 #pragma once
 #include "async_csv_logger.hpp"
 #include "EthercatAdapterIGH.hpp"
+#include "motor_base/MotorControllerBase.hpp"
 #include "imu_reader.hpp"
-#include "motor_control.hpp"
 #include "ankle_motor_fk.hpp"
 #include "ankle_motor_ik.hpp"
 #include "policy_observation_config.hpp"
@@ -18,7 +18,6 @@
 
 namespace myactua {
 class EthercatAdapterIGH;
-class MYACTUA;
 }
 
 namespace imu {
@@ -41,9 +40,9 @@ struct RobotInterfaceConfig {
     /* 电机 配置*/
     int num_motors = 12;
     std::string ethercat_ifname = "enp8s0";
-    /* 等待所有从站就绪的超时和轮询时间 */
-    int wait_all_slaves_timeout_ms = 20000;
-    int wait_all_slaves_poll_ms    = 100;
+    /* 等待所有电机就绪的超时和轮询时间 */
+    int wait_all_motors_timeout_ms = 20000;
+    int wait_all_motors_poll_ms    = 100;
 
     /* 是否在终端打印电机信息 */
     bool print_motors_info = false;  // false将 print_motor_ids 清零
@@ -54,9 +53,9 @@ struct RobotInterfaceConfig {
     std::vector<double> joint_max_rad;
     /* 初始姿态关节弧度值，按模型 DOF 序号填写 */
     std::vector<double> stand_pose_rad = {};
-    /* 默认使用 MIT/PVT 模式；若改为 CSP，apply_action 将沿用位置指令路径 */
-    myactua::ControlMode motor_control_mode = myactua::ControlMode::PVT;
-    /* MIT/PVT 模式刚度/阻尼，必须由调用侧显式配置 */
+    /* 默认使用阻抗控制模式；若改为 POSITION，apply_action 将沿用位置指令路径 */
+    motor_base::MotorControlMode motor_control_mode = motor_base::MotorControlMode::IMPEDANCE;
+    /* 复合控制模式刚度/阻尼，必须由调用侧显式配置 */
     std::vector<double> mit_kp;
     std::vector<double> mit_kd;
 
@@ -126,8 +125,8 @@ public:
 
     /* 电机部分 */
     bool initial_and_start_motors();
-    bool stop_motors(int slave_index = -1);
-    bool restart_motors(int slave_index = -1);
+    bool stop_motors(int motor_index = -1);
+    bool restart_motors(int motor_index = -1);
     void deinit_motors();
     bool apply_action(const std::vector<double>& target_q_model_rad);  // 模型 DOF 顺序目标角(rad)
     bool reset_joints();  // /* 复位到模型 DOF 顺序配置的 stand_pose_rad，单位为 rad */
@@ -135,7 +134,7 @@ public:
     bool is_motors_initialized() const { return motors_initialized_.load(); }
     std::vector<double> get_joint_q() const;    // rad
     std::vector<double> get_joint_vel() const;  // rad/s
-    std::vector<double> get_joint_tau() const;  // raw driver unit
+    std::vector<double> get_joint_torque_percent() const;
 
 
     /* IMU部分 */
@@ -174,9 +173,9 @@ private:
 
     /* 以太网适配器 智能指针 */
     std::shared_ptr<myactua::EthercatAdapterIGH> adapter_;
-    std::unique_ptr<myactua::MYACTUA> controller_;  // 电机控制器指针
+    std::unique_ptr<motor_base::MotorControllerBase> controller_;  // 电机控制器（多态基类指针）
     bool validate_motor_config() const;
-    bool submit_motor_command(const myactua::ControlCommand& command,
+    bool submit_motor_command(const motor_base::ControlCommand& command,
                               const char* context);
 
 

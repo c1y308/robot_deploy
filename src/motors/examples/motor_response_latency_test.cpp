@@ -1,7 +1,7 @@
-#include "ControlTypes.hpp"
+#include "motor_base/ControlTypes.hpp"
 #include "EthercatAdapterIGH.hpp"
 #include "ankle_motor_ik.hpp"
-#include "motor_control.hpp"
+#include "driver/myact/motor_control.hpp"
 
 #include <algorithm>
 #include <array>
@@ -105,7 +105,7 @@ public:
         recording_.store(enabled, std::memory_order_release);
     }
 
-    void record(const std::vector<myactua::MotorStatusSnapshot>& status)
+    void record(const std::vector<motor_base::MotorStatusSnapshot>& status)
     {
         if (!recording_.load(std::memory_order_relaxed)) {
             return;
@@ -121,7 +121,7 @@ public:
         sample.time = Clock::now();
         for (int i = 0; i < kNumMotors; ++i) {
             if (i < static_cast<int>(status.size())) {
-                sample.position_rad[i] = myactua::MYACTUA::raw_pos_to_rad(status[i].position);
+                sample.position_rad[i] = status[i].position_rad;
                 sample.comm_ok[i] = status[i].comm_ok ? 1U : 0U;
             } else {
                 sample.position_rad[i] = std::numeric_limits<double>::quiet_NaN();
@@ -347,26 +347,22 @@ std::array<double, kNumMotors> make_step_model_pose(int trial)
     return pose;
 }
 
-std::vector<myactua::MitSetpoint> make_mit_setpoints(
+std::vector<motor_base::ImpedanceSetpoint> make_impedance_setpoints(
     const std::array<double, kNumMotors>& target_rad)
 {
-    std::vector<myactua::MitSetpoint> setpoints;
+    std::vector<motor_base::ImpedanceSetpoint> setpoints;
     setpoints.reserve(kNumMotors);
     for (double position_rad : target_rad) {
-        setpoints.emplace_back(myactua::MYACTUA::rad_to_deg(position_rad),
-                               0.0,
-                               0.0,
-                               kDefaultKp,
-                               kDefaultKd);
+        setpoints.emplace_back(position_rad, 0.0, 0.0, kDefaultKp, kDefaultKd);
     }
     return setpoints;
 }
 
-void send_mit_targets(myactua::MYACTUA& controller,
-                      const std::array<double, kNumMotors>& target_rad)
+void send_impedance_targets(myactua::MYACTUA& controller,
+                            const std::array<double, kNumMotors>& target_rad)
 {
     controller.send_command(
-        myactua::ControlCommand::set_mit_setpoints(make_mit_setpoints(target_rad)));
+        motor_base::ControlCommand::set_impedance_targets(make_impedance_setpoints(target_rad)));
 }
 
 bool read_motor_positions(myactua::MYACTUA& controller,
@@ -376,7 +372,7 @@ bool read_motor_positions(myactua::MYACTUA& controller,
     constexpr int kRetryMs = 20;
 
     for (int attempt = 0; attempt < kAttempts && !g_should_stop; ++attempt) {
-        const std::vector<myactua::MotorStatusSnapshot> status = controller.get_status();
+        const std::vector<motor_base::MotorStatusSnapshot> status = controller.get_status();
         if (status.size() == static_cast<std::size_t>(kNumMotors)) {
             bool all_comm_ok = true;
             for (int i = 0; i < kNumMotors; ++i) {
@@ -385,8 +381,7 @@ bool read_motor_positions(myactua::MYACTUA& controller,
             if (all_comm_ok) {
                 for (int i = 0; i < kNumMotors; ++i) {
                     positions_rad[static_cast<std::size_t>(i)] =
-                        myactua::MYACTUA::raw_pos_to_rad(
-                            status[static_cast<std::size_t>(i)].position);
+                        status[static_cast<std::size_t>(i)].position_rad;
                 }
                 return true;
             }
@@ -398,16 +393,16 @@ bool read_motor_positions(myactua::MYACTUA& controller,
 }
 
 bool wait_all_mode(myactua::MYACTUA& controller,
-                   myactua::ControlMode mode,
+                   motor_base::MotorControlMode mode,
                    int timeout_ms)
 {
     const auto start = Clock::now();
     while (!g_should_stop) {
-        const std::vector<myactua::MotorStatusSnapshot> status = controller.get_status();
+        const std::vector<motor_base::MotorStatusSnapshot> status = controller.get_status();
         bool all_ok = status.size() == static_cast<std::size_t>(kNumMotors);
         for (int i = 0; all_ok && i < kNumMotors; ++i) {
             const auto& motor = status[static_cast<std::size_t>(i)];
-            all_ok = motor.comm_ok && motor.op_mode == mode;
+            all_ok = motor.comm_ok && motor.mode == mode;
         }
         if (all_ok) {
             return true;
@@ -424,18 +419,18 @@ bool wait_all_mode(myactua::MYACTUA& controller,
 }
 
 bool wait_all_running(myactua::MYACTUA& controller,
-                      myactua::ControlMode mode,
+                      motor_base::MotorControlMode mode,
                       int timeout_ms)
 {
     const auto start = Clock::now();
     while (!g_should_stop) {
-        const std::vector<myactua::MotorStatusSnapshot> status = controller.get_status();
+        const std::vector<motor_base::MotorStatusSnapshot> status = controller.get_status();
         bool all_ok = status.size() == static_cast<std::size_t>(kNumMotors);
         for (int i = 0; all_ok && i < kNumMotors; ++i) {
             const auto& motor = status[static_cast<std::size_t>(i)];
             all_ok = motor.comm_ok &&
-                     motor.op_mode == mode &&
-                     myactua::is_operation_enabled(motor.status_word);
+                     motor.mode == mode &&
+                     motor.enabled;
         }
         if (all_ok) {
             return true;
@@ -451,10 +446,10 @@ bool wait_all_running(myactua::MYACTUA& controller,
     return false;
 }
 
-void send_mode_all(myactua::MYACTUA& controller, myactua::ControlMode mode)
+void send_mode_all(myactua::MYACTUA& controller, motor_base::MotorControlMode mode)
 {
     for (int i = 0; i < kNumMotors; ++i) {
-        controller.send_command(myactua::ControlCommand::set_mode(mode, i));
+        controller.send_command(motor_base::ControlCommand::set_mode(mode, i));
     }
 }
 
@@ -467,7 +462,7 @@ bool stream_target_for(myactua::MYACTUA& controller,
     const auto end = start + std::chrono::milliseconds(duration_ms);
 
     while (!g_should_stop && Clock::now() < end) {
-        send_mit_targets(controller, target_rad);
+        send_impedance_targets(controller, target_rad);
         next += std::chrono::milliseconds(kCommandPeriodMs);
         std::this_thread::sleep_until(next);
     }
@@ -502,13 +497,13 @@ bool ramp_to_target(myactua::MYACTUA& controller,
                  start_rad[static_cast<std::size_t>(i)]) * blend;
         }
 
-        send_mit_targets(controller, command);
+        send_impedance_targets(controller, command);
         next += std::chrono::milliseconds(kCommandPeriodMs);
         std::this_thread::sleep_until(next);
     }
 
     if (!g_should_stop) {
-        send_mit_targets(controller, target_rad);
+        send_impedance_targets(controller, target_rad);
     }
     return !g_should_stop;
 }
@@ -527,7 +522,7 @@ bool send_measured_step(myactua::MYACTUA& controller,
     }
 
     event.command_time = Clock::now();
-    send_mit_targets(controller, target_rad);
+    send_impedance_targets(controller, target_rad);
     events.push_back(event);
 
     auto next = event.command_time + std::chrono::milliseconds(kCommandPeriodMs);
@@ -537,7 +532,7 @@ bool send_measured_step(myactua::MYACTUA& controller,
         if (Clock::now() >= end) {
             break;
         }
-        send_mit_targets(controller, target_rad);
+        send_impedance_targets(controller, target_rad);
         next += std::chrono::milliseconds(kCommandPeriodMs);
     }
 
@@ -548,7 +543,7 @@ void safe_stop(myactua::MYACTUA& controller, bool started)
 {
     g_recorder.set_recording(false);
     if (started) {
-        controller.send_command(myactua::ControlCommand::stop());
+        controller.send_command(motor_base::ControlCommand::stop());
         force_sleep_ms(500);
         controller.shutdown();
     }
@@ -682,7 +677,7 @@ int main()
     bool controller_started = false;
 
     controller.set_print_info({});
-    controller.set_status_callback([](const std::vector<myactua::MotorStatusSnapshot>& status) {
+    controller.set_status_callback([](const std::vector<motor_base::MotorStatusSnapshot>& status) {
         g_recorder.record(status);
     });
 
@@ -693,7 +688,7 @@ int main()
         return -1;
     }
 
-    if (!controller.wait_all_slaves_ready(
+    if (!controller.wait_all_motors_ready(
             kWaitReadyTimeoutMs, kWaitReadyPollMs, [] { return g_should_stop != 0; })) {
         std::cerr << "[error] not all slaves reached OP within "
                   << kWaitReadyTimeoutMs << " ms\n";
@@ -704,13 +699,13 @@ int main()
     controller_started = true;
 
     std::cout << "[flow] stop all motors before mode switch\n";
-    controller.send_command(myactua::ControlCommand::stop());
+    controller.send_command(motor_base::ControlCommand::stop());
     sleep_ms(kWarmupMs);
 
     std::cout << "[flow] switch all motors to PVT/MIT\n";
-    send_mode_all(controller, myactua::ControlMode::PVT);
+    send_mode_all(controller, motor_base::MotorControlMode::IMPEDANCE);
     sleep_ms(kModeSwitchWaitMs);
-    if (!wait_all_mode(controller, myactua::ControlMode::PVT, 4000)) {
+    if (!wait_all_mode(controller, motor_base::MotorControlMode::IMPEDANCE, 4000)) {
         std::cerr << "[error] not all motors reached PVT/MIT mode\n";
         safe_stop(controller, controller_started);
         return -1;
@@ -724,13 +719,13 @@ int main()
     }
 
     std::cout << "[flow] preload current-position MIT setpoints\n";
-    send_mit_targets(controller, current_motor_rad);
+    send_impedance_targets(controller, current_motor_rad);
     sleep_ms(200);
 
     std::cout << "[flow] restart all motors\n";
-    controller.send_command(myactua::ControlCommand::restart());
+    controller.send_command(motor_base::ControlCommand::restart());
     sleep_ms(kRestartWaitMs);
-    if (!wait_all_running(controller, myactua::ControlMode::PVT, 4000)) {
+    if (!wait_all_running(controller, motor_base::MotorControlMode::IMPEDANCE, 4000)) {
         std::cerr << "[error] not all motors reached operation enabled in PVT/MIT mode\n";
         safe_stop(controller, controller_started);
         return -1;
@@ -795,7 +790,7 @@ int main()
     force_sleep_ms(40);
 
     std::cout << "[flow] stop all motors\n";
-    controller.send_command(myactua::ControlCommand::stop());
+    controller.send_command(motor_base::ControlCommand::stop());
     force_sleep_ms(500);
     controller.shutdown();
     controller.set_status_callback({});

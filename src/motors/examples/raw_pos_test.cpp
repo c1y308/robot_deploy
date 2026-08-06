@@ -1,10 +1,11 @@
-#include "ControlTypes.hpp"
+#include "motor_base/ControlTypes.hpp"
 #include "EthercatAdapterIGH.hpp"
-#include "motor_control.hpp"
+#include "driver/myact/motor_control.hpp"
 
 #include <chrono>
 #include <csignal>
 #include <cstddef>
+#include <cmath>
 #include <iostream>
 #include <memory>
 #include <thread>
@@ -26,8 +27,7 @@ constexpr int kModeSwitchWaitMs = 1000;
 constexpr int kRestartWaitMs = 1000;
 constexpr int kHoldTargetMs = 20000;
 
-// 12 个电机的位置目标，单位为 deg。
-// 注意: 当前 MYACTUA API 在 CSP 模式下通过 set_scalar_setpoints 接收角度值(deg)。
+// 12 个电机的位置目标，单位为 deg；下发前转换为公共 API 使用的 rad。
 // const std::vector<double> kTargetPositionsDeg = {
 //     0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
 //     0.0, 0.0, 0.0, 0.0, 0.0, 0.0
@@ -38,25 +38,27 @@ const std::vector<double> kTargetPositionsDeg = {
     0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 };
 
+constexpr double kPi = 3.14159265358979323846;
+
 void signal_handler(int)
 {
     g_should_stop = 1;
 }
 
-void send_mode_all(myactua::MYACTUA& controller, myactua::ControlMode mode)
+void send_mode_all(myactua::MYACTUA& controller, motor_base::MotorControlMode mode)
 {
     for (int i = 0; i < kNumMotors; ++i) {
-        controller.send_command(myactua::ControlCommand::set_mode(mode, i));
+        controller.send_command(motor_base::ControlCommand::set_mode(mode, i));
     }
 }
 
-std::vector<double> rad_to_deg_vector(const std::vector<double>& values_rad)
+std::vector<double> deg_to_rad_vector(const std::vector<double>& values_deg)
 {
-    std::vector<double> values_deg(values_rad.size(), 0.0);
-    for (std::size_t i = 0; i < values_rad.size(); ++i) {
-        values_deg[i] = myactua::MYACTUA::rad_to_deg(values_rad[i]);
+    std::vector<double> values_rad(values_deg.size(), 0.0);
+    for (std::size_t i = 0; i < values_deg.size(); ++i) {
+        values_rad[i] = values_deg[i] * kPi / 180.0;
     }
-    return values_deg;
+    return values_rad;
 }
 
 
@@ -69,7 +71,8 @@ bool send_target_once(myactua::MYACTUA& controller, const std::vector<double>& t
 
     std::cout << "[motion] send target array to " << kNumMotors
               << " motors without interpolation" << std::endl;
-    controller.send_command(myactua::ControlCommand::set_scalar_setpoints(target_deg));
+    controller.send_command(
+        motor_base::ControlCommand::set_position_targets_rad(deg_to_rad_vector(target_deg)));
     return !g_should_stop;
 }
 
@@ -88,7 +91,7 @@ int main()
         return -1;
     }
 
-    if (!controller.wait_all_slaves_ready(
+    if (!controller.wait_all_motors_ready(
             kWaitReadyTimeoutMs, kWaitReadyPollMs, [] { return g_should_stop != 0; })) {
         std::cerr << "[error] not all slaves reached OP within "
                   << kWaitReadyTimeoutMs << " ms" << std::endl;
@@ -100,23 +103,24 @@ int main()
 
     std::cout << "[flow] stop all motors before mode switch" << std::endl;
     for(int i = 0; i < kNumMotors; i++){
-        controller.send_command(myactua::ControlCommand::stop(i));
+        controller.send_command(motor_base::ControlCommand::stop(i));
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(kWarmupMs));
 
 
     std::cout << "[flow] switch all motors to CSP" << std::endl;
     for (int i = 0; i < kNumMotors; ++i) {
-        controller.send_command(myactua::ControlCommand::set_mode(myactua::ControlMode::CSP, i));
+        controller.send_command(
+            motor_base::ControlCommand::set_mode(motor_base::MotorControlMode::POSITION, i));
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(kModeSwitchWaitMs));
 
 
     std::cout << "[flow] restart motors" << std::endl;
     for(int i = 0; i < kNumMotors; i++){
-        controller.send_command(myactua::ControlCommand::restart(i));
+        controller.send_command(motor_base::ControlCommand::restart(i));
     }
-    controller.send_command(myactua::ControlCommand::stop(0));
+    controller.send_command(motor_base::ControlCommand::stop(0));
     std::this_thread::sleep_for(std::chrono::milliseconds(kRestartWaitMs));
 
 
@@ -128,7 +132,7 @@ int main()
 
     std::cout << "[flow] stop all motors" << std::endl;
     for(int i = 0; i < kNumMotors; i++){
-        controller.send_command(myactua::ControlCommand::stop(i));
+        controller.send_command(motor_base::ControlCommand::stop(i));
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     controller.shutdown();

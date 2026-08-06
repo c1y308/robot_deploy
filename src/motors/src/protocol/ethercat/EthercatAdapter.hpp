@@ -1,13 +1,14 @@
 #pragma once
-#include "MotorTypes.hpp"
-#include "ControlTypes.hpp"
+
+#include "EthercatTypes.hpp"
+#include "motor_base/ControlTypes.hpp"
 
 namespace myactua{
 
 class EthercatAdapter
 {
 public:
-    using RtEventSink = void (*)(void* context, const RtEvent& event);
+    using RtEventSink = void (*)(void* context, const motor_base::RtEvent& event);
 
     virtual ~EthercatAdapter() = default;
     virtual bool init(const char* ifname) = 0;  // 初始化网口和ethercat网络

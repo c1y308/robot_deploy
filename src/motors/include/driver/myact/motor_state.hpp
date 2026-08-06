@@ -2,20 +2,23 @@
 
 #include <cstdint>
 
-#include "ControlTypes.hpp"
-#include "MotorTypes.hpp"
+#include "EthercatTypes.hpp"
+#include "driver/myact/myact_types.hpp"
+#include "motor_base/ControlTypes.hpp"
 
 namespace myactua {
 
 struct DesiredState {
     bool enabled;
-    ControlMode mode;
-    double setpoint;
-    MitSetpoint mit_setpoint;
+    MyactControlMode mode;
+    double position_rad;
+    double velocity_rad_s;
+    double torque;
+    motor_base::ImpedanceSetpoint impedance_setpoint;
 
     DesiredState()
-        : enabled(false), mode(ControlMode::CSP), setpoint(0.0),
-          mit_setpoint()
+        : enabled(false), mode(MyactControlMode::CSP), position_rad(0.0),
+          velocity_rad_s(0.0), torque(0.0), impedance_setpoint()
     {
     }
 };
@@ -24,25 +27,25 @@ struct ObservedState {
     bool fault;
     bool operation_enabled;
     uint16_t status_word;
-    ControlMode mode;
+    MyactControlMode mode;
 
     ObservedState()
         : fault(false),
           operation_enabled(false),
           status_word(0),
-          mode(ControlMode::CSP)
+          mode(MyactControlMode::CSP)
     {
     }
 };
 
 struct MotorState {
-    int slave_index;
+    int motor_index;
 
     DesiredState  desired;
     ObservedState observed;
 
-    MotorStep step;
-    ModeSwitchStep mode_switch_step;
+    MyactMotorStep step;
+    MyactModeSwitchStep mode_switch_step;
 
     TxPDO tx;
     RxPDO rx;
@@ -51,11 +54,11 @@ struct MotorState {
     uint32_t comm_offline_total_count;
 
     explicit MotorState(int index)
-        : slave_index(index),
+        : motor_index(index),
           desired(),
           observed(),
-          step(MotorStep::IDLE),
-          mode_switch_step(ModeSwitchStep::IDLE),
+          step(MyactMotorStep::IDLE),
+          mode_switch_step(MyactModeSwitchStep::IDLE),
           tx({}),
           rx({}),
           comm_ok(false),

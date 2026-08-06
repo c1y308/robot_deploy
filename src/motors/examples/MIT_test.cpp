@@ -1,6 +1,6 @@
-#include "motor_control.hpp"
+#include "driver/myact/motor_control.hpp"
 #include "EthercatAdapterIGH.hpp"
-#include "ControlTypes.hpp"
+#include "motor_base/ControlTypes.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -28,6 +28,12 @@ constexpr int kRestartWaitMs = 1000;
 
 constexpr double kDefaultKp = 250;
 constexpr double kDefaultKd = 10;
+constexpr double kPi = 3.14159265358979323846;
+
+double deg_to_rad(double deg)
+{
+    return deg * kPi / 180.0;
+}
 
 void signal_handler(int)
 {
@@ -55,7 +61,7 @@ int main()
     }
 
     std::cout << "[2/7] OP ..." << std::endl;
-    if (!controller.wait_all_slaves_ready(kWaitReadyTimeoutMs, kWaitReadyPollMs,
+    if (!controller.wait_all_motors_ready(kWaitReadyTimeoutMs, kWaitReadyPollMs,
                                           [] { return g_should_stop != 0; })) {
         std::cerr << "[ERROR] OP " << std::endl;
         return -1;
@@ -65,25 +71,25 @@ int main()
     controller.start();
 
     std::cout << "[3/7] ..." << std::endl;
-    controller.send_command(myactua::ControlCommand::stop());
+    controller.send_command(motor_base::ControlCommand::stop());
     sleep_ms(kWarmupMs);
 
-    std::cout << "[4/7] MIT/PVT ..." << std::endl;
-    controller.send_command(myactua::ControlCommand::set_mode(myactua::ControlMode::PVT));
+    std::cout << "[4/7] impedance control ..." << std::endl;
+    controller.send_command(motor_base::ControlCommand::set_mode(motor_base::MotorControlMode::IMPEDANCE));
     sleep_ms(kModeSwitchWaitMs);
 
     std::vector<double> init_pos = controller.get_joint_q_rad();
     if (init_pos.empty()) {
         std::cerr << "[ERROR] " << std::endl;
-        controller.send_command(myactua::ControlCommand::stop());
+        controller.send_command(motor_base::ControlCommand::stop());
         controller.shutdown();
         return -1;
     }
-    double home_deg = myactua::MYACTUA::rad_to_deg(init_pos[kMotorIndex]);
+    double home_deg = motor_base::MotorControllerBase::rad_to_deg(init_pos[kMotorIndex]);
     std::cout << "[INFO] home = " << home_deg << " deg" << std::endl;
 
     std::cout << "[5/7] ..." << std::endl;
-    controller.send_command(myactua::ControlCommand::restart());
+    controller.send_command(motor_base::ControlCommand::restart());
     sleep_ms(kRestartWaitMs);
 
     constexpr double kTargetDeg = 60.0;
@@ -104,8 +110,8 @@ int main()
                     std::chrono::steady_clock::now() - t0).count() >= kHoldMs)
                 break;
 
-            myactua::MitSetpoint sp(home_deg, 0.0, 0.0, kDefaultKp, kDefaultKd);
-            controller.send_command(myactua::ControlCommand::set_mit_setpoints({sp}));
+            motor_base::ImpedanceSetpoint sp(deg_to_rad(home_deg), 0.0, 0.0, kDefaultKp, kDefaultKd);
+            controller.send_command(motor_base::ControlCommand::set_impedance_targets({sp}));
             next += std::chrono::milliseconds(kCommandPeriodMs);
             std::this_thread::sleep_until(next);
         }
@@ -129,8 +135,8 @@ int main()
             double blend = alpha * alpha * (3.0 - 2.0 * alpha);
             double p = home_deg + (target_deg - home_deg) * blend;
 
-            myactua::MitSetpoint sp(p, 0.0, 0.0, kDefaultKp, kDefaultKd);
-            controller.send_command(myactua::ControlCommand::set_mit_setpoints({sp}));
+            motor_base::ImpedanceSetpoint sp(deg_to_rad(p), 0.0, 0.0, kDefaultKp, kDefaultKd);
+            controller.send_command(motor_base::ControlCommand::set_impedance_targets({sp}));
             next += std::chrono::milliseconds(kCommandPeriodMs);
             std::this_thread::sleep_until(next);
         }
@@ -154,8 +160,8 @@ int main()
             double blend = alpha * alpha * (3.0 - 2.0 * alpha);
             double p = start_deg + (home_deg - start_deg) * blend;
 
-            myactua::MitSetpoint sp(p, 0.0, 0.0, kDefaultKp, kDefaultKd);
-            controller.send_command(myactua::ControlCommand::set_mit_setpoints({sp}));
+            motor_base::ImpedanceSetpoint sp(deg_to_rad(p), 0.0, 0.0, kDefaultKp, kDefaultKd);
+            controller.send_command(motor_base::ControlCommand::set_impedance_targets({sp}));
             next += std::chrono::milliseconds(kCommandPeriodMs);
             std::this_thread::sleep_until(next);
         }
@@ -163,13 +169,13 @@ int main()
 
     std::cout << "\n[6/7] hold home pose" << std::endl;
     {
-        myactua::MitSetpoint sp(home_deg, 0.0, 0.0, kDefaultKp, kDefaultKd);
-        controller.send_command(myactua::ControlCommand::set_mit_setpoints({sp}));
+        motor_base::ImpedanceSetpoint sp(deg_to_rad(home_deg), 0.0, 0.0, kDefaultKp, kDefaultKd);
+        controller.send_command(motor_base::ControlCommand::set_impedance_targets({sp}));
     }
     sleep_ms(500);
 
     std::cout << "[7/7] stop" << std::endl;
-    controller.send_command(myactua::ControlCommand::stop());
+    controller.send_command(motor_base::ControlCommand::stop());
     sleep_ms(500);
 
     controller.shutdown();

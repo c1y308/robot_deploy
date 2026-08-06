@@ -87,7 +87,7 @@ private:
     // 应用层先写 shadow，send_physical() 在控制主循环内统一落盘到 domain1_pd
     std::array<TxPDO, kNumSlaves> tx_shadow = {};
     void write_txpdo_to_domain(std::size_t index, const TxPDO& pdo);
-    void emit_rt_event(const RtEvent& event);
+    void emit_rt_event(const motor_base::RtEvent& event);
     void* rt_event_context = nullptr;
     RtEventSink rt_event_sink = nullptr;
 

@@ -1,6 +1,6 @@
-#include "ControlTypes.hpp"
+#include "motor_base/ControlTypes.hpp"
 #include "EthercatAdapterIGH.hpp"
-#include "motor_control.hpp"
+#include "driver/myact/motor_control.hpp"
 
 #include <algorithm>
 #include <array>
@@ -34,8 +34,9 @@ constexpr int kShutdownHoldMs = 500;
 
 constexpr double kDefaultKp = 250.0;
 constexpr double kDefaultKd = 10.0;
+constexpr double kPi = 3.14159265358979323846;
 
-// 12 个电机的 MIT/PVT 绝对位置目标，单位 deg。
+// 12 个电机的复合控制绝对位置目标，单位 deg。
 
 constexpr std::array<double, kNumMotors> kTargetPositionsDeg = {
     0.0,   0, 0,   0, 0,   0,
@@ -46,6 +47,11 @@ void signal_handler(int)
 
 {
     g_should_stop = 1;
+}
+
+double deg_to_rad(double deg)
+{
+    return deg * kPi / 180.0;
 }
 
 void sleep_ms(int ms)
@@ -73,7 +79,7 @@ int main()
         return -1;
     }
 
-    if (!controller.wait_all_slaves_ready(
+    if (!controller.wait_all_motors_ready(
             kWaitReadyTimeoutMs, kWaitReadyPollMs, [] { return g_should_stop != 0; })) {
         std::cerr << "[error] not all slaves reached OP within "
                   << kWaitReadyTimeoutMs << " ms" << std::endl;
@@ -87,12 +93,13 @@ int main()
     controller.start();
 
     std::cout << "[flow] stop all motors before mode switch" << std::endl;
-    controller.send_command(myactua::ControlCommand::stop());
+    controller.send_command(motor_base::ControlCommand::stop());
     sleep_ms(kWarmupMs);
 
     std::cout << "[flow] switch all motors to PVT/MIT" << std::endl;
     for (int i = 0; i < kNumMotors; ++i) {
-        controller.send_command(myactua::ControlCommand::set_mode(myactua::ControlMode::PVT, i));
+        controller.send_command(
+            motor_base::ControlCommand::set_mode(motor_base::MotorControlMode::IMPEDANCE, i));
     }
     sleep_ms(kModeSwitchWaitMs);
 
@@ -109,7 +116,7 @@ int main()
     }
     if (home_rad.size() != static_cast<std::size_t>(kNumMotors)) {
         std::cerr << "[error] failed to read initial joint positions" << std::endl;
-        controller.send_command(myactua::ControlCommand::stop());
+        controller.send_command(motor_base::ControlCommand::stop());
         controller.shutdown();
         return -1;
     }
@@ -117,7 +124,7 @@ int main()
     std::vector<double> home_deg(kNumMotors);
     std::vector<double> target_deg(kNumMotors);
     for (std::size_t i = 0; i < home_rad.size(); ++i) {
-        home_deg[i] = myactua::MYACTUA::rad_to_deg(home_rad[i]);
+        home_deg[i] = motor_base::MotorControllerBase::rad_to_deg(home_rad[i]);
         target_deg[i] = kTargetPositionsDeg[i];
     }
 
@@ -130,16 +137,16 @@ int main()
 
     std::cout << "[flow] preload MIT setpoints at current pose" << std::endl;
     {
-        std::vector<myactua::MitSetpoint> sp;
+        std::vector<motor_base::ImpedanceSetpoint> sp;
         sp.reserve(home_deg.size());
         for (double p : home_deg)
-            sp.emplace_back(p, 0.0, 0.0, kDefaultKp, kDefaultKd);
-        controller.send_command(myactua::ControlCommand::set_mit_setpoints(sp));
+            sp.emplace_back(deg_to_rad(p), 0.0, 0.0, kDefaultKp, kDefaultKd);
+        controller.send_command(motor_base::ControlCommand::set_impedance_targets(sp));
     }
     sleep_ms(kPreloadSetpointMs);
 
     std::cout << "[flow] restart all motors" << std::endl;
-    controller.send_command(myactua::ControlCommand::restart());
+    controller.send_command(motor_base::ControlCommand::restart());
     sleep_ms(kRestartWaitMs);
 
     // ---- hold current pose, kd=0 ----
@@ -147,9 +154,9 @@ int main()
         std::cout << "[test] hold current pose for " << kInitialHoldMs
                   << " ms (kp=" << kDefaultKp << ", kd=0)" << std::endl;
 
-        std::vector<myactua::MitSetpoint> sp;
+        std::vector<motor_base::ImpedanceSetpoint> sp;
         sp.reserve(home_deg.size());
-        for (double p : home_deg) sp.emplace_back(p, 0.0, 0.0, kDefaultKp, 0.0);
+        for (double p : home_deg) sp.emplace_back(deg_to_rad(p), 0.0, 0.0, kDefaultKp, 0.0);
 
         auto t0 = std::chrono::steady_clock::now();
         auto next = t0;
@@ -157,7 +164,7 @@ int main()
             if (std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - t0).count() >= kInitialHoldMs)
                 break;
-            controller.send_command(myactua::ControlCommand::set_mit_setpoints(sp));
+            controller.send_command(motor_base::ControlCommand::set_impedance_targets(sp));
             next += std::chrono::milliseconds(kCommandPeriodMs);
             std::this_thread::sleep_until(next);
         }
@@ -178,23 +185,23 @@ int main()
             double alpha = static_cast<double>(elapsed_ms) / static_cast<double>(kMoveDurationMs);
             double blend = alpha * alpha * (3.0 - 2.0 * alpha);
 
-            std::vector<myactua::MitSetpoint> sp;
+            std::vector<motor_base::ImpedanceSetpoint> sp;
             sp.reserve(home_deg.size());
             for (std::size_t i = 0; i < home_deg.size(); ++i) {
                 double p = home_deg[i] + (target_deg[i] - home_deg[i]) * blend;
-                sp.emplace_back(p, 0.0, 0.0, kDefaultKp, kDefaultKd);
+                sp.emplace_back(deg_to_rad(p), 0.0, 0.0, kDefaultKp, kDefaultKd);
             }
-            controller.send_command(myactua::ControlCommand::set_mit_setpoints(sp));
+            controller.send_command(motor_base::ControlCommand::set_impedance_targets(sp));
 
             next += std::chrono::milliseconds(kCommandPeriodMs);
             std::this_thread::sleep_until(next);
         }
 
         if (!g_should_stop) {
-            std::vector<myactua::MitSetpoint> sp;
+            std::vector<motor_base::ImpedanceSetpoint> sp;
             sp.reserve(target_deg.size());
-            for (double p : target_deg) sp.emplace_back(p, 0.0, 0.0, kDefaultKp, kDefaultKd);
-            controller.send_command(myactua::ControlCommand::set_mit_setpoints(sp));
+            for (double p : target_deg) sp.emplace_back(deg_to_rad(p), 0.0, 0.0, kDefaultKp, kDefaultKd);
+            controller.send_command(motor_base::ControlCommand::set_impedance_targets(sp));
         }
     }
 
@@ -203,9 +210,9 @@ int main()
         std::cout << "[test] hold target pose for " << kHoldTargetMs
                   << " ms (kp=" << kDefaultKp << ", kd=" << kDefaultKd << ")" << std::endl;
 
-        std::vector<myactua::MitSetpoint> sp;
+        std::vector<motor_base::ImpedanceSetpoint> sp;
         sp.reserve(target_deg.size());
-        for (double p : target_deg) sp.emplace_back(p, 0.0, 0.0, kDefaultKp, kDefaultKd);
+        for (double p : target_deg) sp.emplace_back(deg_to_rad(p), 0.0, 0.0, kDefaultKp, kDefaultKd);
 
         auto t0 = std::chrono::steady_clock::now();
         auto next = t0;
@@ -213,7 +220,7 @@ int main()
             if (std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - t0).count() >= kHoldTargetMs)
                 break;
-            controller.send_command(myactua::ControlCommand::set_mit_setpoints(sp));
+            controller.send_command(motor_base::ControlCommand::set_impedance_targets(sp));
             next += std::chrono::milliseconds(kCommandPeriodMs);
             std::this_thread::sleep_until(next);
         }
@@ -221,13 +228,13 @@ int main()
 
     std::cout << "[flow] stop all motors" << std::endl;
     if (!g_should_stop) {
-        std::vector<myactua::MitSetpoint> sp;
+        std::vector<motor_base::ImpedanceSetpoint> sp;
         sp.reserve(target_deg.size());
-        for (double p : target_deg) sp.emplace_back(p, 0.0, 0.0, kDefaultKp, kDefaultKd);
-        controller.send_command(myactua::ControlCommand::set_mit_setpoints(sp));
+        for (double p : target_deg) sp.emplace_back(deg_to_rad(p), 0.0, 0.0, kDefaultKp, kDefaultKd);
+        controller.send_command(motor_base::ControlCommand::set_impedance_targets(sp));
         sleep_ms(kShutdownHoldMs);
     }
-    controller.send_command(myactua::ControlCommand::stop());
+    controller.send_command(motor_base::ControlCommand::stop());
     sleep_ms(kShutdownHoldMs);
     controller.shutdown();
 

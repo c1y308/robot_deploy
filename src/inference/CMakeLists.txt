@@ -69,7 +69,6 @@ add_library(robot_interface STATIC
 target_include_directories(robot_interface PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../motors/src/drivers/myact
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/src/protocol/ethercat
     ${CMAKE_CURRENT_SOURCE_DIR}/../imu/a100/include
 )

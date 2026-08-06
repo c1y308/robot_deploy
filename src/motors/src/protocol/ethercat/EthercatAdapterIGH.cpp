@@ -17,6 +17,8 @@
 
 namespace myactua {
 
+namespace mb = motor_base;
+
 namespace {
 
 bool parse_diag_enabled_from_env(bool default_value)
@@ -98,7 +100,7 @@ EthercatAdapterIGH::EthercatAdapterIGH() {
         tx_shadow[i].target_torque = 0;
         tx_shadow[i].pvt_kp = 0;
         tx_shadow[i].pvt_kd = 0;
-        tx_shadow[i].op_mode = ControlMode::NONE;
+        tx_shadow[i].op_mode = 0;
         tx_shadow[i].reserved = 0;
     }
     is_initialized = false;
@@ -213,7 +215,7 @@ void EthercatAdapterIGH::write_txpdo_to_domain(std::size_t index, const TxPDO& p
     EC_WRITE_S8(domain1_pd + off.off_mode_of_op, pdo.op_mode);
 }
 
-void EthercatAdapterIGH::emit_rt_event(const RtEvent& event)
+void EthercatAdapterIGH::emit_rt_event(const mb::RtEvent& event)
 {
     if (rt_event_sink) {
         rt_event_sink(rt_event_context, event);
@@ -297,10 +299,10 @@ void EthercatAdapterIGH::send_physical() {
                              (cycle % diag_interval_cycles == 0);
     if (sample_diag) {
         ecrt_domain_state(domain1, &domain1_state);
-        RtEvent event;
+        mb::RtEvent event;
         event.type = domain1_state.wc_state == EC_WC_COMPLETE
-            ? RtEventType::ECAT_DIAG_SAMPLE
-            : RtEventType::ECAT_DOMAIN_NOT_COMPLETE;
+            ? mb::RtEventType::BUS_DIAG_SAMPLE
+            : mb::RtEventType::BUS_CYCLE_NOT_COMPLETE;
         event.tick = cycle;
         event.value = domain1_state.working_counter;
         event.reason = static_cast<int>(domain1_state.wc_state);

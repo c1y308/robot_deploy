@@ -1,6 +1,6 @@
-#include "ControlTypes.hpp"
+#include "motor_base/ControlTypes.hpp"
 #include "EthercatAdapterIGH.hpp"
-#include "motor_control.hpp"
+#include "driver/myact/motor_control.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -52,11 +52,11 @@ bool contains_motor(int motor_id)
            kActiveMotorIds.end();
 }
 
-void send_mode_all(myactua::MYACTUA& controller, myactua::ControlMode mode)
+void send_mode_all(myactua::MYACTUA& controller, motor_base::MotorControlMode mode)
 {
     // 统一切换全部电机模式，避免不同轴处于不同控制模式。
     for (int i = 0; i < kNumMotors; ++i) {
-        controller.send_command(myactua::ControlCommand::set_mode(mode, i));
+        controller.send_command(motor_base::ControlCommand::set_mode(mode, i));
     }
 }
 
@@ -109,15 +109,6 @@ bool validate_trajectory_span()
     return true;
 }
 
-std::vector<double> rad_targets_to_deg(const std::vector<double>& rad_targets)
-{
-    std::vector<double> deg_targets(rad_targets.size(), 0.0);
-    for (std::size_t i = 0; i < rad_targets.size(); ++i) {
-        deg_targets[i] = myactua::MYACTUA::rad_to_deg(rad_targets[i]);
-    }
-    return deg_targets;
-}
-
 void sleep_until_next(Clock::time_point wakeup_time)
 {
     std::this_thread::sleep_until(wakeup_time);
@@ -143,7 +134,7 @@ int main()
         return -1;
     }
 
-    if (!controller.wait_all_slaves_ready(
+    if (!controller.wait_all_motors_ready(
             kWaitReadyTimeoutMs, kWaitReadyPollMs, [] { return g_should_stop != 0; })) {
         std::cerr << "[error] not all slaves reached OP within "
                   << kWaitReadyTimeoutMs << " ms" << std::endl;
@@ -155,17 +146,17 @@ int main()
 
     // 先停机再切换模式，让测试从一个确定的状态开始。
     std::cout << "[flow] stop all motors before switching mode" << std::endl;
-    controller.send_command(myactua::ControlCommand::stop());
+    controller.send_command(motor_base::ControlCommand::stop());
     std::this_thread::sleep_for(std::chrono::milliseconds(kWarmupMs));
 
     std::cout << "[flow] switch all motors to CSP" << std::endl;
-    send_mode_all(controller, myactua::ControlMode::CSP);
+    send_mode_all(controller, motor_base::MotorControlMode::POSITION);
     std::this_thread::sleep_for(std::chrono::milliseconds(kModeSwitchWaitMs));
 
     std::vector<double> initial_positions = controller.get_joint_q_rad();
     if (initial_positions.size() != static_cast<std::size_t>(kNumMotors)) {
         std::cerr << "[error] failed to read initial joint positions" << std::endl;
-        controller.send_command(myactua::ControlCommand::stop());
+        controller.send_command(motor_base::ControlCommand::stop());
         controller.shutdown();
         return -1;
     }
@@ -173,11 +164,11 @@ int main()
     // 初始阶段保持当前位置，避免 RESTART 后立即出现位置跳变。
     std::vector<double> setpoints_rad = initial_positions;
     controller.send_command(
-        myactua::ControlCommand::set_scalar_setpoints(rad_targets_to_deg(setpoints_rad)));
+        motor_base::ControlCommand::set_position_targets_rad(setpoints_rad));
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     std::cout << "[flow] restart motors and hold current pose" << std::endl;
-    controller.send_command(myactua::ControlCommand::restart());
+    controller.send_command(motor_base::ControlCommand::restart());
     std::this_thread::sleep_for(std::chrono::milliseconds(kRestartWaitMs));
 
     std::cout << "[test] stream interpolated CSP targets for "
@@ -223,9 +214,8 @@ int main()
             setpoints_rad[motor_id] = interpolated;
         }
 
-        const std::vector<double> setpoints_deg = rad_targets_to_deg(setpoints_rad);
         controller.send_command(
-            myactua::ControlCommand::set_scalar_setpoints(setpoints_deg));
+            motor_base::ControlCommand::set_position_targets_rad(setpoints_rad));
 
         if ((loop_count % 20) == 0) {
             // 定期打印目标值、实际值和误差，便于观察电机跟踪效果。
@@ -233,8 +223,10 @@ int main()
             if (!measured.empty()) {
                 for (int motor_id : kActiveMotorIds) {
                     if (motor_id < static_cast<int>(measured.size())) {
+                        const double command_deg =
+                            motor_base::MotorControllerBase::rad_to_deg(setpoints_rad[motor_id]);
                         std::cout << "[trace] t=" << elapsed_ms << " ms"
-                                  << " cmd=" << setpoints_deg[motor_id]
+                                  << " cmd=" << command_deg
                                   << " deg"
                                   << " (" << setpoints_rad[motor_id] << " rad)"
                                   << " meas=" << measured[motor_id]
@@ -254,10 +246,10 @@ int main()
     // 测试结束后先保持最后目标，再执行停机。
     std::cout << "[test] hold final interpolated target for 1 s" << std::endl;
     controller.send_command(
-        myactua::ControlCommand::set_scalar_setpoints(rad_targets_to_deg(setpoints_rad)));
+        motor_base::ControlCommand::set_position_targets_rad(setpoints_rad));
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
-    controller.send_command(myactua::ControlCommand::stop());
+    controller.send_command(motor_base::ControlCommand::stop());
     controller.shutdown();
 
     std::cout << "[done] peak command increment per " << kCommandPeriodMs

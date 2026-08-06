@@ -9,27 +9,36 @@ src/motors/
 ├── CMakeLists.txt
 ├── README.md
 ├── include/
-│   ├── ControlTypes.hpp
-│   └── MotorTypes.hpp
+│   ├── motor_base/
+│       ├── ControlTypes.hpp
+│       ├── MotorControllerBase.hpp
+│       ├── MotorStatusMonitor.hpp
+│       ├── MotorTypes.hpp
+│       └── RtEventDispatcher.hpp
+│   └── driver/
+│       └── myact/
+│           ├── motor_control.hpp
+│           ├── motor_state.hpp
+│           ├── motor_status_channel.hpp
+│           ├── motor_units.hpp
+│           ├── myact_debug_printers.hpp
+│           └── realtime_queue.hpp
 ├── src/
+│   ├── motor_base/
+│   │   ├── motor_base.cpp
+│   │   ├── motor_status_monitor.cpp
+│   │   └── rt_event_dispatcher.cpp
 │   ├── drivers/
 │   │   └── myact/
-│   │       ├── motor_control.hpp
 │   │       ├── motor_control.cpp
-│   │       ├── motor_state.hpp
-│   │       ├── motor_status_channel.hpp
 │   │       ├── motor_status_channel.cpp
-│   │       ├── motor_status_monitor.hpp
-│   │       ├── motor_status_monitor.cpp
-│   │       ├── motor_units.hpp
-│   │       ├── realtime_queue.hpp
-│   │       ├── rt_event_dispatcher.hpp
-│   │       └── rt_event_dispatcher.cpp
+│   │       └── myact_debug_printers.cpp
 │   └── protocol/
 │       └── ethercat/
 │           ├── EthercatAdapter.hpp
 │           ├── EthercatAdapterIGH.hpp
-│           └── EthercatAdapterIGH.cpp
+│           ├── EthercatAdapterIGH.cpp
+│           └── EthercatTypes.hpp
 ├── examples/
 │   ├── simple_test.cpp
 │   ├── debug_tool.cpp
@@ -74,14 +83,20 @@ cd src/motors/build
 
 ## 控制模式与命令
 
-### 控制模式（`ControlMode`）
-- `CSP (0x08)` 周期同步位置
-- `CSV (0x09)` 周期同步速度
-- `CST (0x0A)` 周期同步扭矩
+### 公共控制模式（`MotorControlMode`）
+- `POSITION` 位置控制，位置目标单位为 `rad`
+- `VELOCITY` 速度控制，速度目标单位为 `rad/s`
+- `TORQUE` 力矩/出力控制，目标值单位由具体控制器解释
+- `IMPEDANCE` 阻抗控制，位置/速度使用 `rad`/`rad/s`，`effort_ff` 由具体控制器解释
+
+MYACTUA 驱动内部会把公共模式映射到 CiA402/PDO 模式：
+`POSITION -> CSP`，`VELOCITY -> CSV`，`TORQUE -> CST`，`IMPEDANCE -> PVT`。
 
 ### 控制命令（`ControlCommand`）
-- `ControlCommand::set_scalar_setpoints(...)` 设置 CSP/CSV/CST 等标量目标值
-- `ControlCommand::set_mit_setpoints(...)` 设置 MIT/PVT 目标值
+- `ControlCommand::set_position_targets_rad(...)` 设置位置目标
+- `ControlCommand::set_velocity_targets_rad_s(...)` 设置速度目标
+- `ControlCommand::set_torque_targets(...)` 设置中性力矩/出力目标
+- `ControlCommand::set_impedance_targets(...)` 设置阻抗目标
 - `ControlCommand::stop(...)` 停止电机
 - `ControlCommand::restart(...)` 重新启动
 - `ControlCommand::set_mode(...)` 切换模式
@@ -102,7 +117,7 @@ cd src/motors/build
    - 由示例中的 `MYACTUA controller(adapter, N)` 决定。
    - 当前 `EthercatAdapterIGH` 默认按 12 个从站配置，逻辑索引 `0-11` 对应 EtherCAT 物理位置 `1-6, 8-13`。
 3. **PDO/对象字典一致性**
-   - `include/MotorTypes.hpp` 中 PDO 偏移需与从站 ESI/固件一致。
+   - `src/protocol/ethercat/EthercatTypes.hpp` 中 PDO 偏移需与从站 ESI/固件一致。
 4. **模式切换与使能流程**
    - 依赖状态字与控制字逻辑，建议先使用 `debug_tool` 验证单轴。
 

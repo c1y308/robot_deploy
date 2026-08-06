@@ -1,6 +1,6 @@
-#include "ControlTypes.hpp"
+#include "motor_base/ControlTypes.hpp"
 #include "EthercatAdapterIGH.hpp"
-#include "motor_control.hpp"
+#include "driver/myact/motor_control.hpp"
 
 #include <algorithm>
 #include <array>
@@ -34,6 +34,7 @@ constexpr int kSquatDurationMs = 1000;      // 从站立到下蹲的轨迹时长
 constexpr int kHoldBottomMs = 2000;         // 下蹲到底后保持不动的时间
 constexpr int kStandDurationMs = 1000;      // 从下蹲恢复到站立的轨迹时长
 constexpr char kErrorLogFile[] = "squat_stand_interp_error.txt";
+constexpr double kPi = 3.14159265358979323846;
 
 // “机器人蹲下最终时刻”12 个电机位置，单位为 deg。
 // constexpr std::array<double, kNumMotors> kSquatTargetDeg = {
@@ -50,16 +51,25 @@ void signal_handler(int)
     g_should_stop = 1;
 }
 
-void send_mode_all(myactua::MYACTUA& controller, myactua::ControlMode mode)
+void send_mode_all(myactua::MYACTUA& controller, motor_base::MotorControlMode mode)
 {
     for (int i = 0; i < kNumMotors; ++i) {
-        controller.send_command(myactua::ControlCommand::set_mode(mode, i));
+        controller.send_command(motor_base::ControlCommand::set_mode(mode, i));
     }
 }
 
 std::vector<double> array_to_vector(const std::array<double, kNumMotors>& source)
 {
     return std::vector<double>(source.begin(), source.end());
+}
+
+std::vector<double> deg_to_rad_vector(const std::vector<double>& values_deg)
+{
+    std::vector<double> values_rad(values_deg.size(), 0.0);
+    for (std::size_t i = 0; i < values_deg.size(); ++i) {
+        values_rad[i] = values_deg[i] * kPi / 180.0;
+    }
+    return values_rad;
 }
 
 double smoothstep(double alpha)
@@ -106,12 +116,12 @@ void stream_pose_segment(myactua::MYACTUA& controller,
         const std::vector<double> pose_deg = interpolate_pose(start_deg, end_deg, alpha);
 
         controller.send_command(
-            myactua::ControlCommand::set_scalar_setpoints(pose_deg));
+            motor_base::ControlCommand::set_position_targets_rad(deg_to_rad_vector(pose_deg)));
 
         const std::vector<double> measured_rad = controller.get_joint_q_rad();
         const std::size_t motor_count = std::min(pose_deg.size(), measured_rad.size());
         for (std::size_t i = 0; i < motor_count; ++i) {
-            const double current_deg = myactua::MYACTUA::rad_to_deg(measured_rad[i]);
+            const double current_deg = motor_base::MotorControllerBase::rad_to_deg(measured_rad[i]);
             const double error_deg = pose_deg[i] - current_deg;
             error_log << stage_name << '\t'
                       << elapsed_ms << '\t'
@@ -127,12 +137,12 @@ void stream_pose_segment(myactua::MYACTUA& controller,
     }
 
     controller.send_command(
-        myactua::ControlCommand::set_scalar_setpoints(end_deg));
+        motor_base::ControlCommand::set_position_targets_rad(deg_to_rad_vector(end_deg)));
 
     const std::vector<double> measured_rad = controller.get_joint_q_rad();
     const std::size_t motor_count = std::min(end_deg.size(), measured_rad.size());
     for (std::size_t i = 0; i < motor_count; ++i) {
-        const double current_deg = myactua::MYACTUA::rad_to_deg(measured_rad[i]);
+        const double current_deg = motor_base::MotorControllerBase::rad_to_deg(measured_rad[i]);
         const double error_deg = end_deg[i] - current_deg;
         error_log << stage_name << '\t'
                   << duration_ms << '\t'
@@ -168,7 +178,7 @@ int main()
         return -1;
     }
 
-    if (!controller.wait_all_slaves_ready(
+    if (!controller.wait_all_motors_ready(
             kWaitReadyTimeoutMs, kWaitReadyPollMs, [] { return g_should_stop != 0; })) {
         std::cerr << "[error] not all slaves reached OP within "
                   << kWaitReadyTimeoutMs << " ms" << std::endl;
@@ -179,11 +189,11 @@ int main()
     controller.start();
 
     std::cout << "[flow] stop all motors" << std::endl;
-    controller.send_command(myactua::ControlCommand::stop());
+    controller.send_command(motor_base::ControlCommand::stop());
     std::this_thread::sleep_for(std::chrono::milliseconds(kWarmupMs));
 
     std::cout << "[flow] switch all motors to CSP" << std::endl;
-    send_mode_all(controller, myactua::ControlMode::CSP);
+    send_mode_all(controller, motor_base::MotorControlMode::POSITION);
     std::this_thread::sleep_for(std::chrono::milliseconds(kModeSwitchWaitMs));
 
     const std::vector<double> zero_pose_deg(kNumMotors, 0.0);
@@ -191,11 +201,11 @@ int main()
 
     // 先发送零位目标，再使能电机，保证动作从初始姿态开始。
     controller.send_command(
-        myactua::ControlCommand::set_scalar_setpoints(zero_pose_deg));
+        motor_base::ControlCommand::set_position_targets_rad(deg_to_rad_vector(zero_pose_deg)));
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     std::cout << "[flow] restart motors" << std::endl;
-    controller.send_command(myactua::ControlCommand::restart());
+    controller.send_command(motor_base::ControlCommand::restart());
     std::this_thread::sleep_for(std::chrono::milliseconds(kRestartWaitMs));
 
     stream_pose_segment(
@@ -204,7 +214,7 @@ int main()
     if (!g_should_stop) {
         std::cout << "[hold] keep squat pose for " << kHoldBottomMs << " ms" << std::endl;
         controller.send_command(
-            myactua::ControlCommand::set_scalar_setpoints(squat_pose_deg));
+            motor_base::ControlCommand::set_position_targets_rad(deg_to_rad_vector(squat_pose_deg)));
         std::this_thread::sleep_for(std::chrono::milliseconds(kHoldBottomMs));
     }
 
@@ -214,7 +224,7 @@ int main()
     }
 
     std::cout << "[flow] stop all motors" << std::endl;
-    controller.send_command(myactua::ControlCommand::stop());
+    controller.send_command(motor_base::ControlCommand::stop());
     controller.shutdown();
 
     std::cout << "[done] squat/stand demo finished" << std::endl;
