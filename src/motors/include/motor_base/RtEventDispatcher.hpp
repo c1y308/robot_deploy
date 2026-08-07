@@ -2,14 +2,40 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <thread>
 #include <vector>
 
-#include "motor_base/ControlTypes.hpp"
+#include "motor_base/CommandTypes.hpp"
 
 namespace motor_base {
+
+enum class RtEventType {
+    DISCRETE_COMMAND_FAILED,
+    DISCRETE_QUEUE_FULL,
+    STATUS_FRAME_OVERWRITTEN,
+    BUS_DIAG_SAMPLE,
+    BUS_CYCLE_NOT_COMPLETE
+};
+
+struct RtEvent {
+    RtEventType type;
+    uint64_t tick;
+    int motor_index;
+    DiscreteCommandType command_type;
+    int reason;
+    uint32_t value;
+
+    RtEvent()
+        : type(RtEventType::DISCRETE_COMMAND_FAILED),
+          tick(0),
+          motor_index(-1),
+          command_type(DiscreteCommandType::STOP),
+          reason(0),
+          value(0) {}
+};
 
 class RtEventDispatcher {
 public:

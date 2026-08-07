@@ -19,7 +19,6 @@ add_library(MYACTUA_EtherCat
     src/motor_base/motor_status_monitor.cpp
     src/motor_base/rt_event_dispatcher.cpp
     src/drivers/myact/motor_control.cpp
-    src/drivers/myact/motor_status_channel.cpp
     src/drivers/myact/myact_debug_printers.cpp
     src/protocol/ethercat/EthercatAdapterIGH.cpp
 )

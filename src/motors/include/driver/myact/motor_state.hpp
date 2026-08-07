@@ -4,7 +4,7 @@
 
 #include "EthercatTypes.hpp"
 #include "driver/myact/myact_types.hpp"
-#include "motor_base/ControlTypes.hpp"
+#include "motor_base/CommandTypes.hpp"
 
 namespace myactua {
 

@@ -13,10 +13,29 @@
 #include <utility>
 #include <vector>
 
-#include "motor_base/ControlTypes.hpp"
-#include "motor_base/MotorControllerBase.hpp"
+#include "motor_base/CommandTypes.hpp"
 
-namespace myactua {
+namespace motor_base {
+
+/* 电机状态快照 */
+struct MotorStatusSnapshot {
+    int motor_index;
+    double position_rad;
+    double velocity_rad_s;
+    double torque_percent;
+    bool comm_ok;
+    bool enabled;
+    bool faulted;
+    MotorControlMode mode;
+    MotorControlMode target_mode;
+
+    MotorStatusSnapshot()
+        : motor_index(-1), position_rad(0.0), velocity_rad_s(0.0),
+          torque_percent(0.0), comm_ok(false), enabled(false), faulted(false),
+          mode(MotorControlMode::NONE),
+          target_mode(MotorControlMode::NONE) {}
+};
+
 
 template <typename Snapshot>
 class LatestStatusChannel {
@@ -49,8 +68,9 @@ public:
     {
         stop();
 
-        if (motor_count > motor_base::kMaxMotorCommandSetpoints) {
-            throw std::invalid_argument("LatestStatusChannel motor_count exceeds fixed capacity");
+        if (motor_count > kMaxMotorCommandSetpoints) {
+            throw std::invalid_argument(
+                "LatestStatusChannel motor_count exceeds fixed capacity");
         }
 
         motor_count_ = motor_count;
@@ -265,7 +285,7 @@ private:
     std::size_t motor_count_{0};
     int publish_period_ms_{1};
 
-    std::array<std::array<Snapshot, motor_base::kMaxMotorCommandSetpoints>,
+    std::array<std::array<Snapshot, kMaxMotorCommandSetpoints>,
                kStatusSlotCount>
         status_slots_{};
     std::array<std::atomic<std::uint8_t>, kStatusSlotCount> status_slot_state_{};
@@ -282,7 +302,6 @@ private:
     std::atomic<bool> publisher_running_{false};
 };
 
-using MotorStatusChannel =
-    LatestStatusChannel<motor_base::MotorStatusSnapshot>;
+using MotorStatusChannel = LatestStatusChannel<MotorStatusSnapshot>;
 
-} // namespace myactua
+} // namespace motor_base

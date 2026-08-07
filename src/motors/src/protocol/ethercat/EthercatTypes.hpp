@@ -2,8 +2,6 @@
 
 #include <cstdint>
 
-#include "motor_base/MotorTypes.hpp"
-
 namespace myactua {
 
 constexpr uint32_t TX_CONTROL_WORD_OFFSET = 0;   // 2 bytes

@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <sched.h>
 #include <time.h>
+#include <utility>
 
 namespace motor_base {
 
@@ -51,11 +52,16 @@ MotorControllerBase::MotorControllerBase(
     RealtimeOptions options)
     : rt_options_(options),
       motor_count_(motor_count),
-      cmd_queue_(rt_options_.command_queue_capacity)
+      cmd_queue_(rt_options_.command_queue_capacity),
+      status_channel_(),
+      rt_event_dispatcher_(rt_options_.rt_event_queue_capacity)
 {
     rt_options_.max_commands_per_cycle =
         std::max<std::size_t>(1, rt_options_.max_commands_per_cycle);
     rt_options_.rt_period_ns = std::max<long>(1, rt_options_.rt_period_ns);
+    rt_options_.status_publish_period_ms =
+        std::max(1, rt_options_.status_publish_period_ms);
+    status_channel_.configure(motor_count_, rt_options_.status_publish_period_ms);
 
     discrete_cmd_queues_.reserve(motor_count_);
     for (std::size_t i = 0; i < motor_count_; ++i) {
@@ -70,6 +76,22 @@ MotorControllerBase::~MotorControllerBase()
     if (rt_thread_.joinable()) {
         rt_thread_.join();
     }
+    rt_event_dispatcher_.stop();
+    status_channel_.stop();
+}
+
+bool MotorControllerBase::connect(const char* interface_name)
+{
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    if (running_.load(std::memory_order_acquire)) {
+        return false;
+    }
+
+    if (!interface_name) {
+        return false;
+    }
+
+    return connect_impl(interface_name);
 }
 
 void MotorControllerBase::start()
@@ -79,7 +101,12 @@ void MotorControllerBase::start()
         return;
     }
 
-    if (!on_realtime_start()) {
+    status_channel_.start();
+    rt_event_dispatcher_.start();
+
+    if (!realtime_start_callback()) {
+        rt_event_dispatcher_.stop();
+        status_channel_.stop();
         return;
     }
 
@@ -88,12 +115,20 @@ void MotorControllerBase::start()
         rt_thread_ = std::thread(&MotorControllerBase::rt_thread_func, this);
     } catch (...) {
         running_.store(false, std::memory_order_release);
-        on_realtime_stop();
+        realtime_stop_callback();
+        rt_event_dispatcher_.stop();
+        status_channel_.stop();
         throw;
     }
 
     set_realtime_priority(rt_thread_, rt_options_.rt_priority);
 }
+
+bool MotorControllerBase::realtime_start_callback()
+{
+    return true;
+}
+
 
 void MotorControllerBase::shutdown()
 {
@@ -105,20 +140,79 @@ void MotorControllerBase::shutdown()
     }
 
     if (was_running) {
-        on_realtime_stop();
+        realtime_stop_callback();
+        rt_event_dispatcher_.stop();
+        status_channel_.stop();
     }
 }
 
-bool MotorControllerBase::is_running() const
+void MotorControllerBase::realtime_stop_callback() noexcept
 {
-    return running_.load(std::memory_order_acquire);
 }
+
+
+void MotorControllerBase::rt_thread_func()
+{
+    timespec next_period{};
+    clock_gettime(kClockToUse, &next_period);
+
+    while (running_.load(std::memory_order_acquire)) {
+        process_queued_commands_rt();
+        service_discrete_commands_rt();
+        realtime_cycle_callback();
+        add_period_ns(next_period, rt_options_.rt_period_ns);
+        clock_nanosleep(kClockToUse, TIMER_ABSTIME, &next_period, nullptr);
+    }
+}
+
 
 CommandSubmitResult MotorControllerBase::send_command(const ControlCommand& cmd)
 {
-    const CommandSubmitResult validation = validate_command(cmd);
-    if (validation != CommandSubmitResult::ACCEPTED) {
-        return validation;
+    if (!cmd.payload_valid) {
+        return CommandSubmitResult::INVALID_PAYLOAD;
+    }
+
+    if (cmd.motor_index < ControlCommand::kAllMotors ||
+        cmd.motor_index >= static_cast<int>(motor_count_)) {
+        return CommandSubmitResult::INVALID_COMMAND;
+    }
+
+    switch (cmd.kind) {
+        case ControlCommandKind::DISCRETE:
+            break;
+
+        case ControlCommandKind::SETPOINT: {
+            if (cmd.motor_index != ControlCommand::kAllMotors) {
+                return CommandSubmitResult::INVALID_COMMAND;
+            }
+
+            std::size_t payload_size = 0;
+            switch (cmd.setpoint_type) {
+                case SetpointCommandType::POSITION_TARGETS:
+                case SetpointCommandType::VELOCITY_TARGETS:
+                case SetpointCommandType::TORQUE_TARGETS:
+                    payload_size = cmd.setpoints.size();
+                    break;
+                case SetpointCommandType::IMPEDANCE_TARGETS:
+                    payload_size = cmd.impedance_setpoints.size();
+                    break;
+                default:
+                    return CommandSubmitResult::INVALID_COMMAND;
+            }
+
+            if (payload_size != motor_count_) {
+                return CommandSubmitResult::INVALID_PAYLOAD;
+            }
+            break;
+        }
+
+        default:
+            return CommandSubmitResult::INVALID_COMMAND;
+    }
+
+    const CommandSubmitResult driver_validation = validate_command(cmd);
+    if (driver_validation != CommandSubmitResult::ACCEPTED) {
+        return driver_validation;
     }
 
     if (!cmd_queue_.try_push(cmd)) {
@@ -127,135 +221,75 @@ CommandSubmitResult MotorControllerBase::send_command(const ControlCommand& cmd)
     return CommandSubmitResult::ACCEPTED;
 }
 
+
+CommandSubmitResult MotorControllerBase::validate_command(const ControlCommand&) const
+{
+    return CommandSubmitResult::ACCEPTED;
+}
+
+
+std::vector<MotorStatusSnapshot> MotorControllerBase::get_status()
+{
+    return status_channel_.get_status();
+}
+
+
+void MotorControllerBase::set_status_callback(StatusCallback cb)
+{
+    status_channel_.set_callback(std::move(cb));
+}
+
+
+void MotorControllerBase::set_rt_event_callback(RtEventCallback cb)
+{
+    rt_event_dispatcher_.set_callback(std::move(cb));
+}
+
+
+bool MotorControllerBase::try_begin_status_write_rt(StatusWriteToken& token)
+{
+    return status_channel_.try_begin_write_rt(token);
+}
+
+
+bool MotorControllerBase::publish_status_rt(const StatusWriteToken& token)
+{
+    return status_channel_.publish_rt(token);
+}
+
+
+void MotorControllerBase::push_rt_event(const RtEvent& event)
+{
+    rt_event_dispatcher_.push_rt(event);
+}
+
+
+void MotorControllerBase::set_rt_event_fallback_printer(
+    RtEventDispatcher::EventPrinter printer)
+{
+    rt_event_dispatcher_.set_fallback_printer(std::move(printer));
+}
+
+
 void MotorControllerBase::process_queued_commands_rt()
 {
-    ControlCommand cmd;
     std::size_t processed = 0;
-    while (processed < rt_options_.max_commands_per_cycle &&
-           cmd_queue_.try_pop_rt(cmd)) {
+    while (processed < rt_options_.max_commands_per_cycle) {
+        const ControlCommand* cmd = cmd_queue_.front_rt();
+        if (!cmd) {
+            break;
+        }
         ++processed;
-        if (cmd.kind == ControlCommandKind::DISCRETE) {
-            enqueue_discrete_command_rt(cmd);
-        } else if (cmd.kind == ControlCommandKind::SETPOINT) {
-            apply_setpoint_command_rt(cmd);
+        if (cmd->kind == ControlCommandKind::DISCRETE) {
+            enqueue_discrete_command_rt(*cmd);
+        } else if (cmd->kind == ControlCommandKind::SETPOINT) {
+            apply_setpoint_command_callback(*cmd);
         }
+        cmd_queue_.pop_front_rt();
     }
 }
 
-void MotorControllerBase::advance_discrete_command_tick_rt()
-{
-    ++discrete_cmd_tick_;
-}
-
-void MotorControllerBase::service_discrete_commands_rt()
-{
-    for (std::size_t i = 0; i < discrete_cmd_queues_.size(); ++i) {
-        auto& queue = discrete_cmd_queues_[i];
-        if (queue.empty()) {
-            continue;
-        }
-
-        auto& cmd = queue.front_rt();
-        const int motor_index = static_cast<int>(i);
-
-        if (cmd.phase == DiscretePhase::DONE) {
-            queue.pop_front_rt();
-            continue;
-        }
-        if (cmd.phase == DiscretePhase::FAILED) {
-            on_discrete_command_failed_rt(motor_index, cmd, cmd.fail_reason);
-            queue.pop_front_rt();
-            continue;
-        }
-
-        if (discrete_cmd_tick_ > cmd.deadline_tick) {
-            cmd.phase = DiscretePhase::FAILED;
-            cmd.fail_reason = kDiscreteFailTimeout;
-            continue;
-        }
-
-        if (!is_motor_comm_ok_rt(motor_index)) {
-            cmd.stable_success_cycles = 0;
-            continue;
-        }
-
-        if (is_motor_faulted_rt(motor_index)) {
-            cmd.phase = DiscretePhase::FAILED;
-            cmd.fail_reason = kDiscreteFailFault;
-            continue;
-        }
-
-        if (cmd.phase == DiscretePhase::QUEUED) {
-            cmd.phase = DiscretePhase::APPLY_PENDING;
-        }
-
-        if (cmd.phase == DiscretePhase::APPLY_PENDING) {
-            if (cmd.cur_retry >= cmd.max_retries) {
-                cmd.phase = DiscretePhase::FAILED;
-                cmd.fail_reason = kDiscreteFailMaxRetry;
-                continue;
-            }
-            if (discrete_cmd_tick_ >= cmd.next_retry_tick) {
-                apply_discrete_command_rt(motor_index, cmd);
-                cmd.cur_retry += 1;
-                cmd.next_retry_tick = discrete_cmd_tick_ + kDiscreteRetryTicks;
-                cmd.next_verify_tick =
-                    discrete_cmd_tick_ + kDiscreteVerifyIntervalTicks;
-                cmd.stable_success_cycles = 0;
-                cmd.phase = DiscretePhase::VERIFYING;
-            }
-            continue;
-        }
-
-        if (cmd.phase == DiscretePhase::VERIFYING) {
-            if (discrete_cmd_tick_ < cmd.next_verify_tick) {
-                continue;
-            }
-
-            if (is_discrete_command_satisfied_rt(motor_index, cmd)) {
-                cmd.stable_success_cycles += 1;
-                if (cmd.stable_success_cycles >= kDiscreteSuccessStableTicks) {
-                    cmd.phase = DiscretePhase::DONE;
-                    queue.pop_front_rt();
-                } else {
-                    cmd.next_verify_tick =
-                        discrete_cmd_tick_ + kDiscreteVerifyIntervalTicks;
-                }
-            } else {
-                cmd.stable_success_cycles = 0;
-                if (discrete_cmd_tick_ >= cmd.next_retry_tick) {
-                    cmd.phase = DiscretePhase::APPLY_PENDING;
-                }
-            }
-        }
-    }
-}
-
-void MotorControllerBase::on_discrete_command_failed_rt(
-    int,
-    const DiscreteCommand&,
-    int)
-{
-}
-
-void MotorControllerBase::on_discrete_queue_full_rt(
-    int,
-    const ControlCommand&)
-{
-}
-
-void MotorControllerBase::rt_thread_func()
-{
-    timespec next_period{};
-    clock_gettime(kClockToUse, &next_period);
-
-    while (running_.load(std::memory_order_acquire)) {
-        rt_cycle();
-        add_period_ns(next_period, rt_options_.rt_period_ns);
-        clock_nanosleep(kClockToUse, TIMER_ABSTIME, &next_period, nullptr);
-    }
-}
-
+/* 通过控制命令中的 离散命令类型 和 模式 构建离散命令；并将其入对应电机的离散命令队列 */
 void MotorControllerBase::enqueue_discrete_command_rt(const ControlCommand& cmd)
 {
     auto enqueue_one = [this, &cmd](int idx) {
@@ -265,18 +299,20 @@ void MotorControllerBase::enqueue_discrete_command_rt(const ControlCommand& cmd)
 
         DiscreteCommand pending(cmd.discrete_type, cmd.mode);
         pending.phase = DiscretePhase::QUEUED;
-        pending.enqueue_tick = discrete_cmd_tick_;
+
+        pending.enqueue_tick    = discrete_cmd_tick_;
         pending.next_retry_tick = discrete_cmd_tick_;
         pending.next_verify_tick = discrete_cmd_tick_;
         pending.deadline_tick = discrete_cmd_tick_ + kDiscreteTimeoutTicks;
+
         pending.cur_retry = 0;
         pending.max_retries = kDiscreteMaxRetries;
-        pending.stable_success_cycles = 0;
-        pending.fail_reason = kDiscreteFailNone;
 
-        if (!discrete_cmd_queues_[static_cast<std::size_t>(idx)].push_back_rt(
-                pending)) {
-            on_discrete_queue_full_rt(idx, cmd);
+        pending.stable_success_cycles = 0;
+        pending.fail_reason = DiscreteFailReason::NONE;
+
+        if (!discrete_cmd_queues_[static_cast<std::size_t>(idx)].push_back_rt(pending)) {
+            discrete_queue_full_callback(idx, cmd);
         }
     };
 
@@ -289,10 +325,158 @@ void MotorControllerBase::enqueue_discrete_command_rt(const ControlCommand& cmd)
     }
 }
 
+void MotorControllerBase::discrete_queue_full_callback(
+    int,
+    const ControlCommand&)
+{
+    printf("[MotorControllerBase] Warning: discrete command queue full\n");
+}
+
+// rt_thread_func()中调用，处理各个电机的离散命令队列（状态机）
+void MotorControllerBase::service_discrete_commands_rt()
+{
+    ++discrete_cmd_tick_;
+
+    /* 遍历每个电机的离散命令队列 */
+    for (std::size_t i = 0; i < discrete_cmd_queues_.size(); ++i) {
+        auto& queue = discrete_cmd_queues_[i];
+        /* 空队列则跳过 */
+        if (queue.empty()) {
+            continue;
+        }
+        /* 取出命令 */
+        auto& cmd = queue.front_rt();
+        const int motor_index = static_cast<int>(i);
+
+        /* 检查命令状态机 */
+        if (cmd.phase == DiscretePhase::DONE) {
+            queue.pop_front_rt();
+            continue;
+        }
+
+        if (cmd.phase == DiscretePhase::FAILED) {
+            discrete_command_failed_callback(motor_index, cmd, cmd.fail_reason);
+            queue.pop_front_rt();
+            continue;
+        }
+
+        // 超时
+        if (discrete_cmd_tick_ > cmd.deadline_tick) {
+            cmd.phase = DiscretePhase::FAILED;
+            cmd.fail_reason = DiscreteFailReason::TIMEOUT;
+            continue;
+        }
+
+        if (cmd.phase == DiscretePhase::QUEUED) {
+            cmd.phase = DiscretePhase::APPLY_PENDING;
+        }
+
+        if (cmd.phase == DiscretePhase::APPLY_PENDING) {
+            // 超过最大重试次数
+            if (cmd.cur_retry >= cmd.max_retries) {
+                cmd.phase = DiscretePhase::FAILED;
+                cmd.fail_reason = DiscreteFailReason::MAX_RETRY;
+                continue;
+            }
+            // 到达再次重试时间
+            if (discrete_cmd_tick_ >= cmd.next_retry_tick) {
+                apply_discrete_command_callback(motor_index, cmd);
+                cmd.cur_retry += 1;
+                cmd.next_retry_tick  = discrete_cmd_tick_ + kDiscreteRetryTicks;
+
+                cmd.next_verify_tick = discrete_cmd_tick_ + kDiscreteVerifyIntervalTicks;
+                cmd.stable_success_cycles = 0;
+                cmd.phase = DiscretePhase::VERIFYING;
+            }
+            continue;
+        }
+
+        if (cmd.phase == DiscretePhase::VERIFYING) {
+            // 还未到达下次验证时间点
+            if (discrete_cmd_tick_ < cmd.next_verify_tick) {
+                continue;
+            }
+
+            const DiscreteCommandEvaluation evaluation = evaluate_discrete_command_callback(motor_index, cmd);
+            switch (evaluation) {
+                case DiscreteCommandEvaluation::FAILED:
+                    cmd.phase = DiscretePhase::FAILED;
+                    cmd.fail_reason = DiscreteFailReason::FAULT;
+                    continue;
+
+                case DiscreteCommandEvaluation::PENDING:
+                    cmd.stable_success_cycles = 0;
+                    if (discrete_cmd_tick_ >= cmd.next_retry_tick) {
+                        cmd.phase = DiscretePhase::APPLY_PENDING;
+                    } else {
+                        cmd.next_verify_tick = discrete_cmd_tick_ + kDiscreteVerifyIntervalTicks;
+                    }
+                    continue;
+
+                case DiscreteCommandEvaluation::SATISFIED:
+                    cmd.stable_success_cycles += 1;
+                    if (cmd.stable_success_cycles >= kDiscreteSuccessStableTicks) {
+                        cmd.phase = DiscretePhase::DONE;
+                        queue.pop_front_rt();
+                    } else {
+                        cmd.next_verify_tick = discrete_cmd_tick_ + kDiscreteVerifyIntervalTicks;
+                    }
+                    continue;
+            }
+        }
+    }
+}
+
+void MotorControllerBase::discrete_command_failed_callback(
+    int,
+    const DiscreteCommand&,
+    DiscreteFailReason)
+{
+    printf("[MotorControllerBase] Warning: discrete command failed\n");
+}
+
 double MotorControllerBase::rad_to_deg(double rad)
 {
     constexpr double kPi = 3.14159265358979323846;
     return rad * (180.0 / kPi);
+}
+
+bool MotorControllerBase::is_running() const
+{
+    return running_.load(std::memory_order_acquire);
+}
+
+
+std::vector<double> MotorControllerBase::get_joint_q_rad()
+{
+    const auto status = get_status();
+    std::vector<double> q(status.size(), 0.0);
+    for (std::size_t i = 0; i < status.size(); ++i) {
+        q[i] = status[i].position_rad;
+    }
+    return q;
+}
+
+
+std::vector<double> MotorControllerBase::get_joint_vel_rad_s()
+{
+    const auto status = get_status();
+    std::vector<double> dq(status.size(), 0.0);
+    for (std::size_t i = 0; i < status.size(); ++i) {
+        dq[i] = status[i].velocity_rad_s;
+    }
+    return dq;
+}
+
+
+std::vector<double> MotorControllerBase::get_joint_torque_percent()
+{
+    const auto status = get_status();
+    std::vector<double> torque(status.size(), 0.0);
+    for (std::size_t i = 0; i < status.size(); ++i) {
+        torque[i] = status[i].torque_percent;
+    }
+    return torque;
 }
 
 } // namespace motor_base

@@ -6,7 +6,7 @@
 #include <mutex>
 #include <vector>
 
-#include "motor_base/ControlTypes.hpp"
+#include "motor_base/CommandTypes.hpp"
 
 namespace motor_base {
 
@@ -32,17 +32,20 @@ public:
         return true;
     }
 
-    bool try_pop_rt(ControlCommand& value)
+    const ControlCommand* front_rt() const
     {
         const std::size_t tail = tail_.load(std::memory_order_relaxed);
         const std::size_t head = head_.load(std::memory_order_acquire);
         if (tail == head) {
-            return false;
+            return nullptr;
         }
+        return &buffer_[tail % capacity_];
+    }
 
-        value = buffer_[tail % capacity_];
+    void pop_front_rt()
+    {
+        const std::size_t tail = tail_.load(std::memory_order_relaxed);
         tail_.store(tail + 1, std::memory_order_release);
-        return true;
     }
 
 private:

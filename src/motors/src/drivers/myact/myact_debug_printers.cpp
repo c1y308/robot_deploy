@@ -5,6 +5,7 @@
 #include <iostream>
 
 #include "driver/myact/motor_units.hpp"
+#include "motor_base/RtEventDispatcher.hpp"
 
 namespace myactua {
 

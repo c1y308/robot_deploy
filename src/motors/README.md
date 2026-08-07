@@ -10,16 +10,15 @@ src/motors/
 ├── README.md
 ├── include/
 │   ├── motor_base/
-│       ├── ControlTypes.hpp
+│       ├── CommandTypes.hpp
 │       ├── MotorControllerBase.hpp
 │       ├── MotorStatusMonitor.hpp
-│       ├── MotorTypes.hpp
+│       ├── StatusChannel.hpp
 │       └── RtEventDispatcher.hpp
 │   └── driver/
 │       └── myact/
 │           ├── motor_control.hpp
 │           ├── motor_state.hpp
-│           ├── motor_status_channel.hpp
 │           ├── motor_units.hpp
 │           ├── myact_debug_printers.hpp
 │           └── realtime_queue.hpp
@@ -31,7 +30,6 @@ src/motors/
 │   ├── drivers/
 │   │   └── myact/
 │   │       ├── motor_control.cpp
-│   │       ├── motor_status_channel.cpp
 │   │       └── myact_debug_printers.cpp
 │   └── protocol/
 │       └── ethercat/
@@ -100,6 +98,8 @@ MYACTUA 驱动内部会把公共模式映射到 CiA402/PDO 模式：
 - `ControlCommand::stop(...)` 停止电机
 - `ControlCommand::restart(...)` 重新启动
 - `ControlCommand::set_mode(...)` 切换模式
+
+连续目标值命令一次必须提供当前控制器电机数量个目标值，不支持只更新部分电机。
 
 ## 依赖与环境要求
 

@@ -1,4 +1,4 @@
-#include "motor_base/ControlTypes.hpp"
+#include "motor_base/CommandTypes.hpp"
 #include "EthercatAdapterIGH.hpp"
 #include "ankle_motor_ik.hpp"
 #include "driver/myact/motor_control.hpp"

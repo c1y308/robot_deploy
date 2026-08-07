@@ -9,30 +9,11 @@
 #include <vector>
 
 #include "motor_base/CommandQueue.hpp"
-#include "motor_base/ControlTypes.hpp"
+#include "motor_base/CommandTypes.hpp"
+#include "motor_base/RtEventDispatcher.hpp"
+#include "motor_base/StatusChannel.hpp"
 
 namespace motor_base {
-    
-/* 电机状态快照 */
-struct MotorStatusSnapshot {
-    int motor_index;
-    double position_rad;
-    double velocity_rad_s;
-    double torque_percent;
-    bool comm_ok;
-    bool ready;
-    bool enabled;
-    bool faulted;
-    MotorControlMode mode;
-    MotorControlMode target_mode;
-
-    MotorStatusSnapshot()
-        : motor_index(-1), position_rad(0.0), velocity_rad_s(0.0),
-          torque_percent(0.0), comm_ok(false), ready(false), enabled(false),
-          faulted(false), mode(MotorControlMode::NONE),
-          target_mode(MotorControlMode::NONE) {}
-};
-
 
 /// @brief 电机控制器抽象基类。
 ///
@@ -51,9 +32,12 @@ public:
         std::size_t max_commands_per_cycle = 16;
         long rt_period_ns = 1000000;
         int rt_priority = 80;
+        std::size_t rt_event_queue_capacity = 256;
+        int status_publish_period_ms = 1;
     };
 
-    using StatusCallback = std::function<void(const std::vector<MotorStatusSnapshot>&)>;
+    /// @brief 电机状态快照回调
+    using StatusCallback  = std::function<void(const std::vector<MotorStatusSnapshot>&)>;
     using RtEventCallback = std::function<void(const RtEvent&)>;
 
     explicit MotorControllerBase(std::size_t motor_count);
@@ -68,7 +52,7 @@ public:
     /// @brief 连接底层通信接口
     /// @param interface_name 接口名称，由具体控制器解释
     /// @return 连接是否成功
-    virtual bool connect(const char* interface_name) = 0;
+    bool connect(const char* interface_name);
 
 
     /// @brief 阻塞等待所有电机进入可操作状态
@@ -83,15 +67,15 @@ public:
 
         
     /// @brief 启动实时控制线程（1 kHz 典型周期）
-    virtual void start();
+    void start();
 
 
     /// @brief 停止实时控制线程，释放实时资源
-    virtual void shutdown();
+    void shutdown();
 
 
     /// @brief 实时控制线程是否正在运行
-    virtual bool is_running() const;
+    bool is_running() const;
 
 
     // ──────────────────── 指令下发 ────────────────────
@@ -99,38 +83,38 @@ public:
     /// @brief 异步发送控制命令（stop / restart / set_mode / setpoints）
     /// @param cmd 控制命令，详见 ControlCommand
     /// @return 命令提交结果（ACCEPTED / QUEUE_FULL / INVALID_*）
-    virtual CommandSubmitResult send_command(const ControlCommand& cmd);
+    CommandSubmitResult send_command(const ControlCommand& cmd);
 
 
     // ──────────────────── 状态反馈（物理量） ────────────────────
 
     /// @brief 获取全部电机公共状态快照
-    virtual std::vector<MotorStatusSnapshot> get_status() = 0;
+    std::vector<MotorStatusSnapshot> get_status();
 
     /// @brief 获取全部电机关节位置，单位 rad
-    virtual std::vector<double> get_joint_q_rad() = 0;
+    std::vector<double> get_joint_q_rad();
 
     /// @brief 获取全部电机关节速度，单位 rad/s
-    virtual std::vector<double> get_joint_vel_rad_s() = 0;
+    std::vector<double> get_joint_vel_rad_s();
 
     /// @brief 获取全部电机关节力矩反馈百分比
-    virtual std::vector<double> get_joint_torque_percent() = 0;
+    std::vector<double> get_joint_torque_percent();
 
 
     // ──────────────────── 回调 ────────────────────
 
     /// @brief 设置电机状态快照回调（异步，非实时线程）
-    virtual void set_status_callback(StatusCallback cb) = 0;
+    void set_status_callback(StatusCallback cb);
 
     /// @brief 设置实时事件回调（离散命令失败、丢帧等）
-    virtual void set_rt_event_callback(RtEventCallback cb) = 0;
+    void set_rt_event_callback(RtEventCallback cb);
 
 
     // ──────────────────── 终端监控 ────────────────────
 
     /// @brief 配置终端状态打印
-    /// @param motor_indices 需要打印的电机索引，空列表关闭，-1 表示全部
-    virtual void set_print_info(const std::vector<int>& motor_indices) = 0;
+    /// @param motor_index 需要打印的电机索引，空列表关闭，-1 表示全部
+    virtual void set_print_info(const std::vector<int>& motor_index) = 0;
 
 
     // ──────────────────── 静态工具方法 ────────────────────
@@ -139,46 +123,75 @@ public:
     static double rad_to_deg(double rad);
 
 protected:
-    std::size_t motor_count() const { return motor_count_; }
-    uint64_t discrete_command_tick_rt() const { return discrete_cmd_tick_; }
+    using StatusWriteToken = MotorStatusChannel::WriteToken;
 
-    void process_queued_commands_rt();
-    void advance_discrete_command_tick_rt();
-    void service_discrete_commands_rt();
+    // ============================================================
+    // 派生类可使用的基类能力
+    // ============================================================
 
-    virtual CommandSubmitResult validate_command(const ControlCommand& cmd) const = 0;
-    virtual void apply_setpoint_command_rt(const ControlCommand& cmd) = 0;
-    virtual void apply_discrete_command_rt(
+    std::size_t motor_count() const noexcept { return motor_count_; }
+    uint64_t    discrete_command_tick_rt() const noexcept { return discrete_cmd_tick_; }
+
+    bool try_begin_status_write_rt(StatusWriteToken& token);
+    bool publish_status_rt(const StatusWriteToken& token);
+    void push_rt_event(const RtEvent& event);
+    void set_rt_event_fallback_printer(RtEventDispatcher::EventPrinter printer);
+
+    // ============================================================
+    // REQUIRED OVERRIDES
+    // 新电机控制器必须实现
+    // ============================================================
+
+    virtual bool connect_impl(const char* interface_name) = 0;
+    virtual void realtime_cycle_callback() = 0;
+    virtual void apply_setpoint_command_callback(const ControlCommand& cmd) = 0;
+    virtual void apply_discrete_command_callback(
         int motor_index,
         const DiscreteCommand& cmd) = 0;
-    virtual bool is_discrete_command_satisfied_rt(
+    virtual DiscreteCommandEvaluation evaluate_discrete_command_callback(
         int motor_index,
         const DiscreteCommand& cmd) const = 0;
-    virtual bool is_motor_comm_ok_rt(int motor_index) const = 0;
-    virtual bool is_motor_faulted_rt(int motor_index) const = 0;
 
-    virtual void on_discrete_command_failed_rt(
-        int motor_index,
-        const DiscreteCommand& cmd,
-        int reason);
-    virtual void on_discrete_queue_full_rt(
+    // ============================================================
+    // OPTIONAL OVERRIDES
+    // 派生类按需实现
+    // ============================================================
+
+    virtual CommandSubmitResult validate_command(const ControlCommand& cmd) const;
+    virtual void discrete_queue_full_callback(
         int motor_index,
         const ControlCommand& cmd);
-
-    virtual bool on_realtime_start() = 0;
-    virtual void on_realtime_stop() noexcept = 0;
-
-    virtual void rt_cycle() = 0;
+    virtual void discrete_command_failed_callback(
+        int motor_index,
+        const DiscreteCommand& cmd,
+        DiscreteFailReason reason);
+    virtual bool realtime_start_callback();
+    virtual void realtime_stop_callback() noexcept;
 
 private:
-    void rt_thread_func();
+    //  rt_thread_func()中调用，从命令队列中取出命令进行分发
+    void process_queued_commands_rt();
+
+    // 直接在process_queued_commands_rt()中调用，将离散命令入各个电机的命令队列
     void enqueue_discrete_command_rt(const ControlCommand& cmd);
+    // rt_thread_func()中调用，处理各个电机的离散命令队列（状态机）
+    void service_discrete_commands_rt();
+
+    void rt_thread_func();
 
     RealtimeOptions rt_options_;
     std::size_t motor_count_;
+
+    // 电机控制命令队列（stop / restart / set_mode / setpoints）
     CommandQueue cmd_queue_;
+    // 每个电机的离散命令队列（stop / restart / set_mode）
     std::vector<DiscreteCommandQueue> discrete_cmd_queues_;
+    // 离散命令队列的全局时钟，单位 tick，1 tick = 1 ms
     uint64_t discrete_cmd_tick_{0};
+
+    MotorStatusChannel status_channel_;
+    RtEventDispatcher  rt_event_dispatcher_;
+
     std::thread rt_thread_;
     std::atomic<bool> running_{false};
     mutable std::mutex lifecycle_mutex_;

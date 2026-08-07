@@ -93,8 +93,7 @@ MYACTUA::MYACTUA(std::shared_ptr<EthercatAdapter> adapter,
                  Options options)
     : mb::MotorControllerBase(checked_motor_count(num_motors), options),
       options_(options),
-      _adapter(std::move(adapter)),
-      rt_event_dispatcher_(options_.rt_event_queue_capacity, print_myact_rt_event)
+      _adapter(std::move(adapter))
 {
     options_.status_publish_period_ms =
         std::max(1, options_.status_publish_period_ms);
@@ -104,7 +103,7 @@ MYACTUA::MYACTUA(std::shared_ptr<EthercatAdapter> adapter,
         _motors.emplace_back(i);
     }
     comm_ok_rt_.resize(num_motors, 0);
-    status_channel_.configure(_motors.size(), options_.status_publish_period_ms);
+    set_rt_event_fallback_printer(print_myact_rt_event);
     diagnostics_channel_.configure(_motors.size(), options_.status_publish_period_ms);
     status_monitor_.set_status_provider([this]() { return get_myact_diagnostics(); });
     status_monitor_.set_status_printer(print_myact_status_table);
@@ -123,11 +122,12 @@ MYACTUA::~MYACTUA()
 }
 
 /* 连接网卡函数 */
-bool MYACTUA::connect(const char* ifname)
+bool MYACTUA::connect_impl(const char* ifname)
 {
-    if(_adapter->init(ifname))
-        return true;
-    return false;
+    if (!_adapter) {
+        return false;
+    }
+    return _adapter->init(ifname);
 }
 
 
@@ -202,11 +202,9 @@ bool MYACTUA::wait_all_motors_ready(
 
 
 /* 电机实时控制单周期 */
-void MYACTUA::rt_cycle()
+void MYACTUA::realtime_cycle_callback()
 {
     _adapter->receive_physical();
-    process_queued_commands_rt();
-    advance_discrete_command_tick_rt();
     update();
     _adapter->send_physical();
     update_status_snapshot_rt();
@@ -214,137 +212,66 @@ void MYACTUA::rt_cycle()
 }
 
 
-mb::CommandSubmitResult MYACTUA::validate_command(const mb::ControlCommand& cmd) const
+mb::CommandSubmitResult MYACTUA::validate_command(
+    const mb::ControlCommand& cmd) const
 {
-    if (!cmd.payload_valid) {
-        return mb::CommandSubmitResult::INVALID_PAYLOAD;
-    }
-
-    if (cmd.motor_index < mb::ControlCommand::kAllMotors ||
-        cmd.motor_index >= static_cast<int>(_motors.size())) {
-        return mb::CommandSubmitResult::INVALID_COMMAND;
-    }
-
     if (cmd.kind == mb::ControlCommandKind::DISCRETE) {
         return mb::CommandSubmitResult::ACCEPTED;
     }
 
-    if (cmd.kind != mb::ControlCommandKind::SETPOINT) {
-        return mb::CommandSubmitResult::INVALID_COMMAND;
-    }
-
-    const bool all_motors = cmd.motor_index == mb::ControlCommand::kAllMotors;
-    auto payload_count_valid = [this, all_motors, &cmd](std::size_t count) {
-        if (count == 0) {
-            return false;
-        }
-        if (all_motors && count > _motors.size()) {
-            return false;
-        }
-        if (!all_motors && count != 1) {
-            return false;
-        }
-        return true;
-    };
-
     MyactControlMode expected_mode = MyactControlMode::NONE;
     switch (cmd.setpoint_type) {
         case mb::SetpointCommandType::POSITION_TARGETS:
-            if (!payload_count_valid(cmd.setpoint_count)) {
-                return mb::CommandSubmitResult::INVALID_PAYLOAD;
-            }
             expected_mode = MyactControlMode::CSP;
             break;
 
         case mb::SetpointCommandType::VELOCITY_TARGETS:
-            if (!payload_count_valid(cmd.setpoint_count)) {
-                return mb::CommandSubmitResult::INVALID_PAYLOAD;
-            }
             expected_mode = MyactControlMode::CSV;
             break;
 
         case mb::SetpointCommandType::TORQUE_TARGETS:
-            if (!payload_count_valid(cmd.setpoint_count)) {
-                return mb::CommandSubmitResult::INVALID_PAYLOAD;
-            }
             expected_mode = MyactControlMode::CST;
             break;
 
         case mb::SetpointCommandType::IMPEDANCE_TARGETS:
-            if (!payload_count_valid(cmd.impedance_setpoint_count)) {
-                return mb::CommandSubmitResult::INVALID_PAYLOAD;
-            }
             expected_mode = MyactControlMode::PVT;
             break;
     }
 
-    if (all_motors) {
-        const std::size_t count =
-            cmd.setpoint_type == mb::SetpointCommandType::IMPEDANCE_TARGETS
-                ? cmd.impedance_setpoint_count
-                : cmd.setpoint_count;
-        for (std::size_t i = 0; i < count; ++i) {
-            if (_motors[i].desired.mode != expected_mode) {
-                return mb::CommandSubmitResult::INVALID_COMMAND;
-            }
+    for (std::size_t i = 0; i < _motors.size(); ++i) {
+        if (_motors[i].desired.mode != expected_mode) {
+            return mb::CommandSubmitResult::INVALID_COMMAND;
         }
-    } else if (_motors[static_cast<std::size_t>(cmd.motor_index)].desired.mode !=
-               expected_mode) {
-        return mb::CommandSubmitResult::INVALID_COMMAND;
     }
 
     return mb::CommandSubmitResult::ACCEPTED;
 }
 
 
-void MYACTUA::apply_setpoint_command_rt(const mb::ControlCommand& cmd)
+void MYACTUA::apply_setpoint_command_callback(const mb::ControlCommand& cmd)
 {
     switch (cmd.setpoint_type) {
         case mb::SetpointCommandType::POSITION_TARGETS:
-            if (cmd.motor_index == mb::ControlCommand::kAllMotors) {
-                for (size_t i = 0; i < cmd.setpoint_count && i < _motors.size(); i++) {
-                    _motors[i].desired.position_rad = cmd.setpoints[i];
-                }
-            } else if (cmd.motor_index >= 0 &&
-                       cmd.motor_index < static_cast<int>(_motors.size()) &&
-                       cmd.setpoint_count == 1) {
-                _motors[cmd.motor_index].desired.position_rad = cmd.setpoints[0];
+            for (size_t i = 0; i < _motors.size(); i++) {
+                _motors[i].desired.position_rad = cmd.setpoints[i];
             }
             break;
 
         case mb::SetpointCommandType::VELOCITY_TARGETS:
-            if (cmd.motor_index == mb::ControlCommand::kAllMotors) {
-                for (size_t i = 0; i < cmd.setpoint_count && i < _motors.size(); i++) {
-                    _motors[i].desired.velocity_rad_s = cmd.setpoints[i];
-                }
-            } else if (cmd.motor_index >= 0 &&
-                       cmd.motor_index < static_cast<int>(_motors.size()) &&
-                       cmd.setpoint_count == 1) {
-                _motors[cmd.motor_index].desired.velocity_rad_s = cmd.setpoints[0];
+            for (size_t i = 0; i < _motors.size(); i++) {
+                _motors[i].desired.velocity_rad_s = cmd.setpoints[i];
             }
             break;
 
         case mb::SetpointCommandType::TORQUE_TARGETS:
-            if (cmd.motor_index == mb::ControlCommand::kAllMotors) {
-                for (size_t i = 0; i < cmd.setpoint_count && i < _motors.size(); i++) {
-                    _motors[i].desired.torque = cmd.setpoints[i];
-                }
-            } else if (cmd.motor_index >= 0 &&
-                       cmd.motor_index < static_cast<int>(_motors.size()) &&
-                       cmd.setpoint_count == 1) {
-                _motors[cmd.motor_index].desired.torque = cmd.setpoints[0];
+            for (size_t i = 0; i < _motors.size(); i++) {
+                _motors[i].desired.torque = cmd.setpoints[i];
             }
             break;
 
         case mb::SetpointCommandType::IMPEDANCE_TARGETS:
-            if (cmd.motor_index == mb::ControlCommand::kAllMotors) {
-                for (size_t i = 0; i < cmd.impedance_setpoint_count && i < _motors.size(); i++) {
-                    _motors[i].desired.impedance_setpoint = cmd.impedance_setpoints[i];
-                }
-            } else if (cmd.motor_index >= 0 &&
-                       cmd.motor_index < static_cast<int>(_motors.size()) &&
-                       cmd.impedance_setpoint_count == 1) {
-                _motors[cmd.motor_index].desired.impedance_setpoint = cmd.impedance_setpoints[0];
+            for (size_t i = 0; i < _motors.size(); i++) {
+                _motors[i].desired.impedance_setpoint = cmd.impedance_setpoints[i];
             }
             break;
     }
@@ -369,9 +296,6 @@ void MYACTUA::update()
             refresh_observed_state(_motors[i]);
         }
     }
-
-    /* 处理离散命令 */
-    service_discrete_commands_rt();
 
     /* 设置电机目标值。通信异常时保持当前控制状态，不覆写 step。 */
     for (size_t i = 0; i < _motors.size(); i++)
@@ -402,7 +326,9 @@ void MYACTUA::refresh_observed_state(MotorState& motor)
 
 
 /* 设置 DesiredState 结构体中的数据 */
-void MYACTUA::apply_discrete_command_rt(int motor_index, const mb::DiscreteCommand& cmd)
+void MYACTUA::apply_discrete_command_callback(
+    int motor_index,
+    const mb::DiscreteCommand& cmd)
 {
     if (motor_index < 0 || motor_index >= static_cast<int>(_motors.size())) {
         return;
@@ -434,45 +360,39 @@ void MYACTUA::apply_discrete_command_rt(int motor_index, const mb::DiscreteComma
 }
 
 
-bool MYACTUA::is_discrete_command_satisfied_rt(
+mb::DiscreteCommandEvaluation MYACTUA::evaluate_discrete_command_callback(
     int motor_index,
     const mb::DiscreteCommand& cmd) const
 {
     if (motor_index < 0 || motor_index >= static_cast<int>(_motors.size())) {
-        return false;
+        return mb::DiscreteCommandEvaluation::PENDING;
+    }
+
+    if (motor_index >= static_cast<int>(comm_ok_rt_.size()) ||
+        comm_ok_rt_[static_cast<std::size_t>(motor_index)] == 0) {
+        return mb::DiscreteCommandEvaluation::PENDING;
     }
 
     const MotorState& motor = _motors[static_cast<std::size_t>(motor_index)];
     const auto& observed = motor.observed;
     if (observed.fault) {
-        return false;
+        return mb::DiscreteCommandEvaluation::FAILED;
     }
 
+    bool satisfied = false;
     switch (cmd.type) {
         case mb::DiscreteCommandType::STOP:
-            return !observed.operation_enabled;
+            satisfied = !observed.operation_enabled;
+            break;
         case mb::DiscreteCommandType::RESTART:
-            return  observed.operation_enabled;
+            satisfied = observed.operation_enabled;
+            break;
         case mb::DiscreteCommandType::SET_MODE:
-            return observed.mode == to_myact_mode(cmd.mode);
+            satisfied = observed.mode == to_myact_mode(cmd.mode);
+            break;
     }
-    return false;
-}
-
-
-bool MYACTUA::is_motor_comm_ok_rt(int motor_index) const
-{
-    return motor_index >= 0 &&
-           motor_index < static_cast<int>(comm_ok_rt_.size()) &&
-           comm_ok_rt_[static_cast<std::size_t>(motor_index)] != 0;
-}
-
-
-bool MYACTUA::is_motor_faulted_rt(int motor_index) const
-{
-    return motor_index >= 0 &&
-           motor_index < static_cast<int>(_motors.size()) &&
-           _motors[static_cast<std::size_t>(motor_index)].observed.fault;
+    return satisfied ? mb::DiscreteCommandEvaluation::SATISFIED
+                     : mb::DiscreteCommandEvaluation::PENDING;
 }
 
 
@@ -700,8 +620,8 @@ void MYACTUA::update_status_snapshot_rt()
         return;
     }
 
-    MotorStatusChannel::WriteToken write_token;
-    if (!status_channel_.try_begin_write_rt(write_token)) {
+    mb::MotorControllerBase::StatusWriteToken write_token;
+    if (!try_begin_status_write_rt(write_token)) {
         push_status_overwritten_event_rt();
         return;
     }
@@ -717,13 +637,10 @@ void MYACTUA::update_status_snapshot_rt()
         s.comm_ok = m.comm_ok;
         if (m.comm_ok) {
             const uint16_t sw = m.rx.status_word;
-            s.ready = is_ready_to_switch_on(sw) || is_switched_on(sw) ||
-                      is_operation_enabled(sw);
             s.enabled = is_operation_enabled(sw);
             s.faulted = is_fault(sw) || (m.rx.error != 0);
             s.mode = to_motor_control_mode(m.observed.mode);
         } else {
-            s.ready = false;
             s.enabled = false;
             s.faulted = false;
             s.mode = mb::MotorControlMode::NONE;
@@ -731,7 +648,7 @@ void MYACTUA::update_status_snapshot_rt()
         s.target_mode = to_motor_control_mode(m.desired.mode);
     }
 
-    if (status_channel_.publish_rt(write_token)) {
+    if (publish_status_rt(write_token)) {
         push_status_overwritten_event_rt();
     }
 }
@@ -743,7 +660,7 @@ void MYACTUA::update_diagnostics_snapshot_rt()
         return;
     }
 
-    LatestStatusChannel<MyactDiagnosticsSnapshot>::WriteToken write_token;
+    mb::LatestStatusChannel<MyactDiagnosticsSnapshot>::WriteToken write_token;
     if (!diagnostics_channel_.try_begin_write_rt(write_token)) {
         push_status_overwritten_event_rt();
         return;
@@ -792,72 +709,15 @@ double MYACTUA::raw_vel_to_rad_s(double raw_vel)
 }
 
 
-std::vector<mb::MotorStatusSnapshot> MYACTUA::get_status()
-{
-    return status_channel_.get_status();
-}
-
-
-std::vector<double> MYACTUA::get_joint_q_rad()
-{
-    const auto status = get_status();
-    std::vector<double> q(status.size(), 0.0);
-    for (std::size_t i = 0; i < status.size(); ++i) {
-        q[i] = status[i].position_rad;
-    }
-    return q;
-}
-
-
-std::vector<double> MYACTUA::get_joint_vel_rad_s()
-{
-    const auto status = get_status();
-    std::vector<double> dq(status.size(), 0.0);
-    for (std::size_t i = 0; i < status.size(); ++i) {
-        dq[i] = status[i].velocity_rad_s;
-    }
-    return dq;
-}
-
-
-std::vector<double> MYACTUA::get_joint_torque_percent()
-{
-    const auto status = get_status();
-    std::vector<double> torque(status.size(), 0.0);
-    for (std::size_t i = 0; i < status.size(); ++i) {
-        torque[i] = status[i].torque_percent;
-    }
-    return torque;
-}
-
-
 std::vector<MyactDiagnosticsSnapshot> MYACTUA::get_myact_diagnostics()
 {
     return diagnostics_channel_.get_status();
 }
 
 
-void MYACTUA::set_status_callback(mb::MotorControllerBase::StatusCallback cb)
-{
-    status_channel_.set_callback(std::move(cb));
-}
-
-
 void MYACTUA::set_myact_diagnostics_callback(MyactDiagnosticsCallback cb)
 {
     diagnostics_channel_.set_callback(std::move(cb));
-}
-
-
-void MYACTUA::set_rt_event_callback(mb::MotorControllerBase::RtEventCallback cb)
-{
-    rt_event_dispatcher_.set_callback(std::move(cb));
-}
-
-
-void MYACTUA::push_rt_event(const mb::RtEvent& event)
-{
-    rt_event_dispatcher_.push_rt(event);
 }
 
 
@@ -870,23 +730,23 @@ void MYACTUA::rt_event_sink_trampoline(void* context, const mb::RtEvent& event)
 }
 
 
-void MYACTUA::on_discrete_command_failed_rt(
+void MYACTUA::discrete_command_failed_callback(
     int motor_index,
     const mb::DiscreteCommand& cmd,
-    int reason)
+    mb::DiscreteFailReason reason)
 {
     mb::RtEvent event;
     event.type = mb::RtEventType::DISCRETE_COMMAND_FAILED;
     event.tick = discrete_command_tick_rt();
     event.motor_index = motor_index;
     event.command_type = cmd.type;
-    event.reason = reason;
+    event.reason = static_cast<int>(reason);
     event.value = static_cast<uint32_t>(std::max(0, cmd.cur_retry));
     push_rt_event(event);
 }
 
 
-void MYACTUA::on_discrete_queue_full_rt(
+void MYACTUA::discrete_queue_full_callback(
     int motor_index,
     const mb::ControlCommand& cmd)
 {
@@ -895,7 +755,7 @@ void MYACTUA::on_discrete_queue_full_rt(
     event.tick = discrete_command_tick_rt();
     event.motor_index = motor_index;
     event.command_type = cmd.discrete_type;
-    event.reason = mb::kDiscreteFailMaxRetry;
+    event.reason = static_cast<int>(mb::DiscreteFailReason::MAX_RETRY);
     push_rt_event(event);
 }
 
@@ -929,11 +789,9 @@ void MYACTUA::set_print_info(const std::vector<int>& motor_indices)
 }
 
 
-bool MYACTUA::on_realtime_start()
+bool MYACTUA::realtime_start_callback()
 {
-    status_channel_.start();
     diagnostics_channel_.start();
-    rt_event_dispatcher_.start();
     if (status_monitor_.has_print_motor_ids()) {
         status_monitor_.start();
     }
@@ -943,13 +801,11 @@ bool MYACTUA::on_realtime_start()
 }
 
 
-void MYACTUA::on_realtime_stop() noexcept
+void MYACTUA::realtime_stop_callback() noexcept
 {
     try {
         status_monitor_.stop();
-        status_channel_.stop();
         diagnostics_channel_.stop();
-        rt_event_dispatcher_.stop();
         std::cout << "[MYACTUA] 实时控制线程已停止" << std::endl;
     } catch (...) {
     }

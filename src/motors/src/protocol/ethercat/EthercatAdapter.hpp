@@ -1,7 +1,10 @@
 #pragma once
 
 #include "EthercatTypes.hpp"
-#include "motor_base/ControlTypes.hpp"
+
+namespace motor_base {
+struct RtEvent;
+}
 
 namespace myactua{
 

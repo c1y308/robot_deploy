@@ -3,7 +3,10 @@
 #include <vector>
 
 #include "driver/myact/myact_types.hpp"
-#include "motor_base/ControlTypes.hpp"
+
+namespace motor_base {
+struct RtEvent;
+}
 
 namespace myactua {
 
