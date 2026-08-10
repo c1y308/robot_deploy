@@ -16,6 +16,7 @@ namespace mb = motor_base;
 
 namespace {
 constexpr double kRawTorqueToPercent = 0.1;
+constexpr const char* kDefaultEthercatIfName = "enp8s0";
 
 int32_t double_to_i32(double value)
 {
@@ -95,18 +96,20 @@ MYACTUA::MYACTUA(std::shared_ptr<EthercatAdapter> adapter,
       options_(options),
       _adapter(std::move(adapter))
 {
-    options_.status_publish_period_ms =
-        std::max(1, options_.status_publish_period_ms);
+    options_.status_publish_period_ms = std::max(1, options_.status_publish_period_ms);
 
     /* 初始化电机状态列表 */
     for (int i = 0; i < num_motors; i++) {
         _motors.emplace_back(i);
     }
-    comm_ok_rt_.resize(num_motors, 0);
+
     set_rt_event_fallback_printer(print_myact_rt_event);
+
     diagnostics_channel_.configure(_motors.size(), options_.status_publish_period_ms);
+
     status_monitor_.set_status_provider([this]() { return get_myact_diagnostics(); });
     status_monitor_.set_status_printer(print_myact_status_table);
+    
     if (_adapter) {
         _adapter->set_rt_event_sink(this, &MYACTUA::rt_event_sink_trampoline);
     }
@@ -127,15 +130,16 @@ bool MYACTUA::connect_impl(const char* ifname)
     if (!_adapter) {
         return false;
     }
-    return _adapter->init(ifname);
+    const char* effective_ifname =
+        (ifname && ifname[0] != '\0') ? ifname : kDefaultEthercatIfName;
+    return _adapter->init(effective_ifname);
 }
 
 
-/* 等待所有 EtherCAT 从站进入 OP */
-bool MYACTUA::wait_all_motors_ready(
-    int timeout_ms,
-    int poll_ms,
-    const std::function<bool()>& should_stop) const
+/// @brief 阻塞等待所有电机进入 OP（每 1ms 检查一次）
+/// @param timeout_ms 超时时间 (ms)，0 表示仅检查一次
+/// @param poll_ms  日志打印间隔 (ms)
+bool MYACTUA::wait_all_motors_ready(int timeout_ms, int poll_ms) const
 {
     if (!_adapter) {
         std::cerr << "[MYACTUA] EtherCAT adapter is null." << std::endl;
@@ -144,22 +148,16 @@ bool MYACTUA::wait_all_motors_ready(
 
     using Clock = std::chrono::steady_clock;
     const int effective_timeout_ms = std::max(0, timeout_ms);
-    const int effective_poll_ms = std::max(1, poll_ms);
+    const int effective_poll_ms    = std::max(1, poll_ms);
+
     const auto start_time = Clock::now();
     const auto deadline = start_time + std::chrono::milliseconds(effective_timeout_ms);
+    
     auto next_log_time = start_time;
     bool first_check = true;
 
     while (first_check || (effective_timeout_ms > 0 && Clock::now() < deadline)) {
         first_check = false;
-
-        if (should_stop && should_stop()) {
-            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                Clock::now() - start_time).count();
-            std::cout << "[MYACTUA] wait_all_motors_ready interrupted after "
-                      << elapsed_ms << " ms" << std::endl;
-            return false;
-        }
 
         _adapter->receive_physical();
         _adapter->send_physical();
@@ -195,9 +193,23 @@ bool MYACTUA::wait_all_motors_ready(
 
     const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         Clock::now() - start_time).count();
+
     std::cout << "[MYACTUA] wait_all_motors_ready timeout after "
               << elapsed_ms << " ms" << std::endl;
+
     return false;
+}
+
+
+bool MYACTUA::realtime_start_callback()
+{
+    diagnostics_channel_.start();
+    if (status_monitor_.has_print_motor_ids()) {
+        status_monitor_.start();
+    }
+    
+    std::cout << "[MYACTUA] 实时控制线程已启动" << std::endl;
+    return true;
 }
 
 
@@ -212,79 +224,24 @@ void MYACTUA::realtime_cycle_callback()
 }
 
 
-mb::CommandSubmitResult MYACTUA::validate_command(
-    const mb::ControlCommand& cmd) const
+void MYACTUA::realtime_stop_callback() noexcept
 {
-    if (cmd.kind == mb::ControlCommandKind::DISCRETE) {
-        return mb::CommandSubmitResult::ACCEPTED;
-    }
-
-    MyactControlMode expected_mode = MyactControlMode::NONE;
-    switch (cmd.setpoint_type) {
-        case mb::SetpointCommandType::POSITION_TARGETS:
-            expected_mode = MyactControlMode::CSP;
-            break;
-
-        case mb::SetpointCommandType::VELOCITY_TARGETS:
-            expected_mode = MyactControlMode::CSV;
-            break;
-
-        case mb::SetpointCommandType::TORQUE_TARGETS:
-            expected_mode = MyactControlMode::CST;
-            break;
-
-        case mb::SetpointCommandType::IMPEDANCE_TARGETS:
-            expected_mode = MyactControlMode::PVT;
-            break;
-    }
-
-    for (std::size_t i = 0; i < _motors.size(); ++i) {
-        if (_motors[i].desired.mode != expected_mode) {
-            return mb::CommandSubmitResult::INVALID_COMMAND;
-        }
-    }
-
-    return mb::CommandSubmitResult::ACCEPTED;
-}
-
-
-void MYACTUA::apply_setpoint_command_callback(const mb::ControlCommand& cmd)
-{
-    switch (cmd.setpoint_type) {
-        case mb::SetpointCommandType::POSITION_TARGETS:
-            for (size_t i = 0; i < _motors.size(); i++) {
-                _motors[i].desired.position_rad = cmd.setpoints[i];
-            }
-            break;
-
-        case mb::SetpointCommandType::VELOCITY_TARGETS:
-            for (size_t i = 0; i < _motors.size(); i++) {
-                _motors[i].desired.velocity_rad_s = cmd.setpoints[i];
-            }
-            break;
-
-        case mb::SetpointCommandType::TORQUE_TARGETS:
-            for (size_t i = 0; i < _motors.size(); i++) {
-                _motors[i].desired.torque = cmd.setpoints[i];
-            }
-            break;
-
-        case mb::SetpointCommandType::IMPEDANCE_TARGETS:
-            for (size_t i = 0; i < _motors.size(); i++) {
-                _motors[i].desired.impedance_setpoint = cmd.impedance_setpoints[i];
-            }
-            break;
+    try {
+        status_monitor_.stop();
+        diagnostics_channel_.stop();
+        std::cout << "[MYACTUA] 实时控制线程已停止" << std::endl;
+    } catch (...) {
     }
 }
 
 
+/// @brief 更新motor.observed，处理通信、故障、模式切换和目标值设置
 void MYACTUA::update()
 {
     /* 接受电机回传数据，并记录当前周期通信状态 */
     for (size_t i = 0; i < _motors.size(); i++)
     {
         const bool comm_ok = _adapter->is_configured(_motors[i].motor_index);
-        comm_ok_rt_[i] = comm_ok ? 1U : 0U;
         if (!comm_ok) {
             ++_motors[i].comm_offline_total_count;
         }
@@ -297,10 +254,10 @@ void MYACTUA::update()
         }
     }
 
-    /* 设置电机目标值。通信异常时保持当前控制状态，不覆写 step。 */
+    /* 设置电机目标值。通信异常时保持当前控制状态。 */
     for (size_t i = 0; i < _motors.size(); i++)
     {
-        if (!comm_ok_rt_[i]) {
+        if (!_motors[i].comm_ok) {
             continue;
         }
         process_single_motor(_motors[i]);
@@ -309,7 +266,7 @@ void MYACTUA::update()
     /* 最终发送 */
     for (size_t i = 0; i < _motors.size(); i++)
     {
-        if (!comm_ok_rt_[i]) continue;
+        if (!_motors[i].comm_ok) continue;
         _adapter->send(_motors[i].motor_index, _motors[i].tx);
     }
 }
@@ -325,84 +282,14 @@ void MYACTUA::refresh_observed_state(MotorState& motor)
 }
 
 
-/* 设置 DesiredState 结构体中的数据 */
-void MYACTUA::apply_discrete_command_callback(
-    int motor_index,
-    const mb::DiscreteCommand& cmd)
-{
-    if (motor_index < 0 || motor_index >= static_cast<int>(_motors.size())) {
-        return;
-    }
-
-    MotorState& motor = _motors[motor_index];
-    switch (cmd.type) {
-        case mb::DiscreteCommandType::STOP:
-            // Edge-triggered: avoid resetting mode-switch state on retries.
-            if (motor.desired.enabled) {
-                motor.desired.enabled = false;
-                motor.mode_switch_step = MyactModeSwitchStep::IDLE;
-            }
-            break;
-        case mb::DiscreteCommandType::RESTART:
-            // Edge-triggered: first restart arms enable flow; later retries are no-op.
-            if (!motor.desired.enabled) {
-                motor.desired.enabled = true;
-                motor.mode_switch_step = MyactModeSwitchStep::IDLE;
-            }
-            break;
-        case mb::DiscreteCommandType::SET_MODE:
-            if (motor.desired.mode != to_myact_mode(cmd.mode)) {
-                motor.desired.mode = to_myact_mode(cmd.mode);
-                motor.mode_switch_step = MyactModeSwitchStep::IDLE;
-            }
-            break;
-    }
-}
-
-
-mb::DiscreteCommandEvaluation MYACTUA::evaluate_discrete_command_callback(
-    int motor_index,
-    const mb::DiscreteCommand& cmd) const
-{
-    if (motor_index < 0 || motor_index >= static_cast<int>(_motors.size())) {
-        return mb::DiscreteCommandEvaluation::PENDING;
-    }
-
-    if (motor_index >= static_cast<int>(comm_ok_rt_.size()) ||
-        comm_ok_rt_[static_cast<std::size_t>(motor_index)] == 0) {
-        return mb::DiscreteCommandEvaluation::PENDING;
-    }
-
-    const MotorState& motor = _motors[static_cast<std::size_t>(motor_index)];
-    const auto& observed = motor.observed;
-    if (observed.fault) {
-        return mb::DiscreteCommandEvaluation::FAILED;
-    }
-
-    bool satisfied = false;
-    switch (cmd.type) {
-        case mb::DiscreteCommandType::STOP:
-            satisfied = !observed.operation_enabled;
-            break;
-        case mb::DiscreteCommandType::RESTART:
-            satisfied = observed.operation_enabled;
-            break;
-        case mb::DiscreteCommandType::SET_MODE:
-            satisfied = observed.mode == to_myact_mode(cmd.mode);
-            break;
-    }
-    return satisfied ? mb::DiscreteCommandEvaluation::SATISFIED
-                     : mb::DiscreteCommandEvaluation::PENDING;
-}
-
-
-
+/// @brief 处理单个电机的状态机逻辑
 void MYACTUA::process_single_motor(MotorState& motor)
 {
     const auto& observed = motor.observed;
-    const auto& desired  = motor.desired;
+    const auto& desired   = motor.desired;
     const uint16_t sw = observed.status_word;
 
+    /* 处理故障状态 */
     if (observed.fault) {
         motor.step = MyactMotorStep::FAULT;
         motor.mode_switch_step = MyactModeSwitchStep::IDLE;
@@ -443,6 +330,7 @@ void MYACTUA::process_single_motor(MotorState& motor)
         return;
     }
 
+    // 是否进入电机状态切换的状态机
     const bool mode_switch_active =
          (observed.mode != desired.mode) || (motor.mode_switch_step != MyactModeSwitchStep::IDLE);
     if (mode_switch_active) {
@@ -452,7 +340,7 @@ void MYACTUA::process_single_motor(MotorState& motor)
         return;
     }
 
-    /* 模式一致后进入使能/运行控制 */
+    /* 模式一致则进入使能/运行控制 */
     motor.tx.control_word = get_next_control_word(sw);
     motor.tx.op_mode = static_cast<int8_t>(desired.mode);
 
@@ -614,6 +502,172 @@ ControlWordCommand MYACTUA::get_next_control_word(uint16_t status_word)
 
 
 
+mb::CommandSubmitResult MYACTUA::validate_command(
+    const mb::ControlCommand& cmd) const
+{
+    if (cmd.kind == mb::ControlCommandKind::DISCRETE) {
+        return mb::CommandSubmitResult::ACCEPTED;
+    }
+
+    MyactControlMode expected_mode = MyactControlMode::NONE;
+    switch (cmd.setpoint_type) {
+        case mb::SetpointCommandType::POSITION_TARGETS:
+            expected_mode = MyactControlMode::CSP;
+            break;
+
+        case mb::SetpointCommandType::VELOCITY_TARGETS:
+            expected_mode = MyactControlMode::CSV;
+            break;
+
+        case mb::SetpointCommandType::TORQUE_TARGETS:
+            expected_mode = MyactControlMode::CST;
+            break;
+
+        case mb::SetpointCommandType::IMPEDANCE_TARGETS:
+            expected_mode = MyactControlMode::PVT;
+            break;
+    }
+
+    for (std::size_t i = 0; i < _motors.size(); ++i) {
+        if (_motors[i].desired.mode != expected_mode) {
+            return mb::CommandSubmitResult::INVALID_COMMAND;
+        }
+    }
+
+    return mb::CommandSubmitResult::ACCEPTED;
+}
+
+/// @brief 设置 DesiredState 结构体中的数据
+void MYACTUA::apply_setpoint_command_callback(const mb::ControlCommand& cmd)
+{
+    switch (cmd.setpoint_type) {
+        case mb::SetpointCommandType::POSITION_TARGETS:
+            for (size_t i = 0; i < _motors.size(); i++) {
+                _motors[i].desired.position_rad = cmd.setpoints[i];
+            }
+            break;
+
+        case mb::SetpointCommandType::VELOCITY_TARGETS:
+            for (size_t i = 0; i < _motors.size(); i++) {
+                _motors[i].desired.velocity_rad_s = cmd.setpoints[i];
+            }
+            break;
+
+        case mb::SetpointCommandType::TORQUE_TARGETS:
+            for (size_t i = 0; i < _motors.size(); i++) {
+                _motors[i].desired.torque = cmd.setpoints[i];
+            }
+            break;
+
+        case mb::SetpointCommandType::IMPEDANCE_TARGETS:
+            for (size_t i = 0; i < _motors.size(); i++) {
+                _motors[i].desired.impedance_setpoint = cmd.impedance_setpoints[i];
+            }
+            break;
+    }
+}
+
+
+/// @brief 执行电机离散命令队列中的命令
+void MYACTUA::apply_discrete_command_callback(
+    int motor_index,
+    const mb::DiscreteCommand& cmd)
+{
+    if (motor_index < 0 || motor_index >= static_cast<int>(_motors.size())) {
+        return;
+    }
+
+    MotorState& motor = _motors[motor_index];
+    switch (cmd.type) {
+        case mb::DiscreteCommandType::STOP:
+            // Edge-triggered: avoid resetting mode-switch state on retries.
+            if (motor.desired.enabled) {
+                motor.desired.enabled = false;
+                motor.mode_switch_step = MyactModeSwitchStep::IDLE;
+            }
+            break;
+        case mb::DiscreteCommandType::RESTART:
+            // Edge-triggered: first restart arms enable flow; later retries are no-op.
+            if (!motor.desired.enabled) {
+                motor.desired.enabled = true;
+                motor.mode_switch_step = MyactModeSwitchStep::IDLE;
+            }
+            break;
+        case mb::DiscreteCommandType::SET_MODE:
+            if (motor.desired.mode != to_myact_mode(cmd.mode)) {
+                motor.desired.mode  = to_myact_mode(cmd.mode);
+                motor.mode_switch_step = MyactModeSwitchStep::IDLE;
+            }
+            break;
+    }
+}
+
+
+mb::DiscreteCommandEvaluation MYACTUA::evaluate_discrete_command_callback(
+    int motor_index,
+    const mb::DiscreteCommand& cmd) const
+{
+    if (motor_index < 0 || motor_index >= static_cast<int>(_motors.size())) {
+        return mb::DiscreteCommandEvaluation::PENDING;
+    }
+
+    const MotorState& motor = _motors[static_cast<std::size_t>(motor_index)];
+    if (!motor.comm_ok) {
+        return mb::DiscreteCommandEvaluation::PENDING;
+    }
+
+    const auto& observed = motor.observed;
+    if (observed.fault) {
+        return mb::DiscreteCommandEvaluation::FAILED;
+    }
+
+    bool satisfied = false;
+    switch (cmd.type) {
+        case mb::DiscreteCommandType::STOP:
+            satisfied = !observed.operation_enabled;
+            break;
+        case mb::DiscreteCommandType::RESTART:
+            satisfied = observed.operation_enabled;
+            break;
+        case mb::DiscreteCommandType::SET_MODE:
+            satisfied = observed.mode == to_myact_mode(cmd.mode);
+            break;
+    }
+    return satisfied ? mb::DiscreteCommandEvaluation::SATISFIED
+                     : mb::DiscreteCommandEvaluation::PENDING;
+}
+
+
+void MYACTUA::discrete_command_failed_callback(
+    int motor_index,
+    const mb::DiscreteCommand& cmd,
+    mb::DiscreteFailReason reason)
+{
+    mb::RtEvent event;
+    event.type = mb::RtEventType::DISCRETE_COMMAND_FAILED;
+    event.tick = discrete_command_tick_rt();
+    event.motor_index = motor_index;
+    event.command_type = cmd.type;
+    event.reason = static_cast<int>(reason);
+    event.value = static_cast<uint32_t>(std::max(0, cmd.cur_retry));
+    push_rt_event(event);
+}
+
+
+void MYACTUA::discrete_queue_full_callback(
+    int motor_index,
+    const mb::ControlCommand& cmd)
+{
+    mb::RtEvent event;
+    event.type = mb::RtEventType::DISCRETE_QUEUE_FULL;
+    event.tick = discrete_command_tick_rt();
+    event.motor_index = motor_index;
+    event.command_type = cmd.discrete_type;
+    event.reason = static_cast<int>(mb::DiscreteFailReason::MAX_RETRY);
+    push_rt_event(event);
+}
+
+
 void MYACTUA::update_status_snapshot_rt()
 {
     if (_motors.empty()) {
@@ -709,17 +763,15 @@ double MYACTUA::raw_vel_to_rad_s(double raw_vel)
 }
 
 
-std::vector<MyactDiagnosticsSnapshot> MYACTUA::get_myact_diagnostics()
-{
-    return diagnostics_channel_.get_status();
-}
-
-
 void MYACTUA::set_myact_diagnostics_callback(MyactDiagnosticsCallback cb)
 {
     diagnostics_channel_.set_callback(std::move(cb));
 }
 
+std::vector<MyactDiagnosticsSnapshot> MYACTUA::get_myact_diagnostics()
+{
+    return diagnostics_channel_.get_status();
+}
 
 void MYACTUA::rt_event_sink_trampoline(void* context, const mb::RtEvent& event)
 {
@@ -727,36 +779,6 @@ void MYACTUA::rt_event_sink_trampoline(void* context, const mb::RtEvent& event)
         return;
     }
     static_cast<MYACTUA*>(context)->push_rt_event(event);
-}
-
-
-void MYACTUA::discrete_command_failed_callback(
-    int motor_index,
-    const mb::DiscreteCommand& cmd,
-    mb::DiscreteFailReason reason)
-{
-    mb::RtEvent event;
-    event.type = mb::RtEventType::DISCRETE_COMMAND_FAILED;
-    event.tick = discrete_command_tick_rt();
-    event.motor_index = motor_index;
-    event.command_type = cmd.type;
-    event.reason = static_cast<int>(reason);
-    event.value = static_cast<uint32_t>(std::max(0, cmd.cur_retry));
-    push_rt_event(event);
-}
-
-
-void MYACTUA::discrete_queue_full_callback(
-    int motor_index,
-    const mb::ControlCommand& cmd)
-{
-    mb::RtEvent event;
-    event.type = mb::RtEventType::DISCRETE_QUEUE_FULL;
-    event.tick = discrete_command_tick_rt();
-    event.motor_index = motor_index;
-    event.command_type = cmd.discrete_type;
-    event.reason = static_cast<int>(mb::DiscreteFailReason::MAX_RETRY);
-    push_rt_event(event);
 }
 
 
@@ -780,36 +802,10 @@ void MYACTUA::push_status_overwritten_event_rt()
 /* 配置电机监控打印: 空列表关闭打印，-1 表示全部电机 */
 void MYACTUA::set_print_info(const std::vector<int>& motor_indices)
 {
-    const bool enabled = status_monitor_.set_print_info(
-        motor_indices,
-        static_cast<int>(_motors.size()));
+    const bool enabled = status_monitor_.set_print_info(motor_indices);
     if (is_running()) {
         enabled ? status_monitor_.start() : status_monitor_.stop();
     }
 }
-
-
-bool MYACTUA::realtime_start_callback()
-{
-    diagnostics_channel_.start();
-    if (status_monitor_.has_print_motor_ids()) {
-        status_monitor_.start();
-    }
-    
-    std::cout << "[MYACTUA] 实时控制线程已启动" << std::endl;
-    return true;
-}
-
-
-void MYACTUA::realtime_stop_callback() noexcept
-{
-    try {
-        status_monitor_.stop();
-        diagnostics_channel_.stop();
-        std::cout << "[MYACTUA] 实时控制线程已停止" << std::endl;
-    } catch (...) {
-    }
-}
-
 
 }

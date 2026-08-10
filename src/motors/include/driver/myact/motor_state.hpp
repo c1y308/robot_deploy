@@ -2,14 +2,17 @@
 
 #include <cstdint>
 
-#include "EthercatTypes.hpp"
+#include "ethercat_types.hpp"
 #include "driver/myact/myact_types.hpp"
-#include "motor_base/CommandTypes.hpp"
+#include "motor_base/command_types.hpp"
 
 namespace myactua {
 
+
+/// @brief 电机期望的值与模式
 struct DesiredState {
     bool enabled;
+
     MyactControlMode mode;
     double position_rad;
     double velocity_rad_s;
@@ -23,6 +26,7 @@ struct DesiredState {
     }
 };
 
+/// @brief 电机观测的状态与模式
 struct ObservedState {
     bool fault;
     bool operation_enabled;

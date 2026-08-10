@@ -117,17 +117,17 @@ depend:
 .PHONY : depend
 
 #=============================================================================
-# Target rules for targets named MYACTUA_EtherCat
+# Target rules for targets named myactua_ethercat
 
 # Build rule for target.
-MYACTUA_EtherCat: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 MYACTUA_EtherCat
-.PHONY : MYACTUA_EtherCat
+myactua_ethercat: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 myactua_ethercat
+.PHONY : myactua_ethercat
 
 # fast build rule for target.
-MYACTUA_EtherCat/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MYACTUA_EtherCat.dir/build.make CMakeFiles/MYACTUA_EtherCat.dir/build
-.PHONY : MYACTUA_EtherCat/fast
+myactua_ethercat/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/myactua_ethercat.dir/build.make CMakeFiles/myactua_ethercat.dir/build
+.PHONY : myactua_ethercat/fast
 
 #=============================================================================
 # Target rules for targets named simple_test
@@ -143,17 +143,17 @@ simple_test/fast:
 .PHONY : simple_test/fast
 
 #=============================================================================
-# Target rules for targets named ID_test
+# Target rules for targets named id_test
 
 # Build rule for target.
-ID_test: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 ID_test
-.PHONY : ID_test
+id_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 id_test
+.PHONY : id_test
 
 # fast build rule for target.
-ID_test/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/ID_test.dir/build.make CMakeFiles/ID_test.dir/build
-.PHONY : ID_test/fast
+id_test/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/id_test.dir/build.make CMakeFiles/id_test.dir/build
+.PHONY : id_test/fast
 
 #=============================================================================
 # Target rules for targets named linear_test
@@ -194,29 +194,29 @@ stop_read_status/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/stop_read_status.dir/build.make CMakeFiles/stop_read_status.dir/build
 .PHONY : stop_read_status/fast
 
-ID_test.o: ID_test.cpp.o
-.PHONY : ID_test.o
+id_test.o: id_test.cpp.o
+.PHONY : id_test.o
 
 # target to build an object file
-ID_test.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/ID_test.dir/build.make CMakeFiles/ID_test.dir/ID_test.cpp.o
-.PHONY : ID_test.cpp.o
+id_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/id_test.dir/build.make CMakeFiles/id_test.dir/id_test.cpp.o
+.PHONY : id_test.cpp.o
 
-ID_test.i: ID_test.cpp.i
-.PHONY : ID_test.i
+id_test.i: id_test.cpp.i
+.PHONY : id_test.i
 
 # target to preprocess a source file
-ID_test.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/ID_test.dir/build.make CMakeFiles/ID_test.dir/ID_test.cpp.i
-.PHONY : ID_test.cpp.i
+id_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/id_test.dir/build.make CMakeFiles/id_test.dir/id_test.cpp.i
+.PHONY : id_test.cpp.i
 
-ID_test.s: ID_test.cpp.s
-.PHONY : ID_test.s
+id_test.s: id_test.cpp.s
+.PHONY : id_test.s
 
 # target to generate assembly for a file
-ID_test.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/ID_test.dir/build.make CMakeFiles/ID_test.dir/ID_test.cpp.s
-.PHONY : ID_test.cpp.s
+id_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/id_test.dir/build.make CMakeFiles/id_test.dir/id_test.cpp.s
+.PHONY : id_test.cpp.s
 
 linear_test.o: linear_test.cpp.o
 .PHONY : linear_test.o
@@ -295,7 +295,7 @@ src/drivers/myact/motor_control.o: src/drivers/myact/motor_control.cpp.o
 
 # target to build an object file
 src/drivers/myact/motor_control.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MYACTUA_EtherCat.dir/build.make CMakeFiles/MYACTUA_EtherCat.dir/src/drivers/myact/motor_control.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/myactua_ethercat.dir/build.make CMakeFiles/myactua_ethercat.dir/src/drivers/myact/motor_control.cpp.o
 .PHONY : src/drivers/myact/motor_control.cpp.o
 
 src/drivers/myact/motor_control.i: src/drivers/myact/motor_control.cpp.i
@@ -303,7 +303,7 @@ src/drivers/myact/motor_control.i: src/drivers/myact/motor_control.cpp.i
 
 # target to preprocess a source file
 src/drivers/myact/motor_control.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MYACTUA_EtherCat.dir/build.make CMakeFiles/MYACTUA_EtherCat.dir/src/drivers/myact/motor_control.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/myactua_ethercat.dir/build.make CMakeFiles/myactua_ethercat.dir/src/drivers/myact/motor_control.cpp.i
 .PHONY : src/drivers/myact/motor_control.cpp.i
 
 src/drivers/myact/motor_control.s: src/drivers/myact/motor_control.cpp.s
@@ -311,32 +311,32 @@ src/drivers/myact/motor_control.s: src/drivers/myact/motor_control.cpp.s
 
 # target to generate assembly for a file
 src/drivers/myact/motor_control.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MYACTUA_EtherCat.dir/build.make CMakeFiles/MYACTUA_EtherCat.dir/src/drivers/myact/motor_control.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/myactua_ethercat.dir/build.make CMakeFiles/myactua_ethercat.dir/src/drivers/myact/motor_control.cpp.s
 .PHONY : src/drivers/myact/motor_control.cpp.s
 
-src/protocol/ethercat/EthercatAdapterIGH.o: src/protocol/ethercat/EthercatAdapterIGH.cpp.o
+src/protocol/ethercat/EthercatAdapterIGH.o: src/protocol/ethercat/ethercat_adapter_igh.cpp.o
 .PHONY : src/protocol/ethercat/EthercatAdapterIGH.o
 
 # target to build an object file
-src/protocol/ethercat/EthercatAdapterIGH.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MYACTUA_EtherCat.dir/build.make CMakeFiles/MYACTUA_EtherCat.dir/src/protocol/ethercat/EthercatAdapterIGH.cpp.o
-.PHONY : src/protocol/ethercat/EthercatAdapterIGH.cpp.o
+src/protocol/ethercat/ethercat_adapter_igh.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/myactua_ethercat.dir/build.make CMakeFiles/myactua_ethercat.dir/src/protocol/ethercat/ethercat_adapter_igh.cpp.o
+.PHONY : src/protocol/ethercat/ethercat_adapter_igh.cpp.o
 
-src/protocol/ethercat/EthercatAdapterIGH.i: src/protocol/ethercat/EthercatAdapterIGH.cpp.i
+src/protocol/ethercat/EthercatAdapterIGH.i: src/protocol/ethercat/ethercat_adapter_igh.cpp.i
 .PHONY : src/protocol/ethercat/EthercatAdapterIGH.i
 
 # target to preprocess a source file
-src/protocol/ethercat/EthercatAdapterIGH.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MYACTUA_EtherCat.dir/build.make CMakeFiles/MYACTUA_EtherCat.dir/src/protocol/ethercat/EthercatAdapterIGH.cpp.i
-.PHONY : src/protocol/ethercat/EthercatAdapterIGH.cpp.i
+src/protocol/ethercat/ethercat_adapter_igh.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/myactua_ethercat.dir/build.make CMakeFiles/myactua_ethercat.dir/src/protocol/ethercat/ethercat_adapter_igh.cpp.i
+.PHONY : src/protocol/ethercat/ethercat_adapter_igh.cpp.i
 
-src/protocol/ethercat/EthercatAdapterIGH.s: src/protocol/ethercat/EthercatAdapterIGH.cpp.s
+src/protocol/ethercat/EthercatAdapterIGH.s: src/protocol/ethercat/ethercat_adapter_igh.cpp.s
 .PHONY : src/protocol/ethercat/EthercatAdapterIGH.s
 
 # target to generate assembly for a file
-src/protocol/ethercat/EthercatAdapterIGH.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MYACTUA_EtherCat.dir/build.make CMakeFiles/MYACTUA_EtherCat.dir/src/protocol/ethercat/EthercatAdapterIGH.cpp.s
-.PHONY : src/protocol/ethercat/EthercatAdapterIGH.cpp.s
+src/protocol/ethercat/ethercat_adapter_igh.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/myactua_ethercat.dir/build.make CMakeFiles/myactua_ethercat.dir/src/protocol/ethercat/ethercat_adapter_igh.cpp.s
+.PHONY : src/protocol/ethercat/ethercat_adapter_igh.cpp.s
 
 stop_read_status.o: stop_read_status.cpp.o
 .PHONY : stop_read_status.o
@@ -370,15 +370,15 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
-	@echo "... ID_test"
-	@echo "... MYACTUA_EtherCat"
+	@echo "... id_test"
+	@echo "... myactua_ethercat"
 	@echo "... linear_test"
 	@echo "... simple_test"
 	@echo "... squat_stand"
 	@echo "... stop_read_status"
-	@echo "... ID_test.o"
-	@echo "... ID_test.i"
-	@echo "... ID_test.s"
+	@echo "... id_test.o"
+	@echo "... id_test.i"
+	@echo "... id_test.s"
 	@echo "... linear_test.o"
 	@echo "... linear_test.i"
 	@echo "... linear_test.s"

@@ -86,7 +86,7 @@ ControlCommand::set_impedance_setpoint(i, impedance_setpoint);
 
 ## 4. 主要实现点
 
-### motor_base/CommandTypes.hpp
+### motor_base/command_types.hpp
 
 - 删除旧的 `CommandType`。
 - 删除 `ControlCommand(CommandType, ...)` 系列构造函数。

@@ -77,7 +77,7 @@ target_compile_definitions(robot_interface PUBLIC
 )
 target_link_libraries(robot_interface
     PUBLIC
-    MYACTUA_EtherCat
+    myactua_ethercat
     imu_a100_core
     ${TORCH_LIBRARIES}
     pthread

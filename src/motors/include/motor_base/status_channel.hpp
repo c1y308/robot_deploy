@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-#include "motor_base/CommandTypes.hpp"
+#include "motor_base/command_types.hpp"
 
 namespace motor_base {
 

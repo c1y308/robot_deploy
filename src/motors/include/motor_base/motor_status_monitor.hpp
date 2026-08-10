@@ -1,9 +1,7 @@
 #pragma once
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cstddef>
 #include <functional>
 #include <mutex>
 #include <thread>
@@ -45,36 +43,11 @@ public:
         status_printer_ = std::move(printer);
     }
 
-    bool set_print_info(const std::vector<int>& motor_indices, int motor_count)
+    bool set_print_info(const std::vector<int>& motor_indices)
     {
-        std::vector<int> normalized_ids;
-        const bool print_all =
-            std::find(motor_indices.begin(), motor_indices.end(), -1) !=
-            motor_indices.end();
-
-        if (print_all) {
-            normalized_ids.reserve(static_cast<std::size_t>(std::max(0, motor_count)));
-            for (int i = 0; i < motor_count; ++i) {
-                normalized_ids.push_back(i);
-            }
-        } else {
-            for (int motor_index : motor_indices) {
-                if (motor_index < 0 || motor_index >= motor_count) {
-                    continue;
-                }
-                if (std::find(normalized_ids.begin(),
-                              normalized_ids.end(),
-                              motor_index) == normalized_ids.end()) {
-                    normalized_ids.push_back(motor_index);
-                }
-            }
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(print_mutex_);
-            print_motor_ids_ = normalized_ids;
-        }
-        return !normalized_ids.empty();
+        std::lock_guard<std::mutex> lock(print_mutex_);
+        print_motor_ids_ = motor_indices;
+        return !print_motor_ids_.empty();
     }
 
     bool has_print_motor_ids() const

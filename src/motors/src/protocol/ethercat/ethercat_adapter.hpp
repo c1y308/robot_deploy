@@ -1,6 +1,6 @@
 #pragma once
 
-#include "EthercatTypes.hpp"
+#include "ethercat_types.hpp"
 
 namespace motor_base {
 struct RtEvent;

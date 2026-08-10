@@ -10,11 +10,11 @@ src/motors/
 ├── README.md
 ├── include/
 │   ├── motor_base/
-│       ├── CommandTypes.hpp
-│       ├── MotorControllerBase.hpp
-│       ├── MotorStatusMonitor.hpp
-│       ├── StatusChannel.hpp
-│       └── RtEventDispatcher.hpp
+│       ├── command_types.hpp
+│       ├── motor_base.hpp
+│       ├── motor_status_monitor.hpp
+│       ├── status_channel.hpp
+│       └── rt_event_dispatcher.hpp
 │   └── driver/
 │       └── myact/
 │           ├── motor_control.hpp
@@ -33,14 +33,14 @@ src/motors/
 │   │       └── myact_debug_printers.cpp
 │   └── protocol/
 │       └── ethercat/
-│           ├── EthercatAdapter.hpp
-│           ├── EthercatAdapterIGH.hpp
-│           ├── EthercatAdapterIGH.cpp
-│           └── EthercatTypes.hpp
+│           ├── ethercat_adapter.hpp
+│           ├── ethercat_adapter_igh.hpp
+│           ├── ethercat_adapter_igh.cpp
+│           └── ethercat_types.hpp
 ├── examples/
 │   ├── simple_test.cpp
 │   ├── debug_tool.cpp
-│   └── ID_test.cpp
+│   └── id_test.cpp
 ├── tests/
 │   └── motor_realtime_channel_test.cpp
 └── datasheet/
@@ -57,10 +57,10 @@ make -j$(nproc)
 ```
 
 可执行文件与库产物：
-- `libMYACTUA_EtherCat.a`
+- `libmyactua_ethercat.a`
 - `simple_test`
 - `debug_tool`
-- `ID_test`
+- `id_test`
 
 ## 使用方法
 
@@ -76,7 +76,7 @@ cd src/motors/build
 ./debug_tool
 
 # 设备识别/连通性测试
-./ID_test
+./id_test
 ```
 
 ## 控制模式与命令
@@ -117,7 +117,7 @@ MYACTUA 驱动内部会把公共模式映射到 CiA402/PDO 模式：
    - 由示例中的 `MYACTUA controller(adapter, N)` 决定。
    - 当前 `EthercatAdapterIGH` 默认按 12 个从站配置，逻辑索引 `0-11` 对应 EtherCAT 物理位置 `1-6, 8-13`。
 3. **PDO/对象字典一致性**
-   - `src/protocol/ethercat/EthercatTypes.hpp` 中 PDO 偏移需与从站 ESI/固件一致。
+   - `src/protocol/ethercat/ethercat_types.hpp` 中 PDO 偏移需与从站 ESI/固件一致。
 4. **模式切换与使能流程**
    - 依赖状态字与控制字逻辑，建议先使用 `debug_tool` 验证单轴。
 

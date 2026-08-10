@@ -8,24 +8,24 @@
 #include <thread>
 #include <vector>
 
-#include "motor_base/CommandTypes.hpp"
+#include "motor_base/command_types.hpp"
 
 namespace motor_base {
 
 enum class RtEventType {
-    DISCRETE_COMMAND_FAILED,
-    DISCRETE_QUEUE_FULL,
+    DISCRETE_COMMAND_FAILED,    // 离散命令失败
+    DISCRETE_QUEUE_FULL,        // 离散命令队列满
     STATUS_FRAME_OVERWRITTEN,
     BUS_DIAG_SAMPLE,
     BUS_CYCLE_NOT_COMPLETE
 };
 
 struct RtEvent {
-    RtEventType type;
-    uint64_t tick;
-    int motor_index;
-    DiscreteCommandType command_type;
-    int reason;
+    RtEventType type;   // 什么类型
+    uint64_t    tick;   // 什么时间点
+    int motor_index;    // 哪个电机
+    DiscreteCommandType command_type;   // 什么命令
+    int reason;         // 什么原因
     uint32_t value;
 
     RtEvent()
@@ -37,9 +37,10 @@ struct RtEvent {
           value(0) {}
 };
 
+
 class RtEventDispatcher {
 public:
-    using Callback = std::function<void(const RtEvent&)>;
+    using Callback     = std::function<void(const RtEvent&)>;
     using EventPrinter = std::function<void(const RtEvent&)>;
 
     explicit RtEventDispatcher(

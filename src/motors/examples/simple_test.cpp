@@ -1,6 +1,6 @@
 #include "driver/myact/motor_control.hpp"
-#include "EthercatAdapterIGH.hpp"
-#include "motor_base/CommandTypes.hpp"
+#include "ethercat_adapter_igh.hpp"
+#include "motor_base/command_types.hpp"
 #include <iostream>  
 #include <memory>    
 #include <thread>

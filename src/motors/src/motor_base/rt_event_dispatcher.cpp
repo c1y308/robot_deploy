@@ -1,4 +1,4 @@
-#include "motor_base/RtEventDispatcher.hpp"
+#include "motor_base/rt_event_dispatcher.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -15,10 +15,6 @@ RtEventDispatcher::RtEventDispatcher(
 {
 }
 
-RtEventDispatcher::~RtEventDispatcher()
-{
-    stop();
-}
 
 void RtEventDispatcher::set_callback(Callback cb)
 {
@@ -26,16 +22,13 @@ void RtEventDispatcher::set_callback(Callback cb)
     callback_ = std::move(cb);
 }
 
+
 void RtEventDispatcher::set_fallback_printer(EventPrinter printer)
 {
     std::lock_guard<std::mutex> lock(fallback_printer_mutex_);
     fallback_printer_ = std::move(printer);
 }
 
-void RtEventDispatcher::push_rt(const RtEvent& event)
-{
-    try_push_rt(event);
-}
 
 void RtEventDispatcher::start()
 {
@@ -46,15 +39,33 @@ void RtEventDispatcher::start()
     thread_ = std::thread(&RtEventDispatcher::thread_func, this);
 }
 
-void RtEventDispatcher::stop()
+
+void RtEventDispatcher::thread_func()
 {
-    if (!running_.exchange(false)) {
-        return;
+    RtEvent event;
+    while (running_) {
+        bool handled_any = false;
+        while (try_pop(event)) {
+            handled_any = true;
+            handle_event(event);
+        }
+
+        if (!handled_any) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
-    if (thread_.joinable()) {
-        thread_.join();
+
+    while (try_pop(event)) {
+        handle_event(event);
     }
 }
+
+
+void RtEventDispatcher::push_rt(const RtEvent& event)
+{
+    try_push_rt(event);
+}
+
 
 bool RtEventDispatcher::try_push_rt(const RtEvent& event)
 {
@@ -82,17 +93,6 @@ bool RtEventDispatcher::try_pop(RtEvent& event)
     return true;
 }
 
-RtEventDispatcher::Callback RtEventDispatcher::get_callback() const
-{
-    std::lock_guard<std::mutex> lock(callback_mutex_);
-    return callback_;
-}
-
-RtEventDispatcher::EventPrinter RtEventDispatcher::get_fallback_printer() const
-{
-    std::lock_guard<std::mutex> lock(fallback_printer_mutex_);
-    return fallback_printer_;
-}
 
 void RtEventDispatcher::handle_event(const RtEvent& event)
 {
@@ -108,23 +108,31 @@ void RtEventDispatcher::handle_event(const RtEvent& event)
     }
 }
 
-void RtEventDispatcher::thread_func()
+RtEventDispatcher::Callback RtEventDispatcher::get_callback() const
 {
-    RtEvent event;
-    while (running_) {
-        bool handled_any = false;
-        while (try_pop(event)) {
-            handled_any = true;
-            handle_event(event);
-        }
+    std::lock_guard<std::mutex> lock(callback_mutex_);
+    return callback_;
+}
 
-        if (!handled_any) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
+RtEventDispatcher::EventPrinter RtEventDispatcher::get_fallback_printer() const
+{
+    std::lock_guard<std::mutex> lock(fallback_printer_mutex_);
+    return fallback_printer_;
+}
+
+
+RtEventDispatcher::~RtEventDispatcher()
+{
+    stop();
+}
+
+void RtEventDispatcher::stop()
+{
+    if (!running_.exchange(false)) {
+        return;
     }
-
-    while (try_pop(event)) {
-        handle_event(event);
+    if (thread_.joinable()) {
+        thread_.join();
     }
 }
 

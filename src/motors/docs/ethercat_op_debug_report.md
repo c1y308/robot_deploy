@@ -2,7 +2,7 @@
 
 ## 背景
 
-在运行 `src/motors/build/ID_test` 时，程序会初始化 IGH EtherCAT 主站，然后等待 12 个电机从站进入 OP 状态。现场反馈是物理拓扑正确，但程序始终提示有 3 个从站无法进入 OP。
+在运行 `src/motors/build/id_test` 时，程序会初始化 IGH EtherCAT 主站，然后等待 12 个电机从站进入 OP 状态。现场反馈是物理拓扑正确，但程序始终提示有 3 个从站无法进入 OP。
 
 这次排查的目标不是直接修改控制逻辑，而是把问题从“3 个从站不进 OP”逐层收敛到可验证的根因。
 
@@ -12,7 +12,7 @@
 
 ```bash
 cd src/motors/build
-sudo ./ID_test
+sudo ./id_test
 ```
 
 终端输出的关键现象：
@@ -36,7 +36,7 @@ sudo ./ID_test
 
 ## 第一层排查：确认“已就绪”的含义
 
-先看 `ID_test.cpp` 的等待逻辑。程序在 30 秒内循环调用：
+先看 `id_test.cpp` 的等待逻辑。程序在 30 秒内循环调用：
 
 ```cpp
 adapter->receive_physical();
@@ -61,7 +61,7 @@ slave_configured[i].store(ok, std::memory_order_relaxed);
 代码里已经有诊断开关：
 
 ```bash
-sudo MYACTUA_ECAT_DIAG=1 MYACTUA_ECAT_DIAG_INTERVAL=1000 ./ID_test
+sudo MYACTUA_ECAT_DIAG=1 MYACTUA_ECAT_DIAG_INTERVAL=1000 ./id_test
 ```
 
 稳定后诊断输出显示：
@@ -92,7 +92,7 @@ sudo MYACTUA_ECAT_DIAG=1 MYACTUA_ECAT_DIAG_INTERVAL=1000 ./ID_test
 
 ## 第三层排查：映射逻辑索引到 EtherCAT 物理位置
 
-`EthercatAdapterIGH.hpp` 中当前逻辑索引到物理 position 的映射是：
+`ethercat_adapter_igh.hpp` 中当前逻辑索引到物理 position 的映射是：
 
 ```cpp
 inline constexpr std::array<uint16_t, 12> kSlavePositions = {

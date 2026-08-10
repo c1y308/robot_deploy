@@ -1,6 +1,6 @@
-#include "EthercatAdapterIGH.hpp"
+#include "ethercat_adapter_igh.hpp"
 
-#include "motor_base/RtEventDispatcher.hpp"
+#include "motor_base/rt_event_dispatcher.hpp"
 
 #include <cstdio>
 #include <cstdlib>

@@ -1,7 +1,7 @@
 #pragma once
 #include "async_csv_logger.hpp"
-#include "EthercatAdapterIGH.hpp"
-#include "motor_base/MotorControllerBase.hpp"
+#include "ethercat_adapter_igh.hpp"
+#include "motor_base/motor_base.hpp"
 #include "imu_reader.hpp"
 #include "ankle_motor_fk.hpp"
 #include "ankle_motor_ik.hpp"

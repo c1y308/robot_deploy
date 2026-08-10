@@ -1,5 +1,5 @@
-#include "motor_base/CommandTypes.hpp"
-#include "EthercatAdapterIGH.hpp"
+#include "motor_base/command_types.hpp"
+#include "ethercat_adapter_igh.hpp"
 #include "ankle_motor_ik.hpp"
 #include "driver/myact/motor_control.hpp"
 
@@ -688,8 +688,7 @@ int main()
         return -1;
     }
 
-    if (!controller.wait_all_motors_ready(
-            kWaitReadyTimeoutMs, kWaitReadyPollMs, [] { return g_should_stop != 0; })) {
+    if (!controller.wait_all_motors_ready(kWaitReadyTimeoutMs, kWaitReadyPollMs)) {
         std::cerr << "[error] not all slaves reached OP within "
                   << kWaitReadyTimeoutMs << " ms\n";
         return -1;

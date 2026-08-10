@@ -5,13 +5,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include "motor_base/MotorControllerBase.hpp"
-#include "EthercatTypes.hpp"
-#include "EthercatAdapter.hpp"
-#include "motor_base/CommandTypes.hpp"
-#include "motor_base/MotorStatusMonitor.hpp"
-#include "motor_base/RtEventDispatcher.hpp"
-#include "motor_base/StatusChannel.hpp"
+#include "motor_base/motor_base.hpp"
+#include "ethercat_types.hpp"
+#include "ethercat_adapter.hpp"
+#include "motor_base/command_types.hpp"
+#include "motor_base/motor_status_monitor.hpp"
+#include "motor_base/rt_event_dispatcher.hpp"
+#include "motor_base/status_channel.hpp"
 #include "driver/myact/motor_state.hpp"
 #include "driver/myact/myact_types.hpp"
 
@@ -33,7 +33,8 @@ public:
 
     ~MYACTUA();
 
-    bool wait_all_motors_ready(int timeout_ms = 30000, int poll_ms = 100, const std::function<bool()>& should_stop = {}) const override;
+    bool wait_all_motors_ready(int timeout_ms = 30000,
+                               int poll_ms = 100) const override;
 
     std::vector<MyactDiagnosticsSnapshot> get_myact_diagnostics();
 
@@ -53,15 +54,15 @@ private:
     std::shared_ptr<EthercatAdapter> _adapter;
     std::vector<MotorState> _motors;
 
-    std::vector<uint8_t> comm_ok_rt_;
-
     std::atomic<uint64_t> status_overwrite_count_{0};
     motor_base::LatestStatusChannel<MyactDiagnosticsSnapshot> diagnostics_channel_;
     motor_base::MotorStatusMonitor<MyactDiagnosticsSnapshot> status_monitor_;
 
     bool connect_impl(const char* ifname) override;
+
     motor_base::CommandSubmitResult validate_command(
         const motor_base::ControlCommand& cmd) const override;
+
     void apply_setpoint_command_callback(
         const motor_base::ControlCommand& cmd) override;
     void apply_discrete_command_callback(
@@ -78,14 +79,17 @@ private:
     void discrete_queue_full_callback(
         int motor_index,
         const motor_base::ControlCommand& cmd) override;
+
     bool realtime_start_callback() override;
+    void realtime_cycle_callback() override;
     void realtime_stop_callback() noexcept override;
 
-    void realtime_cycle_callback() override;
     void update();
     void update_status_snapshot_rt();
     void update_diagnostics_snapshot_rt();
+
     void push_status_overwritten_event_rt();
+
     static void rt_event_sink_trampoline(
         void* context,
         const motor_base::RtEvent& event);

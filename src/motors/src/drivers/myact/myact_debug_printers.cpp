@@ -5,7 +5,7 @@
 #include <iostream>
 
 #include "driver/myact/motor_units.hpp"
-#include "motor_base/RtEventDispatcher.hpp"
+#include "motor_base/rt_event_dispatcher.hpp"
 
 namespace myactua {
 
@@ -69,6 +69,9 @@ void print_myact_status_table(
     const std::vector<int>& motor_indices)
 {
     printf("\033[2J\033[H");
+    const bool print_all =
+        std::find(motor_indices.begin(), motor_indices.end(), -1) !=
+        motor_indices.end();
 
     printf("\033[1;36m============================ MOTOR REAL-TIME MONITOR ============================\033[0m\n");
     printf("%-6s | %-10s | %-16s | %-22s | %-8s | %-8s | %-7s | %-16s | %-14s | %-14s | %-14s\n",
@@ -77,7 +80,8 @@ void print_myact_status_table(
     printf("------------------------------------------------------------------------------------------------------------------------------------------------------\n");
 
     for (const auto& m : status) {
-        if (std::find(motor_indices.begin(), motor_indices.end(), m.motor_index) ==
+        if (!print_all &&
+            std::find(motor_indices.begin(), motor_indices.end(), m.motor_index) ==
             motor_indices.end()) {
             continue;
         }

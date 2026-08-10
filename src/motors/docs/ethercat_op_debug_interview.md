@@ -12,7 +12,7 @@
 
 这个问题的关键是把“从站不进 OP”拆成 EtherCAT 状态机、过程数据、对象字典三个层次来看。
 
-第一步，我先确认程序里“已就绪”的定义。`ID_test` 等待 12 个从站进入 OP，它并不是通过 DS402 状态字判断电机是否 enable，而是调用 `adapter->is_configured(i)`。继续追到 `EthercatAdapterIGH` 后发现，这个标志来自 `ecrt_slave_config_state`，条件是 `online && operational`。所以 `9/12` 代表的是 EtherCAT 从站配置层面只有 9 台进入 OP，而不是电机还没使能。
+第一步，我先确认程序里“已就绪”的定义。`id_test` 等待 12 个从站进入 OP，它并不是通过 DS402 状态字判断电机是否 enable，而是调用 `adapter->is_configured(i)`。继续追到 `EthercatAdapterIGH` 后发现，这个标志来自 `ecrt_slave_config_state`，条件是 `online && operational`。所以 `9/12` 代表的是 EtherCAT 从站配置层面只有 9 台进入 OP，而不是电机还没使能。
 
 第二步，我打开 `MYACTUA_ECAT_DIAG`，让程序打印每个逻辑电机的状态。稳定后发现只有 `M0/M6/M7` 的 `cfg=0`，且状态字一直是 `0x0000`。Domain working counter 稳定在 `27/36`，和 9 台成功电机对应。这样就从“有 3 台失败”缩小到具体逻辑索引。
 
@@ -68,7 +68,7 @@ object does not exist in the object directory
 ## STAR 版本
 
 **Situation：**  
-在 EtherCAT 多电机控制项目中，运行 `ID_test` 时 12 个电机从站只有 9 个进入 OP，程序 30 秒超时，现场确认物理拓扑正确。
+在 EtherCAT 多电机控制项目中，运行 `id_test` 时 12 个电机从站只有 9 个进入 OP，程序 30 秒超时，现场确认物理拓扑正确。
 
 **Task：**  
 需要定位 3 个从站无法进入 OP 的真正原因，区分是拓扑、主站配置、PDO 映射还是应用层状态机问题，并给出可执行修复方向。
@@ -87,7 +87,7 @@ object does not exist in the object directory
 
 ### 为什么 `9/12` 可以对应到具体 3 台？
 
-`ID_test` 的 ready count 来自 `adapter->is_configured(i)`，而 `is_configured` 来自每个 slave config 的 `online && operational`。打开 `MYACTUA_ECAT_DIAG` 后，每个逻辑电机都会打印 `cfg`，所以可以直接看到 `M0/M6/M7` 是 `cfg=0`，其它 9 台是 `cfg=1`。
+`id_test` 的 ready count 来自 `adapter->is_configured(i)`，而 `is_configured` 来自每个 slave config 的 `online && operational`。打开 `MYACTUA_ECAT_DIAG` 后，每个逻辑电机都会打印 `cfg`，所以可以直接看到 `M0/M6/M7` 是 `cfg=0`，其它 9 台是 `cfg=1`。
 
 ### 为什么需要看 `dmesg`？
 

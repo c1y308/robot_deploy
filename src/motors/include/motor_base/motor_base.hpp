@@ -8,10 +8,10 @@
 #include <thread>
 #include <vector>
 
-#include "motor_base/CommandQueue.hpp"
-#include "motor_base/CommandTypes.hpp"
-#include "motor_base/RtEventDispatcher.hpp"
-#include "motor_base/StatusChannel.hpp"
+#include "motor_base/command_queue.hpp"
+#include "motor_base/command_types.hpp"
+#include "motor_base/rt_event_dispatcher.hpp"
+#include "motor_base/status_channel.hpp"
 
 namespace motor_base {
 
@@ -50,20 +50,18 @@ public:
     // ──────────────────── 生命周期 ────────────────────
 
     /// @brief 连接底层通信接口
-    /// @param interface_name 接口名称，由具体控制器解释
+    /// @param interface_name 接口名称；为空时由具体控制器选择默认网卡
     /// @return 连接是否成功
-    bool connect(const char* interface_name);
+    bool connect(const char* interface_name = nullptr);
 
 
     /// @brief 阻塞等待所有电机进入可操作状态
     /// @param timeout_ms  超时时间 (ms)，0 表示仅检查一次
     /// @param poll_ms     日志打印间隔 (ms)
-    /// @param should_stop 外部中断回调，返回 true 时提前退出
     /// @return 是否全部就绪
     virtual bool wait_all_motors_ready(
         int timeout_ms = 30000,
-        int poll_ms = 100,
-        const std::function<bool()>& should_stop = {}) const = 0;
+        int poll_ms = 100) const = 0;
 
         
     /// @brief 启动实时控制线程（1 kHz 典型周期）
@@ -134,6 +132,7 @@ protected:
 
     bool try_begin_status_write_rt(StatusWriteToken& token);
     bool publish_status_rt(const StatusWriteToken& token);
+    
     void push_rt_event(const RtEvent& event);
     void set_rt_event_fallback_printer(RtEventDispatcher::EventPrinter printer);
 
@@ -158,6 +157,7 @@ protected:
     // ============================================================
 
     virtual CommandSubmitResult validate_command(const ControlCommand& cmd) const;
+    
     virtual void discrete_queue_full_callback(
         int motor_index,
         const ControlCommand& cmd);
@@ -165,6 +165,7 @@ protected:
         int motor_index,
         const DiscreteCommand& cmd,
         DiscreteFailReason reason);
+
     virtual bool realtime_start_callback();
     virtual void realtime_stop_callback() noexcept;
 

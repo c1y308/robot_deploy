@@ -1,4 +1,4 @@
-#include "motor_base/MotorControllerBase.hpp"
+#include "motor_base/motor_base.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -87,10 +87,6 @@ bool MotorControllerBase::connect(const char* interface_name)
         return false;
     }
 
-    if (!interface_name) {
-        return false;
-    }
-
     return connect_impl(interface_name);
 }
 
@@ -165,6 +161,10 @@ void MotorControllerBase::rt_thread_func()
     }
 }
 
+
+/// @brief 异步发送控制命令（stop / restart / set_mode / setpoints）
+/// @brief 进行通用性检查：如电机索引、SETPOINT类型命令的数据长度
+/// @brief 调用 validate_command() 进行驱动特定检查，入命令队列
 
 CommandSubmitResult MotorControllerBase::send_command(const ControlCommand& cmd)
 {

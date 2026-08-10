@@ -1,6 +1,6 @@
 #include "driver/myact/motor_control.hpp"
-#include "EthercatAdapterIGH.hpp"
-#include "motor_base/CommandTypes.hpp"
+#include "ethercat_adapter_igh.hpp"
+#include "motor_base/command_types.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -61,8 +61,7 @@ int main()
     }
 
     std::cout << "[2/7] OP ..." << std::endl;
-    if (!controller.wait_all_motors_ready(kWaitReadyTimeoutMs, kWaitReadyPollMs,
-                                          [] { return g_should_stop != 0; })) {
+    if (!controller.wait_all_motors_ready(kWaitReadyTimeoutMs, kWaitReadyPollMs)) {
         std::cerr << "[ERROR] OP " << std::endl;
         return -1;
     }

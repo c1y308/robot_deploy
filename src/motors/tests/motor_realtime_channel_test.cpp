@@ -1,5 +1,5 @@
-#include "motor_base/CommandTypes.hpp"
-#include "EthercatAdapter.hpp"
+#include "motor_base/command_types.hpp"
+#include "ethercat_adapter.hpp"
 #include "driver/myact/motor_control.hpp"
 
 #include <array>
