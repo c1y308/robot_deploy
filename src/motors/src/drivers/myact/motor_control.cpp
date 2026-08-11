@@ -676,7 +676,7 @@ void MYACTUA::update_status_snapshot_rt()
 
     mb::MotorControllerBase::StatusWriteToken write_token;
     if (!try_begin_status_write_rt(write_token)) {
-        push_status_overwritten_event_rt();
+        push_status_channel_busy_event_rt();
         return;
     }
 
@@ -702,9 +702,7 @@ void MYACTUA::update_status_snapshot_rt()
         s.target_mode = to_motor_control_mode(m.desired.mode);
     }
 
-    if (publish_status_rt(write_token)) {
-        push_status_overwritten_event_rt();
-    }
+    publish_status_rt(write_token);
 }
 
 
@@ -715,8 +713,8 @@ void MYACTUA::update_diagnostics_snapshot_rt()
     }
 
     mb::LatestStatusChannel<MyactDiagnosticsSnapshot>::WriteToken write_token;
-    if (!diagnostics_channel_.try_begin_write_rt(write_token)) {
-        push_status_overwritten_event_rt();
+    if (!diagnostics_channel_.write(write_token)) {
+        push_status_channel_busy_event_rt();
         return;
     }
 
@@ -745,9 +743,7 @@ void MYACTUA::update_diagnostics_snapshot_rt()
         s.command_kd = m.tx.pvt_kd;
     }
 
-    if (diagnostics_channel_.publish_rt(write_token)) {
-        push_status_overwritten_event_rt();
-    }
+    diagnostics_channel_.publish(write_token);
 }
 
 
@@ -782,16 +778,16 @@ void MYACTUA::rt_event_sink_trampoline(void* context, const mb::RtEvent& event)
 }
 
 
-void MYACTUA::push_status_overwritten_event_rt()
+void MYACTUA::push_status_channel_busy_event_rt()
 {
     const uint64_t count =
-        status_overwrite_count_.fetch_add(1, std::memory_order_relaxed) + 1;
+        status_channel_busy_count_.fetch_add(1, std::memory_order_relaxed) + 1;
     if (count != 1 && (count & (count - 1)) != 0) {
         return;
     }
 
     mb::RtEvent event;
-    event.type = mb::RtEventType::STATUS_FRAME_OVERWRITTEN;
+    event.type = mb::RtEventType::STATUS_CHANNEL_BUSY;
     event.tick = discrete_command_tick_rt();
     event.value = static_cast<uint32_t>(
         std::min<uint64_t>(count, static_cast<uint64_t>(UINT32_MAX)));

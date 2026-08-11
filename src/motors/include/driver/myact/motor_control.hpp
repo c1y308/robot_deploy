@@ -54,7 +54,7 @@ private:
     std::shared_ptr<EthercatAdapter> _adapter;
     std::vector<MotorState> _motors;
 
-    std::atomic<uint64_t> status_overwrite_count_{0};
+    std::atomic<uint64_t> status_channel_busy_count_{0};
     motor_base::LatestStatusChannel<MyactDiagnosticsSnapshot> diagnostics_channel_;
     motor_base::MotorStatusMonitor<MyactDiagnosticsSnapshot> status_monitor_;
 
@@ -88,7 +88,7 @@ private:
     void update_status_snapshot_rt();
     void update_diagnostics_snapshot_rt();
 
-    void push_status_overwritten_event_rt();
+    void push_status_channel_busy_event_rt();
 
     static void rt_event_sink_trampoline(
         void* context,

@@ -12,7 +12,8 @@ int main() {
     auto adapter = std::make_shared<myactua::EthercatAdapterIGH>();
     // 实例化控制类，与适配器关联
     myactua::MYACTUA controller(adapter, motors_nums);
-
+    controller.set_print_info({-1});
+    
     std::cout << "[1/4] 正在初始化网卡..." << std::endl;
     if (!controller.connect("enp8s0")) {
         std::cerr << "[错误] 无法连接到 EtherCAT 网络！" << std::endl;

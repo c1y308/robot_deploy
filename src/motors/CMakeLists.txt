@@ -47,6 +47,10 @@ add_executable(mit_test examples/mit_test.cpp)
 add_executable(mit_pos_test examples/mit_pos_test.cpp)
 add_executable(motor_response_latency_test examples/motor_response_latency_test.cpp)
 add_executable(motor_realtime_channel_test tests/motor_realtime_channel_test.cpp)
+add_executable(triple_buffer_test tests/triple_buffer_test.cpp)
+target_compile_definitions(triple_buffer_test PRIVATE
+    MOTOR_BASE_STATUS_CHANNEL_TESTING
+)
 target_include_directories(motor_response_latency_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../inference/include
 )
@@ -61,3 +65,4 @@ target_link_libraries(mit_test myactua_ethercat)
 target_link_libraries(mit_pos_test myactua_ethercat)
 target_link_libraries(motor_response_latency_test myactua_ethercat)
 target_link_libraries(motor_realtime_channel_test myactua_ethercat)
+target_link_libraries(triple_buffer_test myactua_ethercat)

@@ -148,6 +148,7 @@ int main()
     std::atomic<int> status_callbacks{0};
     std::atomic<int> diagnostics_callbacks{0};
     std::atomic<int> discrete_queue_full_events{0};
+    std::atomic<int> status_channel_busy_events{0};
     controller.set_status_callback(
         [&status_callbacks](const std::vector<motor_base::MotorStatusSnapshot>&) {
             status_callbacks.fetch_add(1, std::memory_order_relaxed);
@@ -158,9 +159,13 @@ int main()
             diagnostics_callbacks.fetch_add(1, std::memory_order_relaxed);
         });
     controller.set_rt_event_callback(
-        [&discrete_queue_full_events](const motor_base::RtEvent& event) {
+        [&discrete_queue_full_events,
+         &status_channel_busy_events](const motor_base::RtEvent& event) {
             if (event.type == motor_base::RtEventType::DISCRETE_QUEUE_FULL) {
                 discrete_queue_full_events.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (event.type == motor_base::RtEventType::STATUS_CHANNEL_BUSY) {
+                status_channel_busy_events.fetch_add(1, std::memory_order_relaxed);
             }
         });
 
@@ -190,6 +195,11 @@ int main()
     }
     if (!expect(discrete_queue_full_events.load(std::memory_order_relaxed) > 0,
                 "discrete queue overflow should emit an RT event")) {
+        controller.shutdown();
+        return 1;
+    }
+    if (!expect(status_channel_busy_events.load(std::memory_order_relaxed) == 0,
+                "latest-value status supersedes should not emit busy events")) {
         controller.shutdown();
         return 1;
     }

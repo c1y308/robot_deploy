@@ -248,13 +248,13 @@ void MotorControllerBase::set_rt_event_callback(RtEventCallback cb)
 
 bool MotorControllerBase::try_begin_status_write_rt(StatusWriteToken& token)
 {
-    return status_channel_.try_begin_write_rt(token);
+    return status_channel_.write(token);
 }
 
 
-bool MotorControllerBase::publish_status_rt(const StatusWriteToken& token)
+void MotorControllerBase::publish_status_rt(const StatusWriteToken& token)
 {
-    return status_channel_.publish_rt(token);
+    status_channel_.publish(token);
 }
 
 

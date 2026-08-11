@@ -158,8 +158,8 @@ void print_myact_rt_event(const mb::RtEvent& event)
                       << "\n";
             break;
 
-        case mb::RtEventType::STATUS_FRAME_OVERWRITTEN:
-            std::cerr << "[MYACTUA] status publisher lagged; overwritten frames="
+        case mb::RtEventType::STATUS_CHANNEL_BUSY:
+            std::cerr << "[MYACTUA] status channel busy; unavailable writes="
                       << event.value << "\n";
             break;
 

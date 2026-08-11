@@ -131,7 +131,7 @@ protected:
     uint64_t    discrete_command_tick_rt() const noexcept { return discrete_cmd_tick_; }
 
     bool try_begin_status_write_rt(StatusWriteToken& token);
-    bool publish_status_rt(const StatusWriteToken& token);
+    void publish_status_rt(const StatusWriteToken& token);
     
     void push_rt_event(const RtEvent& event);
     void set_rt_event_fallback_printer(RtEventDispatcher::EventPrinter printer);
