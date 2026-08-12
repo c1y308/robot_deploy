@@ -59,7 +59,9 @@ inference::RobotInterfaceConfig make_robot_config()
 
     cfg.policy_model_path = policy_model_path().string();
 
-    cfg.print_motors_info = false;
+    cfg.print_motors_info = true;
+
+    cfg.enable_motor_torque_log = true;
 
     // 普通单关节 DOF 到电机逻辑索引；脚踝并联 DOF 由 left/right_ankle_parallel 指定
     cfg.model_to_motor_index = {0, 6, 1, 7, 2, 8, 3, 9};
@@ -67,22 +69,22 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.left_ankle_parallel = {8, 10, 4, 5};
     cfg.right_ankle_parallel = {9, 11, 10, 11};
 
-    cfg.mit_kp = { 180.0, 180.0, 180.0, 180.0,
-                   187.0, 187.0, 180.0, 180.0,
-                   180.0, 180.0, 187.0, 187.0};
+    cfg.mit_kp = { 237.0, 237.0, 104.0, 104.0,
+                   307.0, 307.0, 237.0, 237.0,
+                   104.0, 104.0, 307.0, 307.0};
     
-    cfg.mit_kd = {  10.0, 10.0, 10.0, 10.0,
-                    9.07, 9.07, 10.0, 10.0,
-                    10.0, 10.0, 9.07, 9.07};
+    cfg.mit_kd = {  15.1, 15.1,  6.64,  6.64,
+                    19.5, 19.5,  15.1,  15.1,
+                     6.64, 6.64,  19.5,  19.5};
 
     cfg.print_motor_ids = {0, 1, 2, 3, 4, 5,
                            6, 7, 8, 9, 10, 11};
 
     // 以下 12 维策略配置均按模型 DOF 序号填写
     cfg.stand_pose_rad = {
-        0.0,  0.0, -0.3, -0.3,
-        0.0,  0.0,  0.3,  0.3,
-        -0.2, -0.2,  0.0,  0.0
+        0.0,  0.0, -0.2, -0.2,
+        0.0,  0.0,  0.2,  0.2,
+        0.0,  0.0,  0.0,  0.0
     };
 
 
@@ -110,8 +112,8 @@ cfg.action_clip = {
         0.08, 0.08,
         0.30, 0.30,
         0.08, 0.08,
-        0.30, 0.30,
-        0.15, 0.15,
+        0.35, 0.35,
+        0.18, 0.18,
         0.08, 0.08
     };
 
@@ -129,7 +131,7 @@ cfg.action_clip = {
     cfg.command_scale = {1.0, 1.0, 1.0};
     cfg.body_ang_vel_scale = {0.2, 0.2, 0.2};
     cfg.policy_step_dt = kPolicyPeriodSec;
-    cfg.gait_phase_period = 0.74;
+    cfg.gait_phase_period = 0.7;
 
 
     // 电机观测缩放系数
@@ -285,8 +287,8 @@ int main()
             safe_shutdown(robot, true);
             return 1;
         }
-        // robot.set_target_velocity(0, 0, 0);
-        robot.set_target_velocity(command.vx, command.vy, command.yaw_rate);
+        robot.set_target_velocity(0, 0, 0);
+        // robot.set_target_velocity(command.vx, command.vy, command.yaw_rate);
 
         const auto step_start = Clock::now();
         if (!robot.policy_step()) {
@@ -304,19 +306,19 @@ int main()
         ++steps;
 
         const auto now = Clock::now();
-        if (now - last_report >= std::chrono::seconds(1)) {
-            std::cout << std::fixed << std::setprecision(3)
-                      << " vx=" << command.vx
-                      << " vy=" << command.vy
-                      << " yaw_rate=" << command.yaw_rate;
-            if (kPrintPolicyTiming && steps > 0) {
-                std::cout << " avg_policy_step_ms="
-                          << total_step_ms / static_cast<double>(steps)
-                          << " max_policy_step_ms=" << max_step_ms;
-            }
-            std::cout << "\n";
-            last_report = now;
-        }
+        // if (now - last_report >= std::chrono::seconds(1)) {
+        //     std::cout << std::fixed << std::setprecision(3)
+        //               << " vx=" << command.vx
+        //               << " vy=" << command.vy
+        //               << " yaw_rate=" << command.yaw_rate;
+        //     if (kPrintPolicyTiming && steps > 0) {
+        //         std::cout << " avg_policy_step_ms="
+        //                   << total_step_ms / static_cast<double>(steps)
+        //                   << " max_policy_step_ms=" << max_step_ms;
+        //     }
+        //     std::cout << "\n";
+        //     last_report = now;
+        // }
 
         std::this_thread::sleep_until(next_tick);
         if (Clock::now() > next_tick + period) {

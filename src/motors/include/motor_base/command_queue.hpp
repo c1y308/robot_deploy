@@ -32,7 +32,7 @@ public:
         return true;
     }
 
-    const ControlCommand* front_rt() const
+    const ControlCommand* front() const
     {
         const std::size_t tail = tail_.load(std::memory_order_relaxed);
         const std::size_t head = head_.load(std::memory_order_acquire);
@@ -42,7 +42,7 @@ public:
         return &buffer_[tail % capacity_];
     }
 
-    void pop_front_rt()
+    void pop_front()
     {
         const std::size_t tail = tail_.load(std::memory_order_relaxed);
         tail_.store(tail + 1, std::memory_order_release);
@@ -66,7 +66,7 @@ public:
     {
     }
 
-    bool push_back_rt(const DiscreteCommand& value)
+    bool push_back(const DiscreteCommand& value)
     {
         if (count_ >= capacity_) {
             return false;
@@ -80,12 +80,12 @@ public:
 
     bool empty() const { return count_ == 0; }
 
-    DiscreteCommand& front_rt()
+    DiscreteCommand& front()
     {
         return buffer_[head_];
     }
 
-    void pop_front_rt()
+    void pop_front()
     {
         if (count_ == 0) {
             return;

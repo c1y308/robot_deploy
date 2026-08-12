@@ -140,7 +140,7 @@ void print_myact_status_table(
     fflush(stdout);
 }
 
-void print_myact_rt_event(const mb::RtEvent& event)
+void print_myact_event(const mb::RtEvent& event)
 {
     switch (event.type) {
         case mb::RtEventType::DISCRETE_COMMAND_FAILED:

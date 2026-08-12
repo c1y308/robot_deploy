@@ -7,7 +7,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)
 
 option(ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS
        "Include gait phase in policy observation history, using 235 input dimensions instead of 225"
-       OFF)
+       ON)
 
 set(LOCAL_LIBTORCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libtorch)
 set(LOCAL_PYTORCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/python_torch/torch)

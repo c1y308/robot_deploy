@@ -106,6 +106,8 @@ struct RobotInterfaceConfig {
     /* CSV logs are disabled by default to keep the control loop free of file I/O. */
     bool enable_policy_output_log = false;
     bool enable_motor_pos_error_log = false;
+    bool enable_motor_torque_log = false;
+    std::vector<int> motor_torque_motor_ids = {1, 3, 7, 9};  // default: M1, M3, M7, M9
     int async_log_flush_interval_ms = 1000;
     std::size_t async_log_queue_depth = 4096;
 };
@@ -215,6 +217,10 @@ private:
     std::uint64_t motor_pos_error_frame_index_ = 0;
     bool motor_pos_error_log_failed_ = false;
     std::chrono::steady_clock::time_point motor_pos_error_log_start_time_{};
+    AsyncCsvLogger motor_torque_logger_;
+    std::uint64_t motor_torque_frame_index_ = 0;
+    bool motor_torque_log_failed_ = false;
+    std::chrono::steady_clock::time_point motor_torque_log_start_time_{};
 
     bool validate_policy_config() const;
     bool build_action_target_rad(const std::vector<double>& target_q_model_rad,
@@ -248,6 +254,10 @@ private:
     bool start_motor_pos_error_log();
     bool ensure_motor_pos_error_log();
     void log_motor_pos_error(const std::vector<double>& target_rad);
+    void reset_motor_torque_log();
+    bool start_motor_torque_log();
+    bool ensure_motor_torque_log();
+    void log_motor_torque();
     bool handle_policy_step_failure(const std::string& message);
 
     /* 脚踝 IK 求解器（左右各一），状态跨 policy_step 保持 */

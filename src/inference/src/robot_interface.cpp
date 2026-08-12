@@ -38,6 +38,15 @@ const std::filesystem::path& motor_pos_error_log_dir()
     return path;
 }
 
+/* motor torque percent (RX_TQ_PCT) log directory. */
+const std::filesystem::path& motor_torque_log_dir()
+{
+    static const std::filesystem::path path =
+        std::filesystem::path(__FILE__).parent_path().parent_path() /
+        "log" / "motor_torque";
+    return path;
+}
+
 void append_indexed_columns(std::ostream& stream,
                             const char* prefix,
                             int count)
@@ -62,6 +71,16 @@ void write_motor_pos_error_csv_header(std::ostream& stream, int motor_count)
     append_indexed_columns(stream, "target_pos_deg", motor_count);
     append_indexed_columns(stream, "rx_pos_deg", motor_count);
     append_indexed_columns(stream, "tar_err_deg", motor_count);
+    stream << '\n';
+}
+
+void write_motor_torque_csv_header(std::ostream& stream,
+                                   const std::vector<int>& motor_ids)
+{
+    stream << "frame_index,elapsed_us";
+    for (int motor_id : motor_ids) {
+        stream << ",M" << motor_id << "_tq_pct";
+    }
     stream << '\n';
 }
 
@@ -340,6 +359,8 @@ bool RobotInterface::initial_and_start_motors() {
     motion_enabled_.store(false);
     reset_motor_pos_error_log();
     start_motor_pos_error_log();
+    reset_motor_torque_log();
+    start_motor_torque_log();
 
     return true;
 }
@@ -659,6 +680,7 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
             return false;
         }
         log_motor_pos_error(target_rad);
+        log_motor_torque();
         return true;
     }
 
@@ -674,6 +696,7 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
         return false;
     }
     log_motor_pos_error(target_rad);
+    log_motor_torque();
     return true;
 }
 
@@ -1030,6 +1053,8 @@ void RobotInterface::reset_policy_state() {
     reset_ankle_fk_state();
     start_policy_output_log();
     start_motor_pos_error_log();
+    reset_motor_torque_log();
+    start_motor_torque_log();
 }
 
 void RobotInterface::reset_ankle_fk_state() {
@@ -1598,6 +1623,105 @@ bool RobotInterface::handle_policy_step_failure(const std::string& message) {
     // 策略链路任何一步失败都停机，避免继续执行上一周期的目标。
     stop_motors(-1);
     return false;
+}
+
+
+/* Stop the current async motor torque log and reset its frame counter. */
+void RobotInterface::reset_motor_torque_log() {
+    motor_torque_logger_.stop();
+    motor_torque_frame_index_ = 0;
+    motor_torque_log_failed_ = false;
+    motor_torque_log_start_time_ = std::chrono::steady_clock::now();
+}
+
+bool RobotInterface::start_motor_torque_log() {
+    if (!config_.enable_motor_torque_log || motor_torque_log_failed_) {
+        return false;
+    }
+    if (config_.motor_torque_motor_ids.empty()) {
+        return false;
+    }
+    if (motor_torque_logger_.is_running()) {
+        return true;
+    }
+
+    std::ostringstream header;
+    write_motor_torque_csv_header(header, config_.motor_torque_motor_ids);
+
+    AsyncCsvLogger::Config logger_config;
+    logger_config.directory = motor_torque_log_dir();
+    logger_config.file_prefix = "motor_torque";
+    logger_config.header = header.str();
+    logger_config.flush_interval = std::chrono::milliseconds(
+        std::max(1, config_.async_log_flush_interval_ms));
+    logger_config.max_queue_depth = config_.async_log_queue_depth;
+
+    motor_torque_log_start_time_ = std::chrono::steady_clock::now();
+    if (!motor_torque_logger_.start(std::move(logger_config))) {
+        std::cerr << "[RobotInterface] failed to open motor torque log: "
+                  << motor_torque_logger_.last_error() << "\n";
+        motor_torque_log_failed_ = true;
+        return false;
+    }
+
+    std::cout << "[RobotInterface] motor torque log: "
+              << motor_torque_logger_.log_path() << "\n";
+    return true;
+}
+
+bool RobotInterface::ensure_motor_torque_log() {
+    if (!motor_torque_logger_.is_running()) {
+        return start_motor_torque_log();
+    }
+    return true;
+}
+
+/* Queue RX_TQ_PCT for selected motors as async CSV row. */
+void RobotInterface::log_motor_torque() {
+    if (!config_.enable_motor_torque_log ||
+        config_.motor_torque_motor_ids.empty() ||
+        !controller_) {
+        return;
+    }
+    if (!ensure_motor_torque_log()) {
+        return;
+    }
+
+    const std::vector<motor_base::MotorStatusSnapshot> status =
+        controller_->get_status();
+    if (static_cast<int>(status.size()) != config_.num_motors) {
+        std::cerr << "[RobotInterface] failed to write motor torque log: "
+                  << "status size mismatch\n";
+        motor_torque_logger_.stop();
+        motor_torque_log_failed_ = true;
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto elapsed_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            now - motor_torque_log_start_time_).count();
+
+    std::ostringstream row;
+    row << std::setprecision(9)
+        << motor_torque_frame_index_ << ','
+        << elapsed_us;
+    for (int motor_id : config_.motor_torque_motor_ids) {
+        if (motor_id < 0 || motor_id >= config_.num_motors) {
+            row << ",0.0";
+            continue;
+        }
+        row << ',' << status[motor_id].torque_percent;
+    }
+
+    if (!motor_torque_logger_.enqueue(row.str())) {
+        std::cerr << "[RobotInterface] failed to queue motor torque log: "
+                  << motor_torque_logger_.last_error() << "\n";
+        motor_torque_log_failed_ = true;
+        return;
+    }
+
+    ++motor_torque_frame_index_;
 }
 
 }  // namespace inference

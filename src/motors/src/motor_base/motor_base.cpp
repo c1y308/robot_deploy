@@ -108,7 +108,7 @@ void MotorControllerBase::start()
 
     running_.store(true, std::memory_order_release);
     try {
-        rt_thread_ = std::thread(&MotorControllerBase::rt_thread_func, this);
+        rt_thread_ = std::thread(&MotorControllerBase::thread_func, this);
     } catch (...) {
         running_.store(false, std::memory_order_release);
         realtime_stop_callback();
@@ -147,14 +147,14 @@ void MotorControllerBase::realtime_stop_callback() noexcept
 }
 
 
-void MotorControllerBase::rt_thread_func()
+void MotorControllerBase::thread_func()
 {
     timespec next_period{};
     clock_gettime(kClockToUse, &next_period);
 
     while (running_.load(std::memory_order_acquire)) {
-        process_queued_commands_rt();
-        service_discrete_commands_rt();
+        process_queued_commands();
+        service_discrete_commands();
         realtime_cycle_callback();
         add_period_ns(next_period, rt_options_.rt_period_ns);
         clock_nanosleep(kClockToUse, TIMER_ABSTIME, &next_period, nullptr);
@@ -240,57 +240,57 @@ void MotorControllerBase::set_status_callback(StatusCallback cb)
 }
 
 
-void MotorControllerBase::set_rt_event_callback(RtEventCallback cb)
+void MotorControllerBase::set_event_callback(RtEventCallback cb)
 {
     rt_event_dispatcher_.set_callback(std::move(cb));
 }
 
 
-bool MotorControllerBase::try_begin_status_write_rt(StatusWriteToken& token)
+bool MotorControllerBase::write_status(StatusWriteToken& token)
 {
     return status_channel_.write(token);
 }
 
 
-void MotorControllerBase::publish_status_rt(const StatusWriteToken& token)
+void MotorControllerBase::publish_status(const StatusWriteToken& token)
 {
     status_channel_.publish(token);
 }
 
 
-void MotorControllerBase::push_rt_event(const RtEvent& event)
+void MotorControllerBase::push_event(const RtEvent& event)
 {
-    rt_event_dispatcher_.push_rt(event);
+    rt_event_dispatcher_.push(event);
 }
 
 
-void MotorControllerBase::set_rt_event_fallback_printer(
+void MotorControllerBase::set_event_fallback_printer(
     RtEventDispatcher::EventPrinter printer)
 {
     rt_event_dispatcher_.set_fallback_printer(std::move(printer));
 }
 
 
-void MotorControllerBase::process_queued_commands_rt()
+void MotorControllerBase::process_queued_commands()
 {
     std::size_t processed = 0;
     while (processed < rt_options_.max_commands_per_cycle) {
-        const ControlCommand* cmd = cmd_queue_.front_rt();
+        const ControlCommand* cmd = cmd_queue_.front();
         if (!cmd) {
             break;
         }
         ++processed;
         if (cmd->kind == ControlCommandKind::DISCRETE) {
-            enqueue_discrete_command_rt(*cmd);
+            enqueue_discrete_command(*cmd);
         } else if (cmd->kind == ControlCommandKind::SETPOINT) {
             apply_setpoint_command_callback(*cmd);
         }
-        cmd_queue_.pop_front_rt();
+        cmd_queue_.pop_front();
     }
 }
 
 /* 通过控制命令中的 离散命令类型 和 模式 构建离散命令；并将其入对应电机的离散命令队列 */
-void MotorControllerBase::enqueue_discrete_command_rt(const ControlCommand& cmd)
+void MotorControllerBase::enqueue_discrete_command(const ControlCommand& cmd)
 {
     auto enqueue_one = [this, &cmd](int idx) {
         if (idx < 0 || idx >= static_cast<int>(motor_count_)) {
@@ -311,7 +311,7 @@ void MotorControllerBase::enqueue_discrete_command_rt(const ControlCommand& cmd)
         pending.stable_success_cycles = 0;
         pending.fail_reason = DiscreteFailReason::NONE;
 
-        if (!discrete_cmd_queues_[static_cast<std::size_t>(idx)].push_back_rt(pending)) {
+        if (!discrete_cmd_queues_[static_cast<std::size_t>(idx)].push_back(pending)) {
             discrete_queue_full_callback(idx, cmd);
         }
     };
@@ -332,8 +332,8 @@ void MotorControllerBase::discrete_queue_full_callback(
     printf("[MotorControllerBase] Warning: discrete command queue full\n");
 }
 
-// rt_thread_func()中调用，处理各个电机的离散命令队列（状态机）
-void MotorControllerBase::service_discrete_commands_rt()
+// thread_func()中调用，处理各个电机的离散命令队列（状态机）
+void MotorControllerBase::service_discrete_commands()
 {
     ++discrete_cmd_tick_;
 
@@ -345,18 +345,18 @@ void MotorControllerBase::service_discrete_commands_rt()
             continue;
         }
         /* 取出命令 */
-        auto& cmd = queue.front_rt();
+        auto& cmd = queue.front();
         const int motor_index = static_cast<int>(i);
 
         /* 检查命令状态机 */
         if (cmd.phase == DiscretePhase::DONE) {
-            queue.pop_front_rt();
+            queue.pop_front();
             continue;
         }
 
         if (cmd.phase == DiscretePhase::FAILED) {
             discrete_command_failed_callback(motor_index, cmd, cmd.fail_reason);
-            queue.pop_front_rt();
+            queue.pop_front();
             continue;
         }
 
@@ -417,7 +417,7 @@ void MotorControllerBase::service_discrete_commands_rt()
                     cmd.stable_success_cycles += 1;
                     if (cmd.stable_success_cycles >= kDiscreteSuccessStableTicks) {
                         cmd.phase = DiscretePhase::DONE;
-                        queue.pop_front_rt();
+                        queue.pop_front();
                     } else {
                         cmd.next_verify_tick = discrete_cmd_tick_ + kDiscreteVerifyIntervalTicks;
                     }

@@ -45,7 +45,7 @@ void RtEventDispatcher::thread_func()
     RtEvent event;
     while (running_) {
         bool handled_any = false;
-        while (try_pop(event)) {
+        while (pop(event)) {
             handled_any = true;
             handle_event(event);
         }
@@ -55,19 +55,13 @@ void RtEventDispatcher::thread_func()
         }
     }
 
-    while (try_pop(event)) {
+    while (pop(event)) {
         handle_event(event);
     }
 }
 
 
-void RtEventDispatcher::push_rt(const RtEvent& event)
-{
-    try_push_rt(event);
-}
-
-
-bool RtEventDispatcher::try_push_rt(const RtEvent& event)
+bool RtEventDispatcher::push(const RtEvent& event)
 {
     const std::size_t head = head_.load(std::memory_order_relaxed);
     const std::size_t tail = tail_.load(std::memory_order_acquire);
@@ -80,7 +74,7 @@ bool RtEventDispatcher::try_push_rt(const RtEvent& event)
     return true;
 }
 
-bool RtEventDispatcher::try_pop(RtEvent& event)
+bool RtEventDispatcher::pop(RtEvent& event)
 {
     const std::size_t tail = tail_.load(std::memory_order_relaxed);
     const std::size_t head = head_.load(std::memory_order_acquire);

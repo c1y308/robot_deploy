@@ -50,14 +50,13 @@ public:
 
     void set_callback(Callback cb);
     void set_fallback_printer(EventPrinter printer);
-    void push_rt(const RtEvent& event);
+    bool push(const RtEvent& event);
 
     void start();
     void stop();
 
 private:
-    bool try_push_rt(const RtEvent& event);
-    bool try_pop(RtEvent& event);
+    bool pop(RtEvent& event);
     Callback get_callback() const;
     EventPrinter get_fallback_printer() const;
     void handle_event(const RtEvent& event);

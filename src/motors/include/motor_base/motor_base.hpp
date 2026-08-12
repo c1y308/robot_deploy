@@ -105,7 +105,7 @@ public:
     void set_status_callback(StatusCallback cb);
 
     /// @brief 设置实时事件回调（离散命令失败、丢帧等）
-    void set_rt_event_callback(RtEventCallback cb);
+    void set_event_callback(RtEventCallback cb);
 
 
     // ──────────────────── 终端监控 ────────────────────
@@ -128,13 +128,13 @@ protected:
     // ============================================================
 
     std::size_t motor_count() const noexcept { return motor_count_; }
-    uint64_t    discrete_command_tick_rt() const noexcept { return discrete_cmd_tick_; }
+    uint64_t    discrete_command_tick() const noexcept { return discrete_cmd_tick_; }
 
-    bool try_begin_status_write_rt(StatusWriteToken& token);
-    void publish_status_rt(const StatusWriteToken& token);
+    bool write_status(StatusWriteToken& token);
+    void publish_status(const StatusWriteToken& token);
     
-    void push_rt_event(const RtEvent& event);
-    void set_rt_event_fallback_printer(RtEventDispatcher::EventPrinter printer);
+    void push_event(const RtEvent& event);
+    void set_event_fallback_printer(RtEventDispatcher::EventPrinter printer);
 
     // ============================================================
     // REQUIRED OVERRIDES
@@ -170,15 +170,15 @@ protected:
     virtual void realtime_stop_callback() noexcept;
 
 private:
-    //  rt_thread_func()中调用，从命令队列中取出命令进行分发
-    void process_queued_commands_rt();
+    //  thread_func()中调用，从命令队列中取出命令进行分发
+    void process_queued_commands();
 
-    // 直接在process_queued_commands_rt()中调用，将离散命令入各个电机的命令队列
-    void enqueue_discrete_command_rt(const ControlCommand& cmd);
-    // rt_thread_func()中调用，处理各个电机的离散命令队列（状态机）
-    void service_discrete_commands_rt();
+    // 直接在process_queued_commands()中调用，将离散命令入各个电机的命令队列
+    void enqueue_discrete_command(const ControlCommand& cmd);
+    // thread_func()中调用，处理各个电机的离散命令队列（状态机）
+    void service_discrete_commands();
 
-    void rt_thread_func();
+    void thread_func();
 
     RealtimeOptions rt_options_;
     std::size_t motor_count_;

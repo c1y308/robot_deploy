@@ -33,8 +33,7 @@ public:
 
     ~MYACTUA();
 
-    bool wait_all_motors_ready(int timeout_ms = 30000,
-                               int poll_ms = 100) const override;
+    bool wait_all_motors_ready(int timeout_ms = 30000, int poll_ms = 100) const override;
 
     std::vector<MyactDiagnosticsSnapshot> get_myact_diagnostics();
 
@@ -85,12 +84,12 @@ private:
     void realtime_stop_callback() noexcept override;
 
     void update();
-    void update_status_snapshot_rt();
-    void update_diagnostics_snapshot_rt();
+    void update_status_snapshot();
+    void update_diagnostics_snapshot();
 
-    void push_status_channel_busy_event_rt();
+    void push_status_channel_busy_event();
 
-    static void rt_event_sink_trampoline(
+    static void event_sink_trampoline(
         void* context,
         const motor_base::RtEvent& event);
 

@@ -158,7 +158,7 @@ int main()
         [&diagnostics_callbacks](const std::vector<myactua::MyactDiagnosticsSnapshot>&) {
             diagnostics_callbacks.fetch_add(1, std::memory_order_relaxed);
         });
-    controller.set_rt_event_callback(
+    controller.set_event_callback(
         [&discrete_queue_full_events,
          &status_channel_busy_events](const motor_base::RtEvent& event) {
             if (event.type == motor_base::RtEventType::DISCRETE_QUEUE_FULL) {

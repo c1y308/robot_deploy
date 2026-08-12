@@ -113,7 +113,7 @@ private:
     void thread_func()
     {
         using Clock = std::chrono::steady_clock;
-        constexpr auto period = std::chrono::milliseconds(200);
+        constexpr auto period = std::chrono::milliseconds(20);
         auto next_tick = Clock::now();
 
         while (running_) {

@@ -103,7 +103,7 @@ MYACTUA::MYACTUA(std::shared_ptr<EthercatAdapter> adapter,
         _motors.emplace_back(i);
     }
 
-    set_rt_event_fallback_printer(print_myact_rt_event);
+    set_event_fallback_printer(print_myact_event);
 
     diagnostics_channel_.configure(_motors.size(), options_.status_publish_period_ms);
 
@@ -111,7 +111,7 @@ MYACTUA::MYACTUA(std::shared_ptr<EthercatAdapter> adapter,
     status_monitor_.set_status_printer(print_myact_status_table);
     
     if (_adapter) {
-        _adapter->set_rt_event_sink(this, &MYACTUA::rt_event_sink_trampoline);
+        _adapter->set_event_sink(this, &MYACTUA::event_sink_trampoline);
     }
 }
 
@@ -120,7 +120,7 @@ MYACTUA::~MYACTUA()
 {
     shutdown();
     if (_adapter) {
-        _adapter->set_rt_event_sink(nullptr, nullptr);
+        _adapter->set_event_sink(nullptr, nullptr);
     }
 }
 
@@ -219,8 +219,8 @@ void MYACTUA::realtime_cycle_callback()
     _adapter->receive_physical();
     update();
     _adapter->send_physical();
-    update_status_snapshot_rt();
-    update_diagnostics_snapshot_rt();
+    update_status_snapshot();
+    update_diagnostics_snapshot();
 }
 
 
@@ -645,12 +645,12 @@ void MYACTUA::discrete_command_failed_callback(
 {
     mb::RtEvent event;
     event.type = mb::RtEventType::DISCRETE_COMMAND_FAILED;
-    event.tick = discrete_command_tick_rt();
+    event.tick = discrete_command_tick();
     event.motor_index = motor_index;
     event.command_type = cmd.type;
     event.reason = static_cast<int>(reason);
     event.value = static_cast<uint32_t>(std::max(0, cmd.cur_retry));
-    push_rt_event(event);
+    push_event(event);
 }
 
 
@@ -660,23 +660,23 @@ void MYACTUA::discrete_queue_full_callback(
 {
     mb::RtEvent event;
     event.type = mb::RtEventType::DISCRETE_QUEUE_FULL;
-    event.tick = discrete_command_tick_rt();
+    event.tick = discrete_command_tick();
     event.motor_index = motor_index;
     event.command_type = cmd.discrete_type;
     event.reason = static_cast<int>(mb::DiscreteFailReason::MAX_RETRY);
-    push_rt_event(event);
+    push_event(event);
 }
 
 
-void MYACTUA::update_status_snapshot_rt()
+void MYACTUA::update_status_snapshot()
 {
     if (_motors.empty()) {
         return;
     }
 
     mb::MotorControllerBase::StatusWriteToken write_token;
-    if (!try_begin_status_write_rt(write_token)) {
-        push_status_channel_busy_event_rt();
+    if (!write_status(write_token)) {
+        push_status_channel_busy_event();
         return;
     }
 
@@ -702,11 +702,11 @@ void MYACTUA::update_status_snapshot_rt()
         s.target_mode = to_motor_control_mode(m.desired.mode);
     }
 
-    publish_status_rt(write_token);
+    publish_status(write_token);
 }
 
 
-void MYACTUA::update_diagnostics_snapshot_rt()
+void MYACTUA::update_diagnostics_snapshot()
 {
     if (_motors.empty()) {
         return;
@@ -714,7 +714,7 @@ void MYACTUA::update_diagnostics_snapshot_rt()
 
     mb::LatestStatusChannel<MyactDiagnosticsSnapshot>::WriteToken write_token;
     if (!diagnostics_channel_.write(write_token)) {
-        push_status_channel_busy_event_rt();
+        push_status_channel_busy_event();
         return;
     }
 
@@ -769,16 +769,16 @@ std::vector<MyactDiagnosticsSnapshot> MYACTUA::get_myact_diagnostics()
     return diagnostics_channel_.get_status();
 }
 
-void MYACTUA::rt_event_sink_trampoline(void* context, const mb::RtEvent& event)
+void MYACTUA::event_sink_trampoline(void* context, const mb::RtEvent& event)
 {
     if (!context) {
         return;
     }
-    static_cast<MYACTUA*>(context)->push_rt_event(event);
+    static_cast<MYACTUA*>(context)->push_event(event);
 }
 
 
-void MYACTUA::push_status_channel_busy_event_rt()
+void MYACTUA::push_status_channel_busy_event()
 {
     const uint64_t count =
         status_channel_busy_count_.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -788,10 +788,10 @@ void MYACTUA::push_status_channel_busy_event_rt()
 
     mb::RtEvent event;
     event.type = mb::RtEventType::STATUS_CHANNEL_BUSY;
-    event.tick = discrete_command_tick_rt();
+    event.tick = discrete_command_tick();
     event.value = static_cast<uint32_t>(
         std::min<uint64_t>(count, static_cast<uint64_t>(UINT32_MAX)));
-    push_rt_event(event);
+    push_event(event);
 }
 
 

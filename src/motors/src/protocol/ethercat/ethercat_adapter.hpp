@@ -15,7 +15,7 @@ public:
 
     virtual ~EthercatAdapter() = default;
     virtual bool init(const char* ifname) = 0;  // 初始化网口和ethercat网络
-    virtual void set_rt_event_sink(void* context, RtEventSink sink) {
+    virtual void set_event_sink(void* context, RtEventSink sink) {
         (void)context;
         (void)sink;
     }

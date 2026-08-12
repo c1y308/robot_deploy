@@ -218,14 +218,14 @@ void EthercatAdapterIGH::write_txpdo_to_domain(std::size_t index, const TxPDO& p
     EC_WRITE_S8(domain1_pd + off.off_mode_of_op, pdo.op_mode);
 }
 
-void EthercatAdapterIGH::emit_rt_event(const mb::RtEvent& event)
+void EthercatAdapterIGH::emit_event(const mb::RtEvent& event)
 {
     if (rt_event_sink) {
         rt_event_sink(rt_event_context, event);
     }
 }
 
-void EthercatAdapterIGH::set_rt_event_sink(void* context, RtEventSink sink)
+void EthercatAdapterIGH::set_event_sink(void* context, RtEventSink sink)
 {
     rt_event_context = context;
     rt_event_sink = sink;
@@ -309,7 +309,7 @@ void EthercatAdapterIGH::send_physical() {
         event.tick = cycle;
         event.value = domain1_state.working_counter;
         event.reason = static_cast<int>(domain1_state.wc_state);
-        emit_rt_event(event);
+        emit_event(event);
     }
 
     ecrt_domain_queue(domain1);
