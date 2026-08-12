@@ -145,7 +145,7 @@ private:
     void thread_func();
 
     std::size_t motor_count_{0};
-    int publish_period_ms_{1};
+    int publish_period_ms_{1};   // 读取频率
 
     // 三槽数据存储
     std::array<std::array<Snapshot, kMaxMotorCommandSetpoints>, kStatusSlotCount> slots_{};
@@ -154,8 +154,8 @@ private:
     int writing_idx_{0};
     // reading_idx_: 仅 Consumer 读写（非原子）
     int reading_idx_{1};
-    // middle_state_: 唯一共享 ownership 点，低两位为槽号，bit2 为 dirty。
-    std::atomic<MiddleState> middle_state_{make_middle_state(2, false)};
+    // middle_index_: 唯一共享 ownership 点，低两位为槽号，bit2 为 dirty。
+    std::atomic<MiddleState> middle_index_{make_middle_state(2, false)};
 
     // ── 统计 ──
     std::atomic<std::uint64_t> publish_count_{0};
@@ -213,7 +213,7 @@ void LatestStatusChannel<Snapshot>::configure(std::size_t motor_count,
     // 初始 ownership: slot0=Writing, slot1=Reading, slot2=Middle(clean)。
     writing_idx_ = 0;
     reading_idx_ = 1;
-    middle_state_.store(make_middle_state(2, false),
+    middle_index_.store(make_middle_state(2, false),
                         std::memory_order_relaxed);
 
     publish_count_.store(0, std::memory_order_relaxed);
@@ -232,9 +232,9 @@ bool LatestStatusChannel<Snapshot>::write(WriteToken& token)
     if (motor_count_ == 0)
         return false;
 
-    // Producer 始终独占 writing_idx_，无需 CAS、无需查找；直接给令牌填充数据
+    // Producer 始终独占 writing_idx_，无需 CAS、无需查找；
     token.slot = static_cast<std::size_t>(writing_idx_);
-    token.data = slots_[writing_idx_].data();
+    token.data = slots_[writing_idx_].data();   // 直接给令牌填充数据（令牌为引用传入）
     return true;
 }
 
@@ -252,19 +252,19 @@ void LatestStatusChannel<Snapshot>::publish(const WriteToken& token)
         return;
     }
 
-    // 当前轮的 write 槽作为下一轮 middle 槽
+    // publish当前轮的 write 槽后，将其作为 middle 槽（且设为 dirty）
     const MiddleState new_middle = make_middle_state(writing_idx_, true);
 
     // 单次 RMW 完成 Writing <-> Middle：
     // - release: 发布前对 slots_[writing_idx_] 的普通写入对 Consumer 可见。
     // - acquire: 若旧 Middle 是 Consumer 刚释放的 Reading，Producer 在重用该槽
     //   为下一轮 Writing 前，能看到 Consumer 对该槽读取完成的 release。
-    const MiddleState old_middle = middle_state_.exchange(new_middle, std::memory_order_acq_rel);
+    const MiddleState old_middle = middle_index_.exchange(new_middle, std::memory_order_acq_rel);
 
     if (middle_dirty(old_middle)) {
         overwritten_count_.fetch_add(1, std::memory_order_relaxed);
     }
-    // 当前轮的 middle 槽作为下一轮 Writing 槽
+    // 当前轮之前的 middle 槽作为下一轮 Writing 槽
     writing_idx_ = middle_slot(old_middle);
     publish_count_.fetch_add(1, std::memory_order_relaxed);
 }
@@ -348,12 +348,9 @@ void LatestStatusChannel<Snapshot>::stop()
 // ---------------------------------------------------------------------------
 
 template <typename Snapshot>
-bool LatestStatusChannel<Snapshot>::copy_latest_status(
-    std::vector<Snapshot>& out)
+bool LatestStatusChannel<Snapshot>::copy_latest_status(std::vector<Snapshot>& out)
 {
     out.resize(motor_count_);
-
-    const MiddleState released_reading = make_middle_state(reading_idx_, false);
 
     // 单次 RMW 完成 Reading <-> Middle：
     // - acquire: 若 old_middle.dirty=true 且来自 Producer release，Consumer 复制
@@ -361,15 +358,17 @@ bool LatestStatusChannel<Snapshot>::copy_latest_status(
     // - release: 把上一轮 Reading 槽归还为 clean Middle；Producer 之后 acquire 到
     //   该槽时，Consumer 对该槽的读取已经完成。
 
-    // 当前轮的 reading 槽作为下一轮 middle 槽
-    const MiddleState old_middle = middle_state_.exchange(released_reading, std::memory_order_acq_rel);
-    // 读取当前轮的 middle 槽
+    // 当前的 reading 槽作为下一次的 middle 槽（给 Producer 用）
+    const MiddleState released_reading = make_middle_state(reading_idx_, false);
+    const MiddleState old_middle = middle_index_.exchange(released_reading, std::memory_order_acq_rel);
+    // 当前的 middle 槽作为 reading 槽
     reading_idx_ = middle_slot(old_middle);
 
     if (!middle_dirty(old_middle)) {
         return false;
     }
 
+    // 读取当前轮的 middle 槽
     const auto& src = slots_[static_cast<std::size_t>(reading_idx_)];
     for (std::size_t i = 0; i < motor_count_; ++i) {
         out[i] = src[i];
