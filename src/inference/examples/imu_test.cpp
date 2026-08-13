@@ -1,4 +1,4 @@
-#include "robot_interface.hpp"
+#include "robot/robot_imu_session.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -19,36 +19,34 @@ int main() {
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    inference::RobotInterfaceConfig cfg;
-    inference::RobotInterface robot(cfg);
+    inference::ImuConfig cfg;
+    inference::RobotImuSession imu(cfg);
 
     std::cout << "[IMU_TEST] Starting IMU only..." << std::endl;
-    if (!robot.initial_and_start_imu()) {
+    if (!imu.initialize_and_start()) {
         std::cerr << "[IMU_TEST] Failed to start IMU." << std::endl;
         return -1;
     }
 
     std::cout << "[IMU_TEST] Running. Press Ctrl+C to stop." << std::endl;
     while (g_running.load()) {
-        const auto euler = robot.get_euler();
-        const auto body_ang_vel = robot.get_body_ang_vel();
-        const auto projected_gravity = robot.get_projected_gravity();
+        const auto state = imu.get_state();
         std::cout << std::fixed << std::setprecision(6)
                   << "[IMU_TEST] euler[roll,pitch,heading]=["
-                  << euler[0] << ", "
-                  << euler[1] << ", "
-                  << euler[2] << "] rad, body_ang_vel[roll,pitch,heading]=["
-                  << body_ang_vel[0] << ", "
-                  << body_ang_vel[1] << ", "
-                  << body_ang_vel[2] << "] rad/s, projected_gravity=["
-                  << projected_gravity[0] << ", "
-                  << projected_gravity[1] << ", "
-                  << projected_gravity[2] << "] m/s^2\n";
+                  << state.euler[0] << ", "
+                  << state.euler[1] << ", "
+                  << state.euler[2] << "] rad, body_ang_vel[roll,pitch,heading]=["
+                  << state.body_ang_vel[0] << ", "
+                  << state.body_ang_vel[1] << ", "
+                  << state.body_ang_vel[2] << "] rad/s, projected_gravity=["
+                  << state.projected_gravity[0] << ", "
+                  << state.projected_gravity[1] << ", "
+                  << state.projected_gravity[2] << "] m/s^2\n";
 
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    robot.deinit_imu();
+    imu.deinitialize();
     std::cout << "[IMU_TEST] IMU stopped." << std::endl;
     return 0;
 }

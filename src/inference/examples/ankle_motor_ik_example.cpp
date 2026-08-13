@@ -1,4 +1,4 @@
-#include "ankle_motor_ik.hpp"
+#include "kinematics/ankle_motor_ik.hpp"
 
 #include <iomanip>
 #include <iostream>

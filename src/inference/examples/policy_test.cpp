@@ -1,4 +1,4 @@
-#include "robot_interface.hpp"
+#include "robot/robot_interface.hpp"
 #include "xbox_controller.hpp"
 
 #include <algorithm>
@@ -49,39 +49,37 @@ bool file_readable(const std::string& path)
 inference::RobotInterfaceConfig make_robot_config()
 {
     inference::RobotInterfaceConfig cfg;
-    cfg.num_motors = 12;
-    cfg.ethercat_ifname = kEthercatIfname;
-    cfg.imu_device      = kImuDevice;
-    cfg.imu_baudrate    = kImuBaudrate;
-    cfg.imu_print_imu   = false;
-    cfg.imu_print_ahrs  = false;
-    cfg.imu_print_stats = false;
+    cfg.motor.num_motors = 12;
+    cfg.motor.ethercat_ifname = kEthercatIfname;
+    cfg.imu.device      = kImuDevice;
+    cfg.imu.baudrate    = kImuBaudrate;
+    cfg.imu.print_imu   = false;
+    cfg.imu.print_ahrs  = false;
+    cfg.policy.model_path = policy_model_path().string();
 
-    cfg.policy_model_path = policy_model_path().string();
+    cfg.motor.print_motors_info = true;
 
-    cfg.print_motors_info = true;
-
-    cfg.enable_motor_torque_log = true;
+    cfg.recorder.enabled = true;
 
     // 普通单关节 DOF 到电机逻辑索引；脚踝并联 DOF 由 left/right_ankle_parallel 指定
-    cfg.model_to_motor_index = {0, 6, 1, 7, 2, 8, 3, 9};
+    cfg.joint_mapping.model_to_motor_index = {0, 6, 1, 7, 2, 8, 3, 9};
 
-    cfg.left_ankle_parallel = {8, 10, 4, 5};
-    cfg.right_ankle_parallel = {9, 11, 10, 11};
+    cfg.joint_mapping.left_ankle_parallel = {8, 10, 4, 5};
+    cfg.joint_mapping.right_ankle_parallel = {9, 11, 10, 11};
 
-    cfg.mit_kp = { 237.0, 237.0, 104.0, 104.0,
-                   307.0, 307.0, 237.0, 237.0,
-                   104.0, 104.0, 307.0, 307.0};
+    cfg.motor.mit_kp = { 237.0, 237.0, 104.0, 104.0,
+                         307.0, 307.0, 237.0, 237.0,
+                         104.0, 104.0, 307.0, 307.0};
     
-    cfg.mit_kd = {  15.1, 15.1,  6.64,  6.64,
-                    19.5, 19.5,  15.1,  15.1,
-                     6.64, 6.64,  19.5,  19.5};
+    cfg.motor.mit_kd = {  15.1, 15.1,  6.64,  6.64,
+                          19.5, 19.5,  15.1,  15.1,
+                           6.64, 6.64,  19.5,  19.5};
 
-    cfg.print_motor_ids = {0, 1, 2, 3, 4, 5,
-                           6, 7, 8, 9, 10, 11};
+    cfg.motor.print_motor_ids = {0, 1, 2, 3, 4, 5,
+                                 6, 7, 8, 9, 10, 11};
 
     // 以下 12 维策略配置均按模型 DOF 序号填写
-    cfg.stand_pose_rad = {
+    cfg.policy.stand_pose_rad = {
         0.0,  0.0, -0.2, -0.2,
         0.0,  0.0,  0.2,  0.2,
         0.0,  0.0,  0.0,  0.0
@@ -89,7 +87,7 @@ inference::RobotInterfaceConfig make_robot_config()
 
 
     // 按模型 DOF 顺序限制 raw_action * action_scale 后的动作偏移: [lower, upper]
-cfg.action_clip = {
+    cfg.policy.action_clip = {
         {-0.12, 0.12},
         {-0.12, 0.12},
 
@@ -108,7 +106,7 @@ cfg.action_clip = {
         {-0.08, 0.08},
         {-0.08, 0.08},
     };
-    cfg.action_scale = {
+    cfg.policy.action_scale = {
         0.08, 0.08,
         0.30, 0.30,
         0.08, 0.08,
@@ -118,25 +116,25 @@ cfg.action_clip = {
     };
 
     // joint_min/max 是相对 stand_pose_rad 的偏移限位。
-    cfg.joint_min_rad.assign(12, -0.7);
-    cfg.joint_max_rad.assign(12,  0.7);
+    cfg.policy.joint_min_rad.assign(12, -0.7);
+    cfg.policy.joint_max_rad.assign(12,  0.7);
 
     //  按照 DOF 顺序配置电机方向，1 表示方向一致，-1 表示方向相反；为空时全部按 1
-    cfg.motor_to_model_direction = {
+    cfg.joint_mapping.motor_to_model_direction = {
          1, -1, 1,  1, -1, -1,
         -1,  1, 1, -1, -1, -1
     };
 
     /******************************************************************* */
-    cfg.command_scale = {1.0, 1.0, 1.0};
-    cfg.body_ang_vel_scale = {0.2, 0.2, 0.2};
-    cfg.policy_step_dt = kPolicyPeriodSec;
-    cfg.gait_phase_period = 0.7;
+    cfg.policy.command_scale = {1.0, 1.0, 1.0};
+    cfg.policy.body_ang_vel_scale = {0.2, 0.2, 0.2};
+    cfg.policy.step_dt = kPolicyPeriodSec;
+    cfg.policy.gait_phase_period = 0.7;
 
 
     // 电机观测缩放系数
-    cfg.dof_pos_scale.assign(12, 1.0);
-    cfg.dof_vel_scale.assign(12, 0.05);
+    cfg.policy.dof_pos_scale.assign(12, 1.0);
+    cfg.policy.dof_vel_scale.assign(12, 0.05);
 
     return cfg;
 }
@@ -170,9 +168,7 @@ void safe_shutdown(inference::RobotInterface& robot, bool send_zero)
     }
 
     std::cout << "[INFO] Stopping motors and releasing hardware...\n";
-    robot.stop_motors(-1);
-    robot.deinit_motors();
-    robot.deinit_imu();
+    robot.shutdown();
     std::cout << "[INFO] Shutdown complete.\n";
 }
 
@@ -191,9 +187,9 @@ int main()
 
     const inference::RobotInterfaceConfig cfg = make_robot_config();
 
-    if (!file_readable(cfg.policy_model_path)) {
+    if (!file_readable(cfg.policy.model_path)) {
         std::cerr << "[ERROR] Policy model is not readable: "
-                  << cfg.policy_model_path << "\n";
+                  << cfg.policy.model_path << "\n";
         return 1;
     }
 
@@ -204,55 +200,14 @@ int main()
 
     inference::RobotInterface robot(cfg);
 
-    std::cout << "[INFO] Starting EtherCAT motors...\n";
-    if (!robot.initial_and_start_motors()) {
-        std::cerr << "[ERROR] initial_and_start_motors() failed.\n";
+    std::cout << "[INFO] Initializing robot runtime...\n";
+    if (!robot.initialize()) {
+        std::cerr << "[ERROR] robot.initialize() failed.\n";
         safe_shutdown(robot, false);
         return 1;
     }
 
-    std::cout << "[INFO] Loading policy...\n";
-    if (!robot.load_policy()) {
-        std::cerr << "[ERROR] load_policy() failed.\n";
-        safe_shutdown(robot, false);
-        return 1;
-    }
-
-    std::cout << "[INFO] Restarting motors...\n";
-    if (!robot.restart_motors(-1)) {
-        std::cerr << "[ERROR] restart_motors(-1) failed.\n";
-        safe_shutdown(robot, false);
-        return 1;
-    }
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    if (g_stop_requested.load()) {
-        safe_shutdown(robot, false);
-        return 0;
-    }
-
-    std::cout << "[INFO] Starting IMU...\n";
-    if (!robot.initial_and_start_imu()) {
-        std::cerr << "[ERROR] initial_and_start_imu() failed.\n";
-        safe_shutdown(robot, false);
-        return 1;
-    }
-
-    std::cout << "[INFO] Waiting 1 second for IMU/AHRS warmup...\n";
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    if (g_stop_requested.load()) {
-        safe_shutdown(robot, false);
-        return 0;
-    }
-
-    std::cout << "[INFO] Resetting joints to stand_pose_rad...\n";
-    if (!robot.reset_joints()) {
-        std::cerr << "[ERROR] reset_joints() failed.\n";
-        safe_shutdown(robot, false);
-        return 1;
-    }
-
-    std::cout << "[INFO] Waiting 50 seconds before entering policy loop...\n";
+    std::cout << "[INFO] Waiting 5 seconds before entering policy loop...\n";
     std::this_thread::sleep_for(std::chrono::milliseconds(5000));
     if (g_stop_requested.load()) {
         safe_shutdown(robot, false);

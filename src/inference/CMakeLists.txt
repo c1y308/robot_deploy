@@ -61,10 +61,26 @@ target_include_directories(imu_a100_core PUBLIC
 )
 target_link_libraries(imu_a100_core PUBLIC m pthread)
 
+add_library(inference_recorder STATIC
+    src/recorder/inference_recorder.cpp
+)
+target_include_directories(inference_recorder PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_compile_definitions(inference_recorder PUBLIC
+    ROBOT_INFERENCE_LOG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/log"
+)
+target_link_libraries(inference_recorder PUBLIC pthread)
+
 add_library(robot_interface STATIC
-    src/async_csv_logger.cpp
-    src/robot_interface.cpp
-    src/torch_policy_runner.cpp
+    src/robot/robot_interface.cpp
+    src/robot/action_processor.cpp
+    src/robot/observation_builder.cpp
+    src/robot/robot_motor_session.cpp
+    src/robot/robot_imu_session.cpp
+    src/robot/joint_mapping.cpp
+    src/policy/policy_runtime.cpp
+    src/policy/torch_policy_runner.cpp
 )
 target_include_directories(robot_interface PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -77,6 +93,7 @@ target_compile_definitions(robot_interface PUBLIC
 )
 target_link_libraries(robot_interface
     PUBLIC
+    inference_recorder
     myactua_ethercat
     imu_a100_core
     ${TORCH_LIBRARIES}
@@ -116,4 +133,49 @@ add_executable(policy_test
 target_link_libraries(policy_test PRIVATE
     robot_interface
     xbox_control_core
+)
+
+add_executable(inference_recorder_test
+    tests/inference_recorder_test.cpp
+)
+target_link_libraries(inference_recorder_test PRIVATE inference_recorder)
+
+add_executable(joint_mapping_test
+    tests/joint_mapping_test.cpp
+    src/robot/joint_mapping.cpp
+)
+target_include_directories(joint_mapping_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+add_executable(action_processor_test
+    tests/action_processor_test.cpp
+    src/robot/action_processor.cpp
+    src/robot/joint_mapping.cpp
+)
+target_include_directories(action_processor_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
+)
+
+add_executable(observation_builder_test
+    tests/observation_builder_test.cpp
+    src/robot/observation_builder.cpp
+    src/robot/joint_mapping.cpp
+)
+target_include_directories(observation_builder_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
+)
+target_compile_definitions(observation_builder_test PRIVATE
+    ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=$<BOOL:${ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS}>
+)
+
+add_executable(policy_runtime_observation_test
+    tests/policy_runtime_observation_test.cpp
+)
+target_link_libraries(policy_runtime_observation_test PRIVATE robot_interface)
+target_compile_definitions(policy_runtime_observation_test PRIVATE
+    ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=$<BOOL:${ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS}>
+    ROBOT_POLICY_RUNTIME_TESTING
 )
