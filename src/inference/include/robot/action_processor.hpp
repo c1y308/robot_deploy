@@ -22,9 +22,9 @@ public:
                              std::vector<double>& target_motor_rad,
                              std::string& error);
 
-    bool build_reset_start_model_pose(const std::vector<double>& q0_motor,
-                                      const std::vector<double>& target_model,
-                                      std::vector<double>& q0_model,
+    bool build_reset_start_model_pose(const std::vector<double>& current_motor_q,
+                                      const std::vector<double>& target_model_q,
+                                      std::vector<double>& start_model_q,
                                       std::string& error) const;
 
 private:

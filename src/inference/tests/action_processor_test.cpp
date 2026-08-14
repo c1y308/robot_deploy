@@ -94,21 +94,21 @@ void test_reset_start_model_pose()
 {
     inference::robot_detail::ActionProcessor processor(make_mapping(),
                                                        make_policy_config());
-    std::vector<double> q0_motor(12, 0.0);
-    q0_motor[0] = 0.40;
-    q0_motor[6] = -0.30;
-    std::vector<double> target_model(12, 0.0);
-    std::vector<double> q0_model;
+    std::vector<double> current_motor_q(12, 0.0);
+    current_motor_q[0] = 0.40;
+    current_motor_q[6] = -0.30;
+    std::vector<double> target_model_q(12, 0.0);
+    std::vector<double> start_model_q;
     std::string error;
 
-    expect(processor.build_reset_start_model_pose(q0_motor,
-                                                  target_model,
-                                                  q0_model,
+    expect(processor.build_reset_start_model_pose(current_motor_q,
+                                                  target_model_q,
+                                                  start_model_q,
                                                   error),
            "reset start model pose should build: " + error);
-    expect(q0_model.size() == 12, "reset model pose size should match DOF count");
-    expect_near(q0_model[0], 0.40, "motor 0 should map to model 0");
-    expect_near(q0_model[1], 0.30, "motor 6 direction should map to model 1");
+    expect(start_model_q.size() == 12, "reset model pose size should match DOF count");
+    expect_near(start_model_q[0], 0.40, "motor 0 should map to model 0");
+    expect_near(start_model_q[1], 0.30, "motor 6 direction should map to model 1");
 }
 
 }  // namespace

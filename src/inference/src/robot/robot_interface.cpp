@@ -351,17 +351,17 @@ bool RobotInterface::reset_joints() {
         return false;
     }
 
-    std::vector<double> target_model(config_.motor.num_motors, 0.0);
+    std::vector<double> target_model_q(config_.motor.num_motors, 0.0);
     if (static_cast<int>(config_.policy.stand_pose_rad.size()) == config_.motor.num_motors) {
-        target_model = config_.policy.stand_pose_rad;
+        target_model_q = config_.policy.stand_pose_rad;
     }
 
-    const std::vector<double> q0_motor = motor_session_.get_joint_q();
-    std::vector<double> q0_model;
+    const std::vector<double> current_motor_q = motor_session_.get_joint_q();
+    std::vector<double> start_model_q;
     std::string error;
-    if (!action_processor_->build_reset_start_model_pose(q0_motor,
-                                                         target_model,
-                                                         q0_model,
+    if (!action_processor_->build_reset_start_model_pose(current_motor_q,
+                                                         target_model_q,
+                                                         start_model_q,
                                                          error)) {
         std::cerr << "[RobotInterface] reset_joints rejected: "
                   << error << "\n";
@@ -375,7 +375,7 @@ bool RobotInterface::reset_joints() {
         const double alpha = static_cast<double>(k) / static_cast<double>(ramp_steps);
         std::vector<double> q_cmd_model(config_.motor.num_motors, 0.0);
         for (int i = 0; i < config_.motor.num_motors; ++i) {
-            q_cmd_model[i] = q0_model[i] * (1.0 - alpha) + target_model[i] * alpha;
+            q_cmd_model[i] = start_model_q[i] * (1.0 - alpha) + target_model_q[i] * alpha;
         }
         if (!apply_action(q_cmd_model)) {
             return false;
