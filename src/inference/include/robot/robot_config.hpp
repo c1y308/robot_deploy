@@ -5,6 +5,7 @@
 #include "robot/joint_mapping.hpp"
 
 #include <array>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -60,11 +61,21 @@ struct PolicyConfig {
     double gait_phase_period = 0.74;
 };
 
+struct AnkleTorqueControlConfig {
+    std::array<double, 2> virtual_kp = {180.0, 180.0};  // [pitch, roll]
+    std::array<double, 2> virtual_kd = {10.0, 10.0};    // [pitch, roll]
+    double filter_cutoff_rad_s = 100.0;
+    double filter_dt_s = 0.001;
+    double motor_rated_torque_nm = 10.5;
+    double target_torque_limit_permille = 800.0;    // 目标扭矩限制，单位为千分比，最大值为 32767
+};
+
 struct RobotInterfaceConfig {
     MotorConfig motor;
     ImuConfig   imu;
     JointMappingConfig joint_mapping;
     PolicyConfig policy;
+    AnkleTorqueControlConfig ankle_torque;
     InferenceRecorderConfig recorder;
 };
 

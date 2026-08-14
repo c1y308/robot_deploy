@@ -60,6 +60,7 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.motor.print_motors_info = true;
 
     cfg.recorder.enabled = true;
+    cfg.ankle_torque.target_torque_limit_permille = 2000.0;
 
     // 普通单关节 DOF 到电机逻辑索引；脚踝并联 DOF 由 left/right_ankle_parallel 指定
     cfg.joint_mapping.model_to_motor_index = {0, 6, 1, 7, 2, 8, 3, 9};
@@ -67,22 +68,22 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.joint_mapping.left_ankle_parallel = {8, 10, 4, 5};
     cfg.joint_mapping.right_ankle_parallel = {9, 11, 10, 11};
 
-    cfg.motor.mit_kp = { 237.0, 237.0, 104.0, 104.0,
-                         307.0, 307.0, 237.0, 237.0,
-                         104.0, 104.0, 307.0, 307.0};
+    cfg.motor.mit_kp = { 180.0, 180.0, 180.0, 180.0,
+                         187.0, 187.0, 180.0, 180.0,
+                         180.0, 180.0, 187.0, 187.0};
     
-    cfg.motor.mit_kd = {  15.1, 15.1,  6.64,  6.64,
-                          19.5, 19.5,  15.1,  15.1,
-                           6.64, 6.64,  19.5,  19.5};
+    cfg.motor.mit_kd = { 4.0, 4.0, 4.0, 4.0,
+                         4.07, 4.07, 4.0, 4.0,
+                         4.0, 4.0, 4.07, 4.07};
 
     cfg.motor.print_motor_ids = {0, 1, 2, 3, 4, 5,
                                  6, 7, 8, 9, 10, 11};
 
     // 以下 12 维策略配置均按模型 DOF 序号填写
     cfg.policy.stand_pose_rad = {
-        0.0,  0.0, -0.3, -0.3,
-        0.0,  0.0,  0.3,  0.3,
-       -0.2, -0.2,  0.0,  0.0
+        0.0, 0.0, -0.2, -0.2,
+        0.0, 0.0,  0.2,  0.2,
+       -0.05, -0.05, 0.0, 0.0
     };
 
 
@@ -108,10 +109,10 @@ inference::RobotInterfaceConfig make_robot_config()
     };
     cfg.policy.action_scale = {
         0.08, 0.08,
-        0.30, 0.30,
+        0.45, 0.45,
         0.08, 0.08,
-        0.30, 0.30,
-        0.15, 0.15,
+        0.45, 0.45,
+        0.20, 0.20,
         0.08, 0.08
     };
 
@@ -128,7 +129,7 @@ inference::RobotInterfaceConfig make_robot_config()
     /******************************************************************* */
     cfg.policy.command_scale = {1.0, 1.0, 1.0};
     cfg.policy.body_ang_vel_scale = {0.2, 0.2, 0.2};
-    cfg.policy.step_dt = kPolicyPeriodSec;
+    cfg.policy.step_dt = 0.02;
     cfg.policy.gait_phase_period = 0.7;
 
 
@@ -242,8 +243,7 @@ int main()
             safe_shutdown(robot, true);
             return 1;
         }
-        robot.set_target_velocity(0, 0, 0);
-        // robot.set_target_velocity(command.vx, command.vy, command.yaw_rate);
+        robot.set_target_velocity(command.vx, 0.0, 0.0);
 
         const auto step_start = Clock::now();
         if (!robot.policy_step()) {
@@ -261,19 +261,19 @@ int main()
         ++steps;
 
         const auto now = Clock::now();
-        // if (now - last_report >= std::chrono::seconds(1)) {
-        //     std::cout << std::fixed << std::setprecision(3)
-        //               << " vx=" << command.vx
-        //               << " vy=" << command.vy
-        //               << " yaw_rate=" << command.yaw_rate;
-        //     if (kPrintPolicyTiming && steps > 0) {
-        //         std::cout << " avg_policy_step_ms="
-        //                   << total_step_ms / static_cast<double>(steps)
-        //                   << " max_policy_step_ms=" << max_step_ms;
-        //     }
-        //     std::cout << "\n";
-        //     last_report = now;
-        // }
+        if (now - last_report >= std::chrono::seconds(1)) {
+            // std::cout << std::fixed << std::setprecision(3)
+            //           << " vx=" << command.vx
+            //           << " vy=" << command.vy
+            //           << " yaw_rate=" << command.yaw_rate;
+            // if (kPrintPolicyTiming && steps > 0) {
+            //     std::cout << " avg_policy_step_ms="
+            //               << total_step_ms / static_cast<double>(steps)
+            //               << " max_policy_step_ms=" << max_step_ms;
+            // }
+            // std::cout << "\n";
+            // last_report = now;
+        }
 
         std::this_thread::sleep_until(next_tick);
         if (Clock::now() > next_tick + period) {

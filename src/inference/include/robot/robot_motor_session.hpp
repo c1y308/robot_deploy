@@ -47,6 +47,8 @@ public:
     bool motion_enabled() const noexcept { return motion_enabled_.load(); }
 
     bool apply_targets_rad(const std::vector<double>& target_motor_rad);
+    bool apply_impedance_setpoints(
+        const std::vector<motor_base::ImpedanceSetpoint>& setpoints);
 
     std::vector<double> get_joint_q() const;
     std::vector<double> get_joint_vel() const;

@@ -9,11 +9,11 @@
 namespace xbox_control {
 
 constexpr const char* kXboxDevicePath = "/dev/input/event7";
-constexpr int kAxisMin = 0;
-constexpr int kAxisCenter = 128;
-constexpr int kAxisMax = 255;
-constexpr int kDeadzone = 0;
-constexpr double kMaxSpeedMps = 0.5;
+constexpr int kAxisMin = -32768;
+constexpr int kAxisCenter = 0;
+constexpr int kAxisMax = 32767;
+constexpr int kDeadzone = 8000;
+constexpr double kMaxSpeedMps = 0.3;
 constexpr double kYawRate = 0.0;
 
 struct VelocityCommand {

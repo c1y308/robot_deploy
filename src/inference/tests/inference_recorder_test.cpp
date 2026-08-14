@@ -92,6 +92,7 @@ inference::InferenceRecord make_record(std::uint64_t frame_index,
         record.raw_action[i] = static_cast<float>(frame_index) + static_cast<float>(i) * 0.01F;
         record.target_q_model_rad[i] = static_cast<double>(frame_index) + static_cast<double>(i) * 0.1;
         record.target_pos_rad[i] = static_cast<double>(i) * 0.2;
+        record.target_effort_permille[i] = 100.0 + static_cast<double>(i);
         record.rx_pos_rad[i] = static_cast<double>(i) * 0.1;
         record.rx_vel_rad_s[i] = static_cast<double>(i) * 0.01;
         record.torque_percent[i] = static_cast<double>(i);
@@ -140,6 +141,8 @@ void test_start_header()
            "header should start with frame and timing columns");
     expect(lines[0].find("target_pos_rad_M0") != std::string::npos,
            "header should include motor target columns");
+    expect(lines[0].find("target_effort_permille_M0") != std::string::npos,
+           "header should include motor target effort columns");
     expect(lines[0].find("torque_pct_M11") != std::string::npos,
            "header should include all torque columns");
 }
@@ -169,12 +172,24 @@ void test_record_stop_and_elapsed()
 
     const auto row0 = split_csv_line(lines[1]);
     const auto row1 = split_csv_line(lines[2]);
+    const auto header = split_csv_line(lines[0]);
     expect(row0.size() == row1.size(), "CSV rows should have stable width");
+    expect(row0.size() == header.size(), "CSV row should match header width");
     const auto elapsed0 = std::stoll(row0[1]);
     const auto elapsed1 = std::stoll(row1[1]);
     expect(elapsed1 - elapsed0 == kFrameStepNs / 1000,
            "elapsed_us should share one session start timestamp");
     expect(std::stoll(row0[5]) == 50, "inference_duration_us should be derived");
+
+    const auto effort_it = std::find(header.begin(),
+                                     header.end(),
+                                     "target_effort_permille_M0");
+    expect(effort_it != header.end(),
+           "header should include target_effort_permille_M0");
+    const auto effort_index =
+        static_cast<std::size_t>(effort_it - header.begin());
+    expect(std::stod(row0[effort_index]) == 100.0,
+           "target effort permille should be written to CSV data rows");
 }
 
 void test_stop_drains_queue()

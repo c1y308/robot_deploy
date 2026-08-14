@@ -41,6 +41,7 @@ struct InferenceRecord {
     std::array<double, kInferenceDof> target_q_model_rad{};     // 处理之后的目标关节角度（弧度、模型顺序）
 
     std::array<double, kInferenceMotorCount> target_pos_rad{};  // 电机接收的目标位置（弧度、电机顺序）
+    std::array<double, kInferenceMotorCount> target_effort_permille{};  // 电机目标力矩（额定力矩千分之一）
     std::array<double, kInferenceMotorCount> rx_pos_rad{};      // 电机反馈位置（弧度、电机顺序）
     std::array<double, kInferenceMotorCount> rx_vel_rad_s{};    // 电机反馈速度（弧度/秒、电机顺序）
     std::array<double, kInferenceMotorCount> torque_percent{};  // 电机反馈扭矩百分比（电机顺序）

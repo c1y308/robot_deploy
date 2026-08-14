@@ -63,6 +63,7 @@ void write_header(std::ostream& stream)
     append_indexed_columns(stream, "raw_action", kInferenceDof);
     append_indexed_columns(stream, "target_q_model_rad", kInferenceDof);
     append_motor_columns(stream, "target_pos_rad", kInferenceMotorCount);
+    append_motor_columns(stream, "target_effort_permille", kInferenceMotorCount);
     append_motor_columns(stream, "rx_pos_rad", kInferenceMotorCount);
     append_motor_columns(stream, "rx_vel_rad_s", kInferenceMotorCount);
     append_motor_columns(stream, "torque_pct", kInferenceMotorCount);
@@ -122,6 +123,7 @@ void write_record(std::ostream&          stream,
     append_values(stream, record.raw_action);
     append_values(stream, record.target_q_model_rad);
     append_values(stream, record.target_pos_rad);
+    append_values(stream, record.target_effort_permille);
     append_values(stream, record.rx_pos_rad);
     append_values(stream, record.rx_vel_rad_s);
     append_values(stream, record.torque_percent);

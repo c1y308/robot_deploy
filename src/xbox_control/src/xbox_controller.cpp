@@ -305,7 +305,7 @@ VelocityCommand XboxController::map_axes(int abs_x, int abs_y)
     command.has_abs_x = true;
     command.has_abs_y = true;
     command.vx = std::clamp(-axis_to_speed(abs_y), -kMaxSpeedMps, kMaxSpeedMps);
-    command.vy = std::clamp(axis_to_speed(abs_x), -kMaxSpeedMps, kMaxSpeedMps);
+    command.vy = 0.0;
     command.yaw_rate = kYawRate;
     return command;
 }
@@ -356,9 +356,7 @@ void XboxController::refresh_command_locked()
     command_.vx = std::clamp(-axis_to_speed(command_.raw_abs_y),
                              -kMaxSpeedMps,
                              kMaxSpeedMps);
-    command_.vy = std::clamp(axis_to_speed(command_.raw_abs_x),
-                             -kMaxSpeedMps,
-                             kMaxSpeedMps);
+    command_.vy = 0.0;
     command_.yaw_rate = kYawRate;
 }
 

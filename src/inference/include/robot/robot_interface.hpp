@@ -8,9 +8,11 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace inference {
@@ -41,6 +43,13 @@ public:
 
 
 private:
+    struct PolicyCommandSnapshot {
+        std::int64_t timestamp_ns{0};
+        std::array<double, policy_observation::kDof> target_pos_rad{};
+        std::array<double, policy_observation::kDof> target_effort_permille{};
+        bool command_applied{false};
+    };
+
     /* 机器人接口配置 */
     RobotInterfaceConfig config_;
 
@@ -60,6 +69,13 @@ private:
     bool inference_recorder_failed_ = false;
 
     std::atomic<bool> initialized_{false};
+    std::atomic<bool> policy_command_loop_running_{false};
+    std::atomic<bool> policy_command_loop_failed_{false};
+    std::thread policy_command_thread_;
+    mutable std::mutex policy_command_mutex_;
+    std::vector<double> latest_policy_target_q_model_rad_;
+    PolicyCommandSnapshot latest_policy_command_;
+    std::string policy_command_loop_error_;
 
     bool validate_policy_config() const;
 
@@ -73,6 +89,14 @@ private:
     void record_inference(const InferenceRecord& record);
 
     bool handle_policy_step_failure(const std::string& message);
+
+    bool start_policy_command_loop();
+    void stop_policy_command_loop();
+    void policy_command_loop();
+    void set_latest_policy_target(const std::vector<double>& target_q_model_rad);
+    PolicyCommandSnapshot latest_policy_command_snapshot() const;
+    void fail_policy_command_loop(std::string message);
+    bool policy_command_loop_healthy(std::string& error) const;
 };
 
 }  // namespace inference

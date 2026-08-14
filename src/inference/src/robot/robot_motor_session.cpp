@@ -22,6 +22,18 @@ bool finite_vector(const std::vector<double>& values)
     });
 }
 
+bool finite_impedance_setpoints(
+    const std::vector<motor_base::ImpedanceSetpoint>& setpoints)
+{
+    return std::all_of(setpoints.begin(), setpoints.end(), [](const auto& value) {
+        return std::isfinite(value.position_rad) &&
+               std::isfinite(value.velocity_rad_s) &&
+               std::isfinite(value.effort_ff) &&
+               std::isfinite(value.kp) &&
+               std::isfinite(value.kd);
+    });
+}
+
 bool is_mit_mode(motor_base::MotorControlMode mode)
 {
     return mode == motor_base::MotorControlMode::IMPEDANCE;
@@ -239,12 +251,7 @@ bool RobotMotorSession::apply_targets_rad(const std::vector<double>& target_moto
                                                                    config_.mit_kp[i],
                                                                    config_.mit_kd[i]);
         }
-        if (!submit_command(
-                motor_base::ControlCommand::set_impedance_targets(std::move(impedance_setpoints)),
-                "apply_targets_rad_mit")) {
-            return false;
-        }
-        return true;
+        return apply_impedance_setpoints(impedance_setpoints);
     }
 
     if (config_.control_mode != motor_base::MotorControlMode::POSITION) {
@@ -255,6 +262,38 @@ bool RobotMotorSession::apply_targets_rad(const std::vector<double>& target_moto
     if (!submit_command(
             motor_base::ControlCommand::set_position_targets_rad(target_motor_rad),
             "apply_targets_rad_position")) {
+        return false;
+    }
+    return true;
+}
+
+bool RobotMotorSession::apply_impedance_setpoints(
+    const std::vector<motor_base::ImpedanceSetpoint>& setpoints)
+{
+    if (!initialized_.load() || !controller_) {
+        return false;
+    }
+    if (!motion_enabled_.load()) {
+        std::cerr << "[RobotMotorSession] apply_impedance_setpoints rejected: motors are stopped. "
+                  << "Call restart(-1) first.\n";
+        return false;
+    }
+    if (!is_mit_mode(config_.control_mode)) {
+        std::cerr << "[RobotMotorSession] apply_impedance_setpoints supports only impedance mode\n";
+        return false;
+    }
+    if (static_cast<int>(setpoints.size()) != config_.num_motors) {
+        std::cerr << "[RobotMotorSession] apply_impedance_setpoints rejected: target size mismatch\n";
+        return false;
+    }
+    if (!finite_impedance_setpoints(setpoints)) {
+        std::cerr << "[RobotMotorSession] apply_impedance_setpoints rejected: non-finite setpoint\n";
+        return false;
+    }
+
+    if (!submit_command(
+            motor_base::ControlCommand::set_impedance_targets(setpoints),
+            "apply_impedance_setpoints")) {
         return false;
     }
     return true;

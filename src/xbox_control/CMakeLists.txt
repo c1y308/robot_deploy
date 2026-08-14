@@ -19,3 +19,10 @@ add_executable(xbox_input_test
 target_link_libraries(xbox_input_test PRIVATE
     xbox_control_core
 )
+
+add_executable(xbox_controller_mapping_test
+    tests/xbox_controller_mapping_test.cpp
+)
+target_link_libraries(xbox_controller_mapping_test PRIVATE
+    xbox_control_core
+)
