@@ -135,7 +135,8 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.policy.body_ang_vel_scale = {0.2, 0.2, 0.2};
     cfg.policy.step_dt = 0.02;
     cfg.policy.gait_phase_period = 0.74;
-    cfg.policy.gait_phase_gate_by_command = true;
+    cfg.policy.gait_phase_stand_threshold = 0.05;
+    cfg.policy.gait_phase_move_threshold = 0.15;
 
 
     // 电机观测缩放系数

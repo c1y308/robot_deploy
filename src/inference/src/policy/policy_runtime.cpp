@@ -29,28 +29,32 @@ std::array<float, 2> gait_phase_observation(std::uint64_t episode_length,
     };
 }
 
-bool gait_phase_command_active(const PolicyObservationTerms& terms)
-{
-    constexpr float kCommandGateEpsilon = 1.0e-6F;
-    return std::any_of(terms.velocity_commands.begin(),
-                       terms.velocity_commands.end(),
-                       [](float command) {
-                           return std::fabs(command) > kCommandGateEpsilon;
-                       });
-}
-
 std::array<float, 2> gated_gait_phase_observation(
     const PolicyObservationTerms& terms,
     const PolicyConfig& policy_config,
     std::uint64_t episode_length)
 {
-    if (policy_config.gait_phase_gate_by_command &&
-        !gait_phase_command_active(terms)) {
-        return {0.0F, 0.0F};
-    }
-    return gait_phase_observation(episode_length,
-                                  policy_config.step_dt,
-                                  policy_config.gait_phase_period);
+    const double command_norm = std::sqrt(
+        static_cast<double>(terms.velocity_commands[0]) * terms.velocity_commands[0] +
+        static_cast<double>(terms.velocity_commands[1]) * terms.velocity_commands[1] +
+        static_cast<double>(terms.velocity_commands[2]) * terms.velocity_commands[2]);
+
+    double gate = std::clamp(
+        (command_norm - policy_config.gait_phase_stand_threshold) /
+            (policy_config.gait_phase_move_threshold -
+             policy_config.gait_phase_stand_threshold),
+        0.0,
+        1.0);
+    gate = gate * gate * (3.0 - 2.0 * gate);
+
+    const std::array<float, 2> phase =
+        gait_phase_observation(episode_length,
+                               policy_config.step_dt,
+                               policy_config.gait_phase_period);
+    return {
+        static_cast<float>(phase[0] * gate),
+        static_cast<float>(phase[1] * gate)
+    };
 }
 
 template <std::size_t TermSize, std::size_t ObservationSize>

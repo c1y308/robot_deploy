@@ -60,7 +60,8 @@ struct PolicyConfig {
     double raw_action_clip = 1.0;
     double step_dt = 0.02;
     double gait_phase_period = 0.74;
-    bool gait_phase_gate_by_command = true;
+    double gait_phase_stand_threshold = 0.05;
+    double gait_phase_move_threshold = 0.15;
 };
 
 struct AnkleTorqueControlConfig {
