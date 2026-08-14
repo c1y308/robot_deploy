@@ -134,6 +134,13 @@ bool PolicyRuntime::infer(const PolicyObservationTerms& terms,
     }
     result.inference_end_ns = policy_runtime_now_ns();
 
+    if (!std::all_of(result.raw_action.begin(),
+                     result.raw_action.end(),
+                     [](float value) { return std::isfinite(value); })) {
+        set_error("policy output contains non-finite value");
+        return false;
+    }
+
     last_action_raw_ = result.raw_action;
     last_error_.clear();
     return true;

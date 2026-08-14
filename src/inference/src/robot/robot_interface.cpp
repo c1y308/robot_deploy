@@ -151,7 +151,7 @@ void RobotInterface::shutdown() {
     initialized_.store(false);
     unload_policy();
     imu_session_.deinitialize();
-    imu_session_.deinitialize();
+    motor_session_.deinitialize();
 }
 
 
