@@ -1,7 +1,5 @@
 #include "robot/observation_builder.hpp"
 
-#include "kinematics/ankle_motor_ik.hpp"
-
 #include <algorithm>
 #include <cstddef>
 #include <cmath>
@@ -53,8 +51,6 @@ void ObservationBuilder::reset_runtime_state()
         left_ankle_fk_.reset();
         right_ankle_fk_.reset();
     }
-    ready_ = false;
-    last_time_ = {};
 }
 
 // 从policy_config_中获取stand_pose_rad的roll和pitch值，调用ankle_fk的reset函数，重置ankle_fk
@@ -141,7 +137,6 @@ bool ObservationBuilder::build(
                           dq_motor_rad_s,
                           current_terms.joint_pos_rel,
                           current_terms.joint_vel_rel,
-                          std::chrono::steady_clock::now(),
                           error)) {
         return false;
     }
@@ -156,7 +151,6 @@ bool ObservationBuilder::fill_joint_terms(
     const MotorStateArray& dq_motor_rad_s, // 输入物理顺序的电机位置和速度
     JointTermArray& joint_pos_rel,         
     JointTermArray& joint_vel_rel,         // 输出模型顺序的关节的相对偏移和速度
-    std::chrono::steady_clock::time_point now,
     std::string& error)
 {
     if (!mapping_ || !mapping_->configured()) {
@@ -205,46 +199,49 @@ bool ObservationBuilder::fill_joint_terms(
             static_cast<float>(dq_model * policy_config_.dof_vel_scale[model_index]);
     }
 
+    // 针对脚踝模型的关节，使用FK计算位置，并用解析Jacobian把电机速度映射为虚拟关节速度。
+    if (!fill_ankle_fk_joint_terms(q_motor_rad,
+                                   dq_motor_rad_s,
+                                   mapping_->left_ankle(),
+                                   left_ankle_fk_,
+                                   joint_pos_rel,
+                                   joint_vel_rel,
+                                   error)) {
+        return false;
+    }
+    if (!fill_ankle_fk_joint_terms(q_motor_rad,
+                                   dq_motor_rad_s,
+                                   mapping_->right_ankle(),
+                                   right_ankle_fk_,
+                                   joint_pos_rel,
+                                   joint_vel_rel,
+                                   error)) {
+        return false;
+    }
 
-    // 针对脚踝模型的关节，使用FK计算相对偏移和速度
-    const double dt = ready_
-        ? std::chrono::duration<double>(now - last_time_).count()
-        : 0.0;
-    const bool has_valid_dt = ready_ && std::isfinite(dt) && dt > 0.0;
-
-    fill_ankle_fk_joint_terms(q_motor_rad,
-                              dt,
-                              has_valid_dt,
-                              mapping_->left_ankle(),
-                              left_ankle_fk_,
-                              joint_pos_rel,
-                              joint_vel_rel);
-    fill_ankle_fk_joint_terms(q_motor_rad,
-                              dt,
-                              has_valid_dt,
-                              mapping_->right_ankle(),
-                              right_ankle_fk_,
-                              joint_pos_rel,
-                              joint_vel_rel);
-
-    ready_     = true;
-    last_time_ = now;
     error.clear();
     return true;
 }
 
-void ObservationBuilder::fill_ankle_fk_joint_terms(
+bool ObservationBuilder::fill_ankle_fk_joint_terms(
     const MotorStateArray& q_motor_rad,
-    double dt,
-    bool has_valid_dt,
+    const MotorStateArray& dq_motor_rad_s,
     const AnkleParallelMap& ankle_map,
     AnkleFkState& state,
     JointTermArray& joint_pos_rel,
-    JointTermArray& joint_vel_rel) const
+    JointTermArray& joint_vel_rel,
+    std::string& error) const
 {
     // 获取脚踝模型的pitch和roll关节索引
     const int ankle_model_pitch_dof = ankle_map.model_pitch_dof;
     const int ankle_model_roll_dof  = ankle_map.model_roll_dof;
+    if (!index_in_range(ankle_model_pitch_dof, kDof) ||
+        !index_in_range(ankle_model_roll_dof, kDof) ||
+        !index_in_range(ankle_map.upper_motor_index, kDof) ||
+        !index_in_range(ankle_map.lower_motor_index, kDof)) {
+        error = "ankle map contains an out-of-range index";
+        return false;
+    }
 
     // 和运动学解算器中电机的旋转方向对齐
     const int upper_motor_direction =
@@ -257,11 +254,31 @@ void ObservationBuilder::fill_ankle_fk_joint_terms(
         q_motor_rad[static_cast<std::size_t>(ankle_map.upper_motor_index)];
     const double lower_motor = lower_motor_direction *
         q_motor_rad[static_cast<std::size_t>(ankle_map.lower_motor_index)];
+    const double upper_motor_velocity = upper_motor_direction *
+        dq_motor_rad_s[static_cast<std::size_t>(ankle_map.upper_motor_index)];
+    const double lower_motor_velocity = lower_motor_direction *
+        dq_motor_rad_s[static_cast<std::size_t>(ankle_map.lower_motor_index)];
 
-    const double previous_roll  = state.solver.previous_roll();
-    const double previous_pitch = state.solver.previous_pitch();
     const ankle_motor_fk::FootAngles foot =
         state.solver.solve(upper_motor, lower_motor);
+    if (!foot.reachable ||
+        !std::isfinite(foot.pitch) ||
+        !std::isfinite(foot.roll)) {
+        error = "ankle FK failed while building observation";
+        return false;
+    }
+
+    ankle_motor_jacobian::Result jacobian;
+    std::string jacobian_error;
+    if (!ankle_motor_jacobian::solve(foot.pitch,
+                                     foot.roll,
+                                     upper_motor,
+                                     lower_motor,
+                                     jacobian,
+                                     jacobian_error)) {
+        error = "failed to build ankle jacobian: " + jacobian_error;
+        return false;
+    }
 
     const auto pitch_index = static_cast<std::size_t>(ankle_model_pitch_dof);
     const auto roll_index = static_cast<std::size_t>(ankle_model_roll_dof);
@@ -276,18 +293,25 @@ void ObservationBuilder::fill_ankle_fk_joint_terms(
                            policy_config_.dof_pos_scale[roll_index]);
 
 
-    // 计算脚踝关节的速度
-    double pitch_velocity = 0.0;
-    double roll_velocity  = 0.0;
-    if (has_valid_dt) {
-        pitch_velocity = ankle_motor_ik::wrap_to_pi(foot.pitch - previous_pitch) / dt;
-        roll_velocity  = ankle_motor_ik::wrap_to_pi(foot.roll - previous_roll) / dt;
+    // 使用 q_v_dot = J q_m_dot 计算脚踝虚拟关节速度，顺序为 [pitch, roll]。
+    const double pitch_velocity =
+        jacobian.virtual_from_motor[0][0] * upper_motor_velocity +
+        jacobian.virtual_from_motor[0][1] * lower_motor_velocity;
+    const double roll_velocity =
+        jacobian.virtual_from_motor[1][0] * upper_motor_velocity +
+        jacobian.virtual_from_motor[1][1] * lower_motor_velocity;
+    if (!std::isfinite(pitch_velocity) || !std::isfinite(roll_velocity)) {
+        error = "ankle jacobian velocity is not finite";
+        return false;
     }
     // 缩放脚踝关节的速度
     joint_vel_rel[pitch_index] =
         static_cast<float>(pitch_velocity * policy_config_.dof_vel_scale[pitch_index]);
     joint_vel_rel[roll_index] =
         static_cast<float>(roll_velocity * policy_config_.dof_vel_scale[roll_index]);
+
+    error.clear();
+    return true;
 }
 
 }  // namespace inference::robot_detail

@@ -1,5 +1,8 @@
 #include "robot/observation_builder.hpp"
 
+#include "kinematics/ankle_motor_ik.hpp"
+#include "kinematics/ankle_motor_jacobian.hpp"
+
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -156,6 +159,74 @@ void test_build_full_terms()
     expect_near(terms.last_action[3], 0.25F, "last action should be copied into terms");
 }
 
+void test_ankle_velocity_uses_jacobian()
+{
+    inference::robot_detail::ObservationBuilder builder(make_mapping(),
+                                                        make_policy_config());
+    inference::MotorStateSnapshot motor_state = make_motor_state();
+
+    constexpr double pitch = -0.05;
+    constexpr double roll = 0.04;
+    const ankle_motor_ik::MotorAngles motors =
+        ankle_motor_ik::solve(roll, pitch);
+    expect(motors.reachable(), "left ankle IK should solve the test pose");
+
+    constexpr int upper_motor_index = 4;
+    constexpr int lower_motor_index = 5;
+    constexpr int pitch_model_index = 8;
+    constexpr int roll_model_index = 10;
+    constexpr double upper_motor_velocity = 0.25;
+    constexpr double lower_motor_velocity = -0.15;
+
+    const int upper_direction = policy_example_config().motor_to_model_direction[upper_motor_index];
+    const int lower_direction = policy_example_config().motor_to_model_direction[lower_motor_index];
+
+    motor_state.position_rad[upper_motor_index] = upper_direction * motors.motor1;
+    motor_state.position_rad[lower_motor_index] = lower_direction * motors.motor2;
+    motor_state.velocity_rad_s[upper_motor_index] = upper_direction * upper_motor_velocity;
+    motor_state.velocity_rad_s[lower_motor_index] = lower_direction * lower_motor_velocity;
+
+    ankle_motor_jacobian::Result jacobian;
+    std::string jacobian_error;
+    expect(ankle_motor_jacobian::solve(pitch,
+                                       roll,
+                                       motors.motor1,
+                                       motors.motor2,
+                                       jacobian,
+                                       jacobian_error),
+           "expected jacobian should solve: " + jacobian_error);
+    const double expected_pitch_velocity =
+        jacobian.virtual_from_motor[0][0] * upper_motor_velocity +
+        jacobian.virtual_from_motor[0][1] * lower_motor_velocity;
+    const double expected_roll_velocity =
+        jacobian.virtual_from_motor[1][0] * upper_motor_velocity +
+        jacobian.virtual_from_motor[1][1] * lower_motor_velocity;
+
+    inference::PolicyAction last_action{};
+    inference::PolicyObservationTerms terms;
+    std::string error;
+    expect(builder.build(motor_state,
+                         make_imu_state(),
+                         {0.0, 0.0, 0.0},
+                         last_action,
+                         terms,
+                         error),
+           "build should produce ankle jacobian velocity terms: " + error);
+
+    expect_near(terms.joint_pos_rel[pitch_model_index],
+                static_cast<float>(pitch),
+                "left ankle pitch position should come from FK");
+    expect_near(terms.joint_pos_rel[roll_model_index],
+                static_cast<float>(roll),
+                "left ankle roll position should come from FK");
+    expect_near(terms.joint_vel_rel[pitch_model_index],
+                static_cast<float>(expected_pitch_velocity * 0.1),
+                "left ankle pitch velocity should use jacobian");
+    expect_near(terms.joint_vel_rel[roll_model_index],
+                static_cast<float>(expected_roll_velocity * 0.1),
+                "left ankle roll velocity should use jacobian");
+}
+
 void test_build_rejects_invalid_inputs()
 {
     inference::robot_detail::ObservationBuilder builder(make_mapping(),
@@ -209,6 +280,7 @@ int main()
 {
     test_direct_joint_terms();
     test_build_full_terms();
+    test_ankle_velocity_uses_jacobian();
     test_build_rejects_invalid_inputs();
 
     std::cout << "observation_builder_test passed\n";

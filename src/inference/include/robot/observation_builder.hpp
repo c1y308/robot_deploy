@@ -1,6 +1,7 @@
 #pragma once
 
 #include "kinematics/ankle_motor_fk.hpp"
+#include "kinematics/ankle_motor_jacobian.hpp"
 #include "policy/policy_runtime.hpp"
 #include "robot/joint_mapping.hpp"
 #include "robot/robot_imu_session.hpp"
@@ -8,7 +9,6 @@
 #include "robot/robot_config.hpp"
 
 #include <array>
-#include <chrono>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -53,23 +53,19 @@ private:
                           const MotorStateArray& dq_motor_rad_s,
                           JointTermArray& joint_pos_rel,
                           JointTermArray& joint_vel_rel,
-                          std::chrono::steady_clock::time_point now,
                           std::string& error);
 
                                  
-    void fill_ankle_fk_joint_terms(const MotorStateArray& q_motor_rad,
-                                   double dt,
-                                   bool has_valid_dt,
+    bool fill_ankle_fk_joint_terms(const MotorStateArray& q_motor_rad,
+                                   const MotorStateArray& dq_motor_rad_s,
                                    const AnkleParallelMap& ankle_map,
                                    AnkleFkState& state,
                                    JointTermArray& joint_pos_rel,
-                                   JointTermArray& joint_vel_rel) const;
+                                   JointTermArray& joint_vel_rel,
+                                   std::string& error) const;
 
     std::shared_ptr<const JointMapping> mapping_;
     PolicyConfig policy_config_;
-
-    bool ready_ = false;
-    std::chrono::steady_clock::time_point last_time_{};
 };
 
 }  // namespace inference::robot_detail

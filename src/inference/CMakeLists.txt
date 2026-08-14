@@ -7,7 +7,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)
 
 option(ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS
        "Include gait phase in policy observation history, using 235 input dimensions instead of 225"
-       ON)
+       OFF)
 
 set(LOCAL_LIBTORCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libtorch)
 set(LOCAL_PYTORCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/python_torch/torch)
@@ -169,6 +169,13 @@ target_include_directories(observation_builder_test PRIVATE
 )
 target_compile_definitions(observation_builder_test PRIVATE
     ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=$<BOOL:${ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS}>
+)
+
+add_executable(ankle_motor_jacobian_test
+    tests/ankle_motor_jacobian_test.cpp
+)
+target_include_directories(ankle_motor_jacobian_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 add_executable(policy_runtime_observation_test
