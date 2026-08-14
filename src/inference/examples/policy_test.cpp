@@ -62,19 +62,21 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.recorder.enabled = true;
     cfg.ankle_torque.target_torque_limit_permille = 2000.0;
 
-    // 普通单关节 DOF 到电机逻辑索引；脚踝并联 DOF 由 left/right_ankle_parallel 指定
+    // 对齐训练 joint_ids_map:
+    // [0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11]。
+    // 普通单关节 DOF 使用前 8 项；脚踝并联 DOF 由 left/right_ankle_parallel 指定。
     cfg.joint_mapping.model_to_motor_index = {0, 6, 1, 7, 2, 8, 3, 9};
 
     cfg.joint_mapping.left_ankle_parallel = {8, 10, 4, 5};
     cfg.joint_mapping.right_ankle_parallel = {9, 11, 10, 11};
 
-    cfg.motor.mit_kp = { 180.0, 180.0, 180.0, 180.0,
-                         187.0, 187.0, 180.0, 180.0,
+    cfg.motor.mit_kp = { 237.0, 237.0, 237.0, 237.0,
+                         185.0, 185.0, 185.0, 185.0,
                          180.0, 180.0, 187.0, 187.0};
     
-    cfg.motor.mit_kd = { 4.0, 4.0, 4.0, 4.0,
-                         4.07, 4.07, 4.0, 4.0,
-                         4.0, 4.0, 4.07, 4.07};
+    cfg.motor.mit_kd = { 15.0, 15.0, 15.0, 15.0,
+                          7.0,  7.0, 7.0, 7.0,
+                         10.0, 10.0,  9.07,  9.07};
 
     cfg.motor.print_motor_ids = {0, 1, 2, 3, 4, 5,
                                  6, 7, 8, 9, 10, 11};
@@ -87,34 +89,36 @@ inference::RobotInterfaceConfig make_robot_config()
     };
 
 
-    // 按模型 DOF 顺序限制 raw_action * action_scale 后的动作偏移: [lower, upper]
+    // 按模型 DOF 顺序限制 raw_action * action_scale 后的动作偏移: [lower, upper]。
+    // 代码计算: target = stand_pose_rad + clamp(raw_action * action_scale, [lower, upper])。
     cfg.policy.action_clip = {
+        {-0.22, 0.22},
+        {-0.22, 0.22},
+
+        {-0.28, 0.35},
+        {-0.28, 0.35},
+
+        {-0.16, 0.16},
+        {-0.16, 0.16},
+
+        {-0.22, 0.38},
+        {-0.22, 0.38},
+
+        {-0.14, 0.2},
+        {-0.14, 0.2},
+
         {-0.12, 0.12},
         {-0.12, 0.12},
-
-        {-0.40, 0.40},
-        {-0.40, 0.40},
-
-        {-0.12, 0.12},
-        {-0.12, 0.12},
-
-        {0.00, 0.85},
-        {0.00, 0.85},
-
-        {-0.18, 0.18},
-        {-0.18, 0.18},
-
-        {-0.08, 0.08},
-        {-0.08, 0.08},
     };
     cfg.policy.action_scale = {
-        0.08, 0.08,
-        0.45, 0.45,
-        0.08, 0.08,
-        0.45, 0.45,
-        0.20, 0.20,
-        0.08, 0.08
+        0.16, 0.16,
+        0.32, 0.32,
+        0.1, 0.1,
+        0.36, 0.36,
+        0.18, 0.18,
+        0.1, 0.1
     };
+    cfg.policy.raw_action_clip = 1.0;
 
     // joint_min/max 是相对 stand_pose_rad 的偏移限位。
     cfg.policy.joint_min_rad.assign(12, -0.7);
@@ -130,7 +134,8 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.policy.command_scale = {1.0, 1.0, 1.0};
     cfg.policy.body_ang_vel_scale = {0.2, 0.2, 0.2};
     cfg.policy.step_dt = 0.02;
-    cfg.policy.gait_phase_period = 0.7;
+    cfg.policy.gait_phase_period = 0.74;
+    cfg.policy.gait_phase_gate_by_command = true;
 
 
     // 电机观测缩放系数
@@ -244,7 +249,7 @@ int main()
             return 1;
         }
         robot.set_target_velocity(command.vx, 0.0, 0.0);
-
+        // robot.set_target_velocity(0, command.vx, 0.0);
         const auto step_start = Clock::now();
         if (!robot.policy_step()) {
             std::cerr << "[ERROR] policy_step() failed at step " << steps << ".\n";

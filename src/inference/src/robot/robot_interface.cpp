@@ -218,6 +218,10 @@ bool RobotInterface::validate_policy_config() const {
         !finite_array3(config_.policy.body_ang_vel_scale)) {
         return fail("command/body_ang_vel scales must be finite");
     }
+    if (!std::isfinite(config_.policy.raw_action_clip) ||
+        config_.policy.raw_action_clip <= 0.0) {
+        return fail("policy.raw_action_clip must be a finite positive value");
+    }
     if (!finite_array2(config_.ankle_torque.virtual_kp) ||
         !finite_array2(config_.ankle_torque.virtual_kd)) {
         return fail("ankle_torque virtual_kp/virtual_kd must be finite");
@@ -689,11 +693,14 @@ bool RobotInterface::policy_step() {
     std::vector<double> target_q_model_rad(PolicyRuntime::kDof, 0.0);
     for (std::size_t model_index = 0; model_index < PolicyRuntime::kDof; ++model_index) {
 
-        // 模型输出先按训练约定缩放，再截断缩放后的动作偏移，最后叠加模型顺序的站立姿态。
+        // 模型输出先按 raw_action_clip 截断，再缩放并限制动作偏移，最后叠加模型顺序的站立姿态。
         const auto& action_clip = config_.policy.action_clip[model_index];
+        const double clipped_raw_action =
+            std::max(-config_.policy.raw_action_clip,
+                     std::min(config_.policy.raw_action_clip,
+                              static_cast<double>(policy_result.raw_action[model_index])));
         const double scaled_action =
-            static_cast<double>(policy_result.raw_action[model_index]) *
-            config_.policy.action_scale[model_index];
+            clipped_raw_action * config_.policy.action_scale[model_index];
         const double clipped_action_offset =
             std::max(action_clip[0],
                      std::min(action_clip[1], scaled_action));

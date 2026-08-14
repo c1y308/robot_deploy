@@ -29,6 +29,30 @@ std::array<float, 2> gait_phase_observation(std::uint64_t episode_length,
     };
 }
 
+bool gait_phase_command_active(const PolicyObservationTerms& terms)
+{
+    constexpr float kCommandGateEpsilon = 1.0e-6F;
+    return std::any_of(terms.velocity_commands.begin(),
+                       terms.velocity_commands.end(),
+                       [](float command) {
+                           return std::fabs(command) > kCommandGateEpsilon;
+                       });
+}
+
+std::array<float, 2> gated_gait_phase_observation(
+    const PolicyObservationTerms& terms,
+    const PolicyConfig& policy_config,
+    std::uint64_t episode_length)
+{
+    if (policy_config.gait_phase_gate_by_command &&
+        !gait_phase_command_active(terms)) {
+        return {0.0F, 0.0F};
+    }
+    return gait_phase_observation(episode_length,
+                                  policy_config.step_dt,
+                                  policy_config.gait_phase_period);
+}
+
 template <std::size_t TermSize, std::size_t ObservationSize>
 void fill_term_history(std::array<float, ObservationSize>& history,
                        std::size_t offset,
@@ -200,9 +224,9 @@ void PolicyRuntime::build_observation(const PolicyObservationTerms& terms,
                           kFrameStack, terms.velocity_commands);
         if constexpr (policy_observation::kEnableGaitPhase) {
             const std::array<float, 2> gait_phase =
-                gait_phase_observation(episode_length_,
-                                       policy_config_.step_dt,
-                                       policy_config_.gait_phase_period);
+                gated_gait_phase_observation(terms,
+                                             policy_config_,
+                                             episode_length_);
             fill_term_history(observation_history_, kGaitPhaseOffset,
                               kFrameStack, gait_phase);
         }
@@ -222,9 +246,9 @@ void PolicyRuntime::build_observation(const PolicyObservationTerms& terms,
                             kFrameStack, terms.velocity_commands);
         if constexpr (policy_observation::kEnableGaitPhase) {
             const std::array<float, 2> gait_phase =
-                gait_phase_observation(episode_length_,
-                                       policy_config_.step_dt,
-                                       policy_config_.gait_phase_period);
+                gated_gait_phase_observation(terms,
+                                             policy_config_,
+                                             episode_length_);
             append_term_history(observation_history_, kGaitPhaseOffset,
                                 kFrameStack, gait_phase);
         }
