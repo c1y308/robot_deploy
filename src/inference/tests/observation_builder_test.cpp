@@ -84,39 +84,36 @@ void test_direct_joint_terms()
 {
     inference::robot_detail::ObservationBuilder builder(make_mapping(),
                                                         make_policy_config());
-    inference::robot_detail::ObservationBuilder::MotorStateArray q{};
-    inference::robot_detail::ObservationBuilder::MotorStateArray dq{};
-    q.fill(0.0);
-    dq.fill(0.0);
-    q[0] = 0.50;
-    dq[0] = 1.0;
-    q[6] = -0.40;
-    dq[6] = -2.0;
+    inference::MotorStateSnapshot motor_state = make_motor_state();
+    motor_state.position_rad[0] = 0.50;
+    motor_state.velocity_rad_s[0] = 1.0;
+    motor_state.position_rad[6] = -0.40;
+    motor_state.velocity_rad_s[6] = -2.0;
 
-    inference::robot_detail::ObservationBuilder::JointTermArray joint_pos{};
-    inference::robot_detail::ObservationBuilder::JointTermArray joint_vel{};
+    inference::PolicyAction last_action{};
+    inference::PolicyObservationTerms terms;
     std::string error;
-    expect(builder.build_joint_terms(q,
-                                     dq,
-                                     std::chrono::steady_clock::now(),
-                                     joint_pos,
-                                     joint_vel,
-                                     error),
-           "build_joint_terms should succeed: " + error);
+    expect(builder.build(motor_state,
+                         make_imu_state(),
+                         {0.0, 0.0, 0.0},
+                         last_action,
+                         terms,
+                         error),
+           "build should produce joint terms: " + error);
 
-    expect_near(joint_pos[0], 0.50F, "motor 0 should map to model 0 position");
-    expect_near(joint_vel[0], 0.10F, "motor 0 velocity should scale");
-    expect_near(joint_pos[1], 0.40F, "motor 6 direction should map to model 1 position");
-    expect_near(joint_vel[1], 0.20F, "motor 6 direction should map to model 1 velocity");
+    expect_near(terms.joint_pos_rel[0], 0.50F, "motor 0 should map to model 0 position");
+    expect_near(terms.joint_vel_rel[0], 0.10F, "motor 0 velocity should scale");
+    expect_near(terms.joint_pos_rel[1], 0.40F, "motor 6 direction should map to model 1 position");
+    expect_near(terms.joint_vel_rel[1], 0.20F, "motor 6 direction should map to model 1 velocity");
 
     builder.reset_runtime_state();
-    expect(builder.build_joint_terms(q,
-                                     dq,
-                                     std::chrono::steady_clock::now(),
-                                     joint_pos,
-                                     joint_vel,
-                                     error),
-           "build_joint_terms should succeed after reset: " + error);
+    expect(builder.build(motor_state,
+                         make_imu_state(),
+                         {0.0, 0.0, 0.0},
+                         last_action,
+                         terms,
+                         error),
+           "build should produce joint terms after reset: " + error);
 }
 
 void test_build_full_terms()
