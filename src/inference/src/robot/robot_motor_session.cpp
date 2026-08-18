@@ -67,6 +67,7 @@ RobotMotorSession::~RobotMotorSession()
     deinitialize();
 }
 
+
 bool RobotMotorSession::initialize_and_start()
 {
     if (initialized_.load()) {
@@ -127,6 +128,7 @@ bool RobotMotorSession::initialize_and_start()
     return true;
 }
 
+
 bool RobotMotorSession::validate_config() const
 {
     if (config_.num_motors <= 0) {
@@ -156,6 +158,7 @@ bool RobotMotorSession::validate_config() const
     return true;
 }
 
+
 void RobotMotorSession::deinitialize()
 {
     if (initialized_.load() && controller_) {
@@ -170,22 +173,6 @@ void RobotMotorSession::deinitialize()
     motion_enabled_.store(false);
 }
 
-bool RobotMotorSession::submit_command(const motor_base::ControlCommand& command,
-                                       const char* context)
-{
-    if (!controller_) {
-        return false;
-    }
-    const motor_base::CommandSubmitResult result = controller_->send_command(command);
-    if (result == motor_base::CommandSubmitResult::ACCEPTED) {
-        return true;
-    }
-
-    std::cerr << "[RobotMotorSession] " << context
-              << " command rejected: "
-              << command_submit_result_name(result) << "\n";
-    return false;
-}
 
 bool RobotMotorSession::stop(int motor_index)
 {
@@ -207,6 +194,7 @@ bool RobotMotorSession::stop(int motor_index)
     return true;
 }
 
+
 bool RobotMotorSession::restart(int motor_index)
 {
     if (!initialized_.load() || !controller_) {
@@ -226,6 +214,7 @@ bool RobotMotorSession::restart(int motor_index)
     }
     return true;
 }
+
 
 bool RobotMotorSession::apply_targets_rad(const std::vector<double>& target_motor_rad)
 {
@@ -299,6 +288,27 @@ bool RobotMotorSession::apply_impedance_setpoints(
     return true;
 }
 
+
+bool RobotMotorSession::submit_command(const motor_base::ControlCommand& command,
+                                       const char* context)
+{
+    if (!controller_) {
+        return false;
+    }
+    const motor_base::CommandSubmitResult result = controller_->send_command(command);
+    if (result == motor_base::CommandSubmitResult::ACCEPTED) {
+        return true;
+    }
+
+    std::cerr << "[RobotMotorSession] " << context
+              << " command rejected: "
+              << command_submit_result_name(result) << "\n";
+    return false;
+}
+
+
+
+
 std::vector<double> RobotMotorSession::get_joint_q() const
 {
     std::vector<double> q(config_.num_motors, 0.0);
@@ -308,6 +318,7 @@ std::vector<double> RobotMotorSession::get_joint_q() const
     q = controller_->get_joint_q_rad();
     return q;
 }
+
 
 std::vector<double> RobotMotorSession::get_joint_vel() const
 {
@@ -319,6 +330,7 @@ std::vector<double> RobotMotorSession::get_joint_vel() const
     return dq;
 }
 
+
 std::vector<double> RobotMotorSession::get_joint_torque_percent() const
 {
     std::vector<double> torque(config_.num_motors, 0.0);
@@ -329,7 +341,8 @@ std::vector<double> RobotMotorSession::get_joint_torque_percent() const
     return torque;
 }
 
-MotorStateSnapshot RobotMotorSession::get_motor_state() const
+
+MotorStateSnapshot RobotMotorSession::get_motor_snapshot() const
 {
     MotorStateSnapshot snapshot;
     snapshot.timestamp_ns = motor_steady_now_ns();

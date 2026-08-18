@@ -161,6 +161,7 @@ protected:
     virtual void discrete_queue_full_callback(
         int motor_index,
         const ControlCommand& cmd);
+
     virtual void discrete_command_failed_callback(
         int motor_index,
         const DiscreteCommand& cmd,
@@ -181,10 +182,11 @@ private:
     void thread_func();
 
     RealtimeOptions rt_options_;
-    std::size_t motor_count_;
+    std::size_t     motor_count_;
 
     // 电机控制命令队列（stop / restart / set_mode / setpoints）
     CommandQueue cmd_queue_;
+    
     // 每个电机的离散命令队列（stop / restart / set_mode）
     std::vector<DiscreteCommandQueue> discrete_cmd_queues_;
     // 离散命令队列的全局时钟，单位 tick，1 tick = 1 ms

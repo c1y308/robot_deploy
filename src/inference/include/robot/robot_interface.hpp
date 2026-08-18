@@ -30,16 +30,16 @@ public:
     ~RobotInterface();
 
     bool initialize();
-    bool reset_joints();  /* 复位到模型 DOF 顺序配置的 stand_pose_rad，单位为 rad */
     bool is_initialized() const { return initialized_.load(); }
 
-    void shutdown();
 
+    bool reset_joints();  /* 复位到模型 DOF 顺序配置的 stand_pose_rad，单位为 rad */
+    bool policy_step();
     bool apply_action(const std::vector<double>& target_q_model_rad);  // 模型 DOF 顺序目标角(rad)
+    void shutdown();
 
     void set_target_velocity(double vx, double vy, double yaw_rate);
     std::array<double, 3> get_target_velocity() const;
-    bool policy_step();
 
 
 private:
@@ -63,19 +63,23 @@ private:
     std::unique_ptr<robot_detail::ObservationBuilder> observation_builder_;
 
     PolicyRuntime policy_runtime_;
+
     mutable std::mutex target_velocity_mutex_;
     std::array<double, 3> target_velocity_{0.0, 0.0, 0.0};  // [vx, vy, yaw_rate]
+
     InferenceRecorder inference_recorder_;
     bool inference_recorder_failed_ = false;
 
     std::atomic<bool> initialized_{false};
-    std::atomic<bool> policy_command_loop_running_{false};
-    std::atomic<bool> policy_command_loop_failed_{false};
-    std::thread policy_command_thread_;
+    std::atomic<bool> policy_command_worker_running_{false};
+    std::atomic<bool> policy_command_worker_failed_{false};
+
+    std::thread policy_command_worker_thread_;
     mutable std::mutex policy_command_mutex_;
-    std::vector<double> latest_policy_target_q_model_rad_;
+
+    std::vector<double>   latest_policy_target_q_model_rad_;
     PolicyCommandSnapshot latest_policy_command_;
-    std::string policy_command_loop_error_;
+    std::string policy_command_worker_error_;
 
     bool validate_policy_config() const;
 
@@ -90,13 +94,13 @@ private:
 
     bool handle_policy_step_failure(const std::string& message);
 
-    bool start_policy_command_loop();
-    void stop_policy_command_loop();
-    void policy_command_loop();
+    bool start_policy_command_worker();
+    void stop_policy_command_worker();
+    void policy_command_worker_loop();
     void set_latest_policy_target(const std::vector<double>& target_q_model_rad);
     PolicyCommandSnapshot latest_policy_command_snapshot() const;
-    void fail_policy_command_loop(std::string message);
-    bool policy_command_loop_healthy(std::string& error) const;
+    void fail_policy_command_worker(std::string message);
+    bool policy_command_worker_healthy(std::string& error) const;
 };
 
 }  // namespace inference

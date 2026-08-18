@@ -45,7 +45,7 @@ int main() {
         motors.deinitialize();
         return -1;
     }
-    const auto state = motors.get_motor_state();
+    const auto state = motors.get_motor_snapshot();
     std::cout << "[MOTORS_TEST] observed motors=" << state.position_rad.size() << std::endl;
 
     std::cout << "[MOTORS_TEST] 4/4 monitoring, press Ctrl+C to stop" << std::endl;

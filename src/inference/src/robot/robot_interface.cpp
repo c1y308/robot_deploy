@@ -150,7 +150,7 @@ bool RobotInterface::initialize() {
 
     set_latest_policy_target(config_.policy.stand_pose_rad);
     initialized_.store(true);
-    if (!start_policy_command_loop()) {
+    if (!start_policy_command_worker()) {
         initialized_.store(false);
         shutdown();
         return false;
@@ -162,7 +162,7 @@ bool RobotInterface::initialize() {
 
 /* 幂等停机：先卸载策略和日志，再释放 IMU，最后释放电机。 */
 void RobotInterface::shutdown() {
-    stop_policy_command_loop();
+    stop_policy_command_worker();
     initialized_.store(false);
     unload_policy();
     imu_session_.deinitialize();
@@ -466,17 +466,17 @@ void RobotInterface::record_inference(const InferenceRecord& record) {
     }
 }
 
-bool RobotInterface::start_policy_command_loop()
+bool RobotInterface::start_policy_command_worker()
 {
-    if (policy_command_loop_running_.load()) {
+    if (policy_command_worker_running_.load()) {
         return true;
     }
     if (!action_processor_) {
-        std::cerr << "[RobotInterface] policy command loop rejected: model processors are not initialized\n";
+        std::cerr << "[RobotInterface] policy command worker rejected: model processors are not initialized\n";
         return false;
     }
     if (!motor_session_.is_initialized() || !motor_session_.motion_enabled()) {
-        std::cerr << "[RobotInterface] policy command loop rejected: motors are not running\n";
+        std::cerr << "[RobotInterface] policy command worker rejected: motors are not running\n";
         return false;
     }
 
@@ -486,41 +486,42 @@ bool RobotInterface::start_policy_command_loop()
             latest_policy_target_q_model_rad_ = config_.policy.stand_pose_rad;
         }
         if (latest_policy_target_q_model_rad_.size() != PolicyRuntime::kDof) {
-            policy_command_loop_error_ = "policy command target size mismatch";
+            policy_command_worker_error_ = "policy command target size mismatch";
             return false;
         }
         latest_policy_command_ = PolicyCommandSnapshot{};
-        policy_command_loop_error_.clear();
+        policy_command_worker_error_.clear();
     }
 
-    policy_command_loop_failed_.store(false);
-    policy_command_loop_running_.store(true);
+    policy_command_worker_failed_.store(false);
+    policy_command_worker_running_.store(true);
     try {
-        policy_command_thread_ = std::thread(&RobotInterface::policy_command_loop, this);
+        policy_command_worker_thread_ =
+            std::thread(&RobotInterface::policy_command_worker_loop, this);
     } catch (const std::exception& error) {
-        policy_command_loop_running_.store(false);
-        std::cerr << "[RobotInterface] failed to start policy command loop: "
+        policy_command_worker_running_.store(false);
+        std::cerr << "[RobotInterface] failed to start policy command worker: "
                   << error.what() << "\n";
         return false;
     } catch (...) {
-        policy_command_loop_running_.store(false);
-        std::cerr << "[RobotInterface] failed to start policy command loop\n";
+        policy_command_worker_running_.store(false);
+        std::cerr << "[RobotInterface] failed to start policy command worker\n";
         return false;
     }
 
     return true;
 }
 
-void RobotInterface::stop_policy_command_loop()
+void RobotInterface::stop_policy_command_worker()
 {
-    policy_command_loop_running_.store(false);
-    if (policy_command_thread_.joinable() &&
-        policy_command_thread_.get_id() != std::this_thread::get_id()) {
-        policy_command_thread_.join();
+    policy_command_worker_running_.store(false);
+    if (policy_command_worker_thread_.joinable() &&
+        policy_command_worker_thread_.get_id() != std::this_thread::get_id()) {
+        policy_command_worker_thread_.join();
     }
 }
 
-void RobotInterface::policy_command_loop()
+void RobotInterface::policy_command_worker_loop()
 {
     const auto period = std::chrono::nanoseconds(
         std::max<std::int64_t>(
@@ -530,7 +531,7 @@ void RobotInterface::policy_command_loop()
     auto next_wake = std::chrono::steady_clock::now();
 
     try {
-        while (policy_command_loop_running_.load()) {
+        while (policy_command_worker_running_.load()) {
             next_wake += period;
 
             std::vector<double> target_q_model_rad;
@@ -539,7 +540,7 @@ void RobotInterface::policy_command_loop()
                 target_q_model_rad = latest_policy_target_q_model_rad_;
             }
 
-            const MotorStateSnapshot motor_state = motor_session_.get_motor_state();
+            const MotorStateSnapshot motor_state = motor_session_.get_motor_snapshot();
             robot_detail::ActionProcessor::PolicyMotorCommand command;
             std::string error;
             if (!action_processor_->build_policy_impedance_command(
@@ -550,7 +551,7 @@ void RobotInterface::policy_command_loop()
                     config_.ankle_torque,
                     command,
                     error)) {
-                fail_policy_command_loop("failed to build policy impedance command: " + error);
+                fail_policy_command_worker("failed to build policy impedance command: " + error);
                 break;
             }
 
@@ -569,7 +570,7 @@ void RobotInterface::policy_command_loop()
             }
 
             if (!applied) {
-                fail_policy_command_loop("failed to apply policy impedance command");
+                fail_policy_command_worker("failed to apply policy impedance command");
                 break;
             }
 
@@ -580,10 +581,10 @@ void RobotInterface::policy_command_loop()
             }
         }
     } catch (const std::exception& error) {
-        fail_policy_command_loop(
-            std::string("policy command loop exception: ") + error.what());
+        fail_policy_command_worker(
+            std::string("policy command worker exception: ") + error.what());
     } catch (...) {
-        fail_policy_command_loop("policy command loop exception");
+        fail_policy_command_worker("policy command worker exception");
     }
 }
 
@@ -601,35 +602,35 @@ RobotInterface::latest_policy_command_snapshot() const
     return latest_policy_command_;
 }
 
-void RobotInterface::fail_policy_command_loop(std::string message)
+void RobotInterface::fail_policy_command_worker(std::string message)
 {
     const std::string printable_message = message;
-    const bool already_failed = policy_command_loop_failed_.exchange(true);
-    policy_command_loop_running_.store(false);
+    const bool already_failed = policy_command_worker_failed_.exchange(true);
+    policy_command_worker_running_.store(false);
     initialized_.store(false);
     {
         std::lock_guard<std::mutex> lock(policy_command_mutex_);
-        policy_command_loop_error_ = std::move(message);
+        policy_command_worker_error_ = std::move(message);
     }
 
     if (!already_failed) {
-        std::cerr << "[RobotInterface] policy command loop failed: "
+        std::cerr << "[RobotInterface] policy command worker failed: "
                   << printable_message << "\n";
         motor_session_.stop(-1);
     }
 }
 
-bool RobotInterface::policy_command_loop_healthy(std::string& error) const
+bool RobotInterface::policy_command_worker_healthy(std::string& error) const
 {
-    if (policy_command_loop_failed_.load()) {
+    if (policy_command_worker_failed_.load()) {
         std::lock_guard<std::mutex> lock(policy_command_mutex_);
-        error = policy_command_loop_error_.empty()
-                    ? "policy command loop failed"
-                    : policy_command_loop_error_;
+        error = policy_command_worker_error_.empty()
+                    ? "policy command worker failed"
+                    : policy_command_worker_error_;
         return false;
     }
-    if (!policy_command_loop_running_.load()) {
-        error = "policy command loop is not running";
+    if (!policy_command_worker_running_.load()) {
+        error = "policy command worker is not running";
         return false;
     }
     error.clear();
@@ -640,9 +641,9 @@ bool RobotInterface::policy_command_loop_healthy(std::string& error) const
 bool RobotInterface::policy_step() {
     const std::array<double, 3> target_velocity = get_target_velocity();
 
-    std::string loop_error;
-    if (!policy_command_loop_healthy(loop_error)) {
-        return handle_policy_step_failure(loop_error);
+    std::string worker_error;
+    if (!policy_command_worker_healthy(worker_error)) {
+        return handle_policy_step_failure(worker_error);
     }
     if (!policy_runtime_.is_loaded()) {
         return handle_policy_step_failure("policy is not loaded");
@@ -651,7 +652,7 @@ bool RobotInterface::policy_step() {
         return handle_policy_step_failure("motors are not initialized");
     }
 
-    const MotorStateSnapshot motor_state = motor_session_.get_motor_state();
+    const MotorStateSnapshot motor_state = motor_session_.get_motor_snapshot();
     const std::size_t motor_count = static_cast<std::size_t>(config_.motor.num_motors);
     if (!check_motor_snapshot_size(motor_state, motor_count)) {
         return handle_policy_step_failure(
@@ -721,8 +722,8 @@ bool RobotInterface::policy_step() {
 
     // 构建日志的观测信息
     record.command_applied =
-        policy_command_loop_running_.load() &&
-        !policy_command_loop_failed_.load();
+        policy_command_worker_running_.load() &&
+        !policy_command_worker_failed_.load();
     record.command_timestamp_ns =
         command_snapshot.timestamp_ns != 0 ? command_snapshot.timestamp_ns : steady_now_ns();
     record_inference(record);
@@ -737,7 +738,7 @@ bool RobotInterface::handle_policy_step_failure(const std::string& message) {
     std::cerr << "[RobotInterface] policy_step failed: " << message << "\n";
     // 策略链路任何一步失败都停机，避免继续执行上一周期的目标。
     initialized_.store(false);
-    stop_policy_command_loop();
+    stop_policy_command_worker();
     motor_session_.stop(-1);
     return false;
 }

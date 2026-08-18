@@ -57,8 +57,8 @@ void append_motor_columns(std::ostream& stream,
 
 void write_header(std::ostream& stream)
 {
-    stream << "frame_index,elapsed_us,state_timestamp_ns,inference_start_ns,"
-           << "inference_end_ns,inference_duration_us,command_timestamp_ns,"
+    stream << "frame_index, elapsed_us, state_timestamp_ns, inference_start_ns, "
+           << "inference_end_ns, inference_duration_us, command_timestamp_ns, "
            << "command_applied";
     append_indexed_columns(stream, "raw_action", kInferenceDof);
     append_indexed_columns(stream, "target_q_model_rad", kInferenceDof);

@@ -131,7 +131,7 @@ inference::RobotInterfaceConfig make_robot_config()
     };
 
     /******************************************************************* */
-    cfg.policy.command_scale = {1.0, 1.0, 1.0};
+    cfg.policy.command_scale      = {1.0, 1.0, 1.0};
     cfg.policy.body_ang_vel_scale = {0.2, 0.2, 0.2};
     cfg.policy.step_dt = 0.02;
     cfg.policy.gait_phase_period = 0.74;
@@ -229,15 +229,17 @@ int main()
     }
 
     std::cout << "[INFO] Entering Xbox policy loop. Press Ctrl+C to stop.\n";
+
+    /* 使用 steady_clock 控制 50hz 的推理频率 */
     using Clock = std::chrono::steady_clock;
     const auto period = std::chrono::duration_cast<Clock::duration>(
         std::chrono::duration<double>(kPolicyPeriodSec));
-    auto next_tick = Clock::now();
+    auto next_tick   = Clock::now();
     auto last_report = Clock::now();
 
-    std::uint64_t steps = 0;
-    double total_step_ms = 0.0;
-    double max_step_ms = 0.0;
+    std::uint64_t steps  = 0;       // 推理次数
+    double total_step_ms = 0.0;     // 推理总耗时
+    double max_step_ms   = 0.0;     // 推理最大耗时
     xbox_control::VelocityCommand command;
 
     while (!g_stop_requested.load()) {
@@ -251,6 +253,8 @@ int main()
         }
         robot.set_target_velocity(command.vx, 0.0, 0.0);
         // robot.set_target_velocity(0, command.vx, 0.0);
+
+
         const auto step_start = Clock::now();
         if (!robot.policy_step()) {
             std::cerr << "[ERROR] policy_step() failed at step " << steps << ".\n";
@@ -259,11 +263,10 @@ int main()
             return 1;
         }
         const auto step_end = Clock::now();
-
-        const double step_ms =
-            std::chrono::duration<double, std::milli>(step_end - step_start).count();
+        const double step_ms = std::chrono::duration<double, std::milli>(step_end - step_start).count();
+        // 更新推理耗时统计
         total_step_ms += step_ms;
-        max_step_ms = std::max(max_step_ms, step_ms);
+        max_step_ms    = std::max(max_step_ms, step_ms);
         ++steps;
 
         const auto now = Clock::now();
