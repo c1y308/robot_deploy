@@ -70,18 +70,16 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.joint_mapping.left_ankle_parallel = {8, 10, 4, 5};
     cfg.joint_mapping.right_ankle_parallel = {9, 11, 10, 11};
 
-    cfg.motor.mit_kp = { 237.0, 237.0, 237.0, 237.0,
-                         185.0, 185.0, 185.0, 185.0,
-                         180.0, 180.0, 187.0, 187.0};
+    cfg.motor.mit_kp = { 237.0, 237.0, 104.0, 104.0, 307.0, 307.0,
+                         237.0, 237.0, 104.0, 104.0, 307.0, 307.0};
     
-    cfg.motor.mit_kd = { 15.0, 15.0, 15.0, 15.0,
-                          7.0,  7.0, 7.0, 7.0,
-                         10.0, 10.0,  9.07,  9.07};
+    cfg.motor.mit_kd = { 15.0, 15.0, 6.6, 6.6, 19.54, 19.54,
+                         15.0, 15.0, 6.6, 6.6, 19.54, 19.54};
 
     cfg.motor.print_motor_ids = {0, 1, 2, 3, 4, 5,
                                  6, 7, 8, 9, 10, 11};
 
-    // 以下 12 维策略配置均按模型 DOF 序号填写
+    // 按模型 DOF 序号填写
     cfg.policy.stand_pose_rad = {
         0.0, 0.0, -0.2, -0.2,
         0.0, 0.0,  0.2,  0.2,
@@ -113,7 +111,7 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.policy.action_scale = {
         0.16, 0.16,
         0.32, 0.32,
-        0.1, 0.1,
+        0.1,  0.1,
         0.36, 0.36,
         0.18, 0.18,
         0.1, 0.1
@@ -124,7 +122,7 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.policy.joint_min_rad.assign(12, -0.7);
     cfg.policy.joint_max_rad.assign(12,  0.7);
 
-    //  按照 DOF 顺序配置电机方向，1 表示方向一致，-1 表示方向相反；为空时全部按 1
+    //  按照 物理电机 顺序配置电机方向，1 表示方向一致，-1 表示方向相反；为空时全部按 1
     cfg.joint_mapping.motor_to_model_direction = {
          1, -1, 1,  1, -1, -1,
         -1,  1, 1, -1, -1, -1
