@@ -59,14 +59,15 @@ struct PolicyConfig {
 
     double raw_action_clip = 1.0;
     double step_dt = 0.02;
+    double target_interpolation_duration_s = 0.00;
     double gait_phase_period = 0.74;
     double gait_phase_stand_threshold = 0.05;
     double gait_phase_move_threshold = 0.15;
 };
 
 struct AnkleTorqueControlConfig {
-    std::array<double, 2> virtual_kp = {250.0, 250.0};  // [pitch, roll]
-    std::array<double, 2> virtual_kd = {19.54, 19.54};    // [pitch, roll]
+    std::array<double, 2> virtual_kp = {180.0, 180.0};    // [pitch, roll]
+    std::array<double, 2> virtual_kd = {10.54, 10.54};    // [pitch, roll]
     double filter_cutoff_rad_s = 100.0;
     double filter_dt_s = 0.001;
     double motor_rated_torque_nm = 10.5;

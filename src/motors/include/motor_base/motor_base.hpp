@@ -63,9 +63,10 @@ public:
         int timeout_ms = 30000,
         int poll_ms = 100) const = 0;
 
-        
+
     /// @brief 启动实时控制线程（1 kHz 典型周期）
-    void start();
+    /// @return RT 调度前置条件是否满足；rt_priority<=0 表示显式非 RT 模式
+    bool start();
 
 
     /// @brief 停止实时控制线程，释放实时资源
@@ -74,6 +75,10 @@ public:
 
     /// @brief 实时控制线程是否正在运行
     bool is_running() const;
+    bool is_realtime_scheduling_ready() const noexcept
+    {
+        return rt_scheduling_ready_.load(std::memory_order_acquire);
+    }
 
 
     // ──────────────────── 指令下发 ────────────────────
@@ -197,6 +202,7 @@ private:
 
     std::thread rt_thread_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> rt_scheduling_ready_{false};
     mutable std::mutex lifecycle_mutex_;
 };
 

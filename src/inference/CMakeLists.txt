@@ -148,6 +148,13 @@ target_include_directories(joint_mapping_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+add_executable(target_interpolator_test
+    tests/target_interpolator_test.cpp
+)
+target_include_directories(target_interpolator_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
 add_executable(action_processor_test
     tests/action_processor_test.cpp
     src/robot/action_processor.cpp

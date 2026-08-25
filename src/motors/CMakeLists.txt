@@ -38,13 +38,7 @@ target_link_libraries(myactua_ethercat
 )
 
 # 编译可执行文件
-add_executable(simple_test examples/simple_test.cpp)
 add_executable(id_test examples/id_test.cpp)
-add_executable(linear_test examples/linear_test.cpp)
-add_executable(raw_pos_test examples/raw_pos_test.cpp)
-add_executable(squat_stand examples/squat_stand.cpp)
-add_executable(mit_test examples/mit_test.cpp)
-add_executable(mit_pos_test examples/mit_pos_test.cpp)
 add_executable(motor_response_latency_test examples/motor_response_latency_test.cpp)
 add_executable(motor_realtime_channel_test tests/motor_realtime_channel_test.cpp)
 add_executable(triple_buffer_test tests/triple_buffer_test.cpp)
@@ -56,13 +50,7 @@ target_include_directories(motor_response_latency_test PRIVATE
 )
 
 # 链接库
-target_link_libraries(simple_test myactua_ethercat)
 target_link_libraries(id_test myactua_ethercat)
-target_link_libraries(linear_test myactua_ethercat)
-target_link_libraries(raw_pos_test myactua_ethercat)
-target_link_libraries(squat_stand myactua_ethercat)
-target_link_libraries(mit_test myactua_ethercat)
-target_link_libraries(mit_pos_test myactua_ethercat)
 target_link_libraries(motor_response_latency_test myactua_ethercat)
 target_link_libraries(motor_realtime_channel_test myactua_ethercat)
 target_link_libraries(triple_buffer_test myactua_ethercat)

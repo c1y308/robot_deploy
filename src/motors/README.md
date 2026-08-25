@@ -38,9 +38,8 @@ src/motors/
 │           ├── ethercat_adapter_igh.cpp
 │           └── ethercat_types.hpp
 ├── examples/
-│   ├── simple_test.cpp
-│   ├── debug_tool.cpp
-│   └── id_test.cpp
+│   ├── id_test.cpp
+│   └── motor_response_latency_test.cpp
 ├── tests/
 │   └── motor_realtime_channel_test.cpp
 └── datasheet/
@@ -58,9 +57,8 @@ make -j$(nproc)
 
 可执行文件与库产物：
 - `libmyactua_ethercat.a`
-- `simple_test`
-- `debug_tool`
 - `id_test`
+- `motor_response_latency_test`
 
 ## 使用方法
 
@@ -69,14 +67,11 @@ make -j$(nproc)
 ```bash
 cd src/motors/build
 
-# 基础控制流程示例（连接、设模式、发送速度）
-./simple_test
-
-# 交互式调试工具（键盘输入模式/目标值）
-./debug_tool
-
 # 设备识别/连通性测试
 ./id_test
+
+# 50Hz 电机响应延迟测试
+./motor_response_latency_test
 ```
 
 ## 控制模式与命令

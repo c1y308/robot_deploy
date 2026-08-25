@@ -2,6 +2,7 @@
 #include "robot/action_processor.hpp"
 #include "robot/joint_mapping.hpp"
 #include "robot/observation_builder.hpp"
+#include "robot/target_interpolator.hpp"
 
 #include <algorithm>
 #include <array>
@@ -85,6 +86,25 @@ void fill_record_motor_state(const MotorStateSnapshot& motor_state,
         record.enabled[i] = motor_state.enabled[i];
         record.faulted[i] = motor_state.faulted[i];
     }
+}
+
+bool override_policy_zero_position_motors(
+    robot_detail::ActionProcessor::PolicyMotorCommand& command,
+    std::string& error)
+{
+    constexpr std::array<std::size_t, 2> kZeroPositionMotorIndices = {0, 6};
+
+    if (command.setpoints.size() != PolicyRuntime::kDof) {
+        error = "policy impedance command setpoint size mismatch";
+        return false;
+    }
+
+    for (const std::size_t motor_index : kZeroPositionMotorIndices) {
+        command.setpoints[motor_index].position_rad = 0.0;
+    }
+
+    error.clear();
+    return true;
 }
 
 }  // namespace
@@ -250,6 +270,10 @@ bool RobotInterface::validate_policy_config() const {
     if (!std::isfinite(config_.policy.step_dt) ||
         config_.policy.step_dt <= 0.0) {
         return fail("policy.step_dt must be a finite positive value");
+    }
+    if (!std::isfinite(config_.policy.target_interpolation_duration_s) ||
+        config_.policy.target_interpolation_duration_s < 0.0) {
+        return fail("policy.target_interpolation_duration_s must be finite and non-negative");
     }
     if constexpr (policy_observation::kEnableGaitPhase) {
         if (!std::isfinite(config_.policy.gait_phase_period) ||
@@ -484,12 +508,13 @@ bool RobotInterface::start_policy_command_worker()
         std::lock_guard<std::mutex> lock(policy_command_mutex_);
         if (latest_policy_target_q_model_rad_.empty()) {
             latest_policy_target_q_model_rad_ = config_.policy.stand_pose_rad;
+            ++latest_policy_target_sequence_;
         }
         if (latest_policy_target_q_model_rad_.size() != PolicyRuntime::kDof) {
             policy_command_worker_error_ = "policy command target size mismatch";
             return false;
         }
-        latest_policy_command_ = PolicyCommandSnapshot{};
+        latest_policy_command_log_ = PolicyCommandLogState{};
         policy_command_worker_error_.clear();
     }
 
@@ -529,22 +554,45 @@ void RobotInterface::policy_command_worker_loop()
             static_cast<std::int64_t>(
                 std::llround(config_.ankle_torque.filter_dt_s * 1'000'000'000.0))));
     auto next_wake = std::chrono::steady_clock::now();
+    robot_detail::TargetInterpolator target_interpolator(
+        config_.policy.target_interpolation_duration_s);
+    std::uint64_t active_target_sequence = 0;
+
+    {
+        std::lock_guard<std::mutex> lock(policy_command_mutex_);
+        target_interpolator.reset(latest_policy_target_q_model_rad_);
+        active_target_sequence = latest_policy_target_sequence_;
+    }
 
     try {
         while (policy_command_worker_running_.load()) {
             next_wake += period;
 
             std::vector<double> target_q_model_rad;
+            std::uint64_t target_sequence = 0;
             {
                 std::lock_guard<std::mutex> lock(policy_command_mutex_);
                 target_q_model_rad = latest_policy_target_q_model_rad_;
+                target_sequence = latest_policy_target_sequence_;
             }
+            if (target_q_model_rad.size() != PolicyRuntime::kDof) {
+                fail_policy_command_worker("policy command target size mismatch");
+                break;
+            }
+
+            const auto loop_now = std::chrono::steady_clock::now();
+            if (target_sequence != active_target_sequence) {
+                target_interpolator.set_target(target_q_model_rad, loop_now);
+                active_target_sequence = target_sequence;
+            }
+            const std::vector<double>& smoothed_target_q_model_rad =
+                target_interpolator.sample(loop_now);
 
             const MotorStateSnapshot motor_state = motor_session_.get_motor_snapshot();
             robot_detail::ActionProcessor::PolicyMotorCommand command;
             std::string error;
             if (!action_processor_->build_policy_impedance_command(
-                    target_q_model_rad,
+                    smoothed_target_q_model_rad,
                     motor_state,
                     config_.motor.mit_kp,
                     config_.motor.mit_kd,
@@ -554,19 +602,21 @@ void RobotInterface::policy_command_worker_loop()
                 fail_policy_command_worker("failed to build policy impedance command: " + error);
                 break;
             }
+            // if (!override_policy_zero_position_motors(command, error)) {
+            //     fail_policy_command_worker(error);
+            //     break;
+            // }
 
             const bool applied = motor_session_.apply_impedance_setpoints(command.setpoints);
 
-            PolicyCommandSnapshot snapshot;
-            snapshot.timestamp_ns = steady_now_ns();
-            snapshot.command_applied = applied;
+            PolicyCommandLogState log_state;
+            log_state.timestamp_ns = steady_now_ns();
             for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
-                snapshot.target_pos_rad[i] = command.setpoints[i].position_rad;
-                snapshot.target_effort_permille[i] = command.target_effort_permille[i];
+                log_state.target_effort_permille[i] = command.target_effort_permille[i];
             }
             {
                 std::lock_guard<std::mutex> lock(policy_command_mutex_);
-                latest_policy_command_ = snapshot;
+                latest_policy_command_log_ = log_state;
             }
 
             if (!applied) {
@@ -593,13 +643,14 @@ void RobotInterface::set_latest_policy_target(
 {
     std::lock_guard<std::mutex> lock(policy_command_mutex_);
     latest_policy_target_q_model_rad_ = target_q_model_rad;
+    ++latest_policy_target_sequence_;
 }
 
-RobotInterface::PolicyCommandSnapshot
-RobotInterface::latest_policy_command_snapshot() const
+RobotInterface::PolicyCommandLogState
+RobotInterface::latest_policy_command_log_state() const
 {
     std::lock_guard<std::mutex> lock(policy_command_mutex_);
-    return latest_policy_command_;
+    return latest_policy_command_log_;
 }
 
 void RobotInterface::fail_policy_command_worker(std::string message)
@@ -710,13 +761,25 @@ bool RobotInterface::policy_step() {
         record.target_q_model_rad[model_index] = target_q_model_rad[model_index];
     }
 
+    std::vector<double> log_target_motor_rad;
+    std::string log_target_error;
+    if (!action_processor_->build_motor_targets(target_q_model_rad,
+                                                log_target_motor_rad,
+                                                log_target_error)) {
+        return handle_policy_step_failure("failed to build log target positions: " +
+                                          log_target_error);
+    }
+    if (log_target_motor_rad.size() != PolicyRuntime::kDof) {
+        return handle_policy_step_failure("failed to build log target positions: target size mismatch");
+    }
+
     set_latest_policy_target(target_q_model_rad);
-    const PolicyCommandSnapshot command_snapshot =
-        latest_policy_command_snapshot();
+    const PolicyCommandLogState command_log_state =
+        latest_policy_command_log_state();
     for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
-        record.target_pos_rad[i] = command_snapshot.target_pos_rad[i];
+        record.target_pos_rad[i] = log_target_motor_rad[i];
         record.target_effort_permille[i] =
-            command_snapshot.target_effort_permille[i];
+            command_log_state.target_effort_permille[i];
     }
 
 
@@ -725,7 +788,7 @@ bool RobotInterface::policy_step() {
         policy_command_worker_running_.load() &&
         !policy_command_worker_failed_.load();
     record.command_timestamp_ns =
-        command_snapshot.timestamp_ns != 0 ? command_snapshot.timestamp_ns : steady_now_ns();
+        command_log_state.timestamp_ns != 0 ? command_log_state.timestamp_ns : steady_now_ns();
     record_inference(record);
     policy_runtime_.advance_frame();
 

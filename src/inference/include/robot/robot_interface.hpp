@@ -43,11 +43,9 @@ public:
 
 
 private:
-    struct PolicyCommandSnapshot {
+    struct PolicyCommandLogState {
         std::int64_t timestamp_ns{0};
-        std::array<double, policy_observation::kDof> target_pos_rad{};
         std::array<double, policy_observation::kDof> target_effort_permille{};
-        bool command_applied{false};
     };
 
     /* 机器人接口配置 */
@@ -78,7 +76,8 @@ private:
     mutable std::mutex policy_command_mutex_;
 
     std::vector<double>   latest_policy_target_q_model_rad_;
-    PolicyCommandSnapshot latest_policy_command_;
+    std::uint64_t         latest_policy_target_sequence_{0};
+    PolicyCommandLogState latest_policy_command_log_;
     std::string policy_command_worker_error_;
 
     bool validate_policy_config() const;
@@ -98,7 +97,7 @@ private:
     void stop_policy_command_worker();
     void policy_command_worker_loop();
     void set_latest_policy_target(const std::vector<double>& target_q_model_rad);
-    PolicyCommandSnapshot latest_policy_command_snapshot() const;
+    PolicyCommandLogState latest_policy_command_log_state() const;
     void fail_policy_command_worker(std::string message);
     bool policy_command_worker_healthy(std::string& error) const;
 };

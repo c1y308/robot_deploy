@@ -78,6 +78,10 @@ private:
     std::array<ec_slave_config_state_t, kNumSlaves> sc_state = {};
     std::array<std::atomic<bool>, kNumSlaves> slave_configured = {};
 
+    std::atomic<bool> health_master_link_up{false};
+    std::atomic<int> health_wc_state{static_cast<int>(EC_WC_ZERO)};
+    std::atomic<unsigned int> health_working_counter{0};
+
     unsigned int sync_ref_counter = 0;
     bool is_initialized = false;
     
@@ -109,6 +113,7 @@ public:
     void receive_physical() override;
     void send_physical() override;
     bool is_configured(int index) override;
+    EthercatBusHealthSnapshot get_bus_health() const override;
 };
 
 }

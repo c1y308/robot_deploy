@@ -14,6 +14,12 @@ enum class MyactControlMode : int8_t {
     CST = 0x0A,
 };
 
+enum class MyactCommunicationFaultReason : int {
+    None = 0,
+    LinkDown = 1,
+    WkcIncomplete = 2,
+};
+
 enum class MyactMotorStep {
     IDLE,
     ENABLING,

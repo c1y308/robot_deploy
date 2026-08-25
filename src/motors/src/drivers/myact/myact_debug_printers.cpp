@@ -174,6 +174,19 @@ void print_myact_event(const mb::RtEvent& event)
                       << " wc=" << event.value
                       << " wc_state=" << event.reason << "\n";
             break;
+
+        case mb::RtEventType::COMM_WATCHDOG_FAULT:
+            std::cerr << "[MYACTUA] communication watchdog latched, cycle="
+                      << event.tick
+                      << ", reason=" << event.reason
+                      << ", wc=" << event.value << "\n";
+            break;
+
+        case mb::RtEventType::COMM_WATCHDOG_CLEARED:
+            std::cerr << "[MYACTUA] communication watchdog cleared, cycle="
+                      << event.tick
+                      << ", wc=" << event.value << "\n";
+            break;
     }
 }
 

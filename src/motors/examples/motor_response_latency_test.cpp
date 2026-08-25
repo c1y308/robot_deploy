@@ -694,7 +694,11 @@ int main()
         return -1;
     }
 
-    controller.start();
+    if (!controller.start()) {
+        std::cerr << "[error] failed to start realtime control thread "
+                  << "with requested scheduling\n";
+        return -1;
+    }
     controller_started = true;
 
     std::cout << "[flow] stop all motors before mode switch\n";

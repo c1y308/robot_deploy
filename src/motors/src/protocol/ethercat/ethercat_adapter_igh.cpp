@@ -267,6 +267,13 @@ void EthercatAdapterIGH::receive_physical() {
 
     ecrt_master_receive(master);
     ecrt_domain_process(domain1);
+    ecrt_master_state(master, &master_state);
+    ecrt_domain_state(domain1, &domain1_state);
+    health_master_link_up.store(master_state.link_up != 0, std::memory_order_relaxed);
+    health_wc_state.store(static_cast<int>(domain1_state.wc_state),
+                          std::memory_order_relaxed);
+    health_working_counter.store(domain1_state.working_counter,
+                                 std::memory_order_relaxed);
 
     for (std::size_t i = 0; i < kNumSlaves; ++i) {
         ecrt_slave_config_state(sc[i], &sc_state[i]);
@@ -301,7 +308,6 @@ void EthercatAdapterIGH::send_physical() {
                              (diag_interval_cycles > 0) &&
                              (cycle % diag_interval_cycles == 0);
     if (sample_diag) {
-        ecrt_domain_state(domain1, &domain1_state);
         mb::RtEvent event;
         event.type = domain1_state.wc_state == EC_WC_COMPLETE
             ? mb::RtEventType::BUS_DIAG_SAMPLE
@@ -322,6 +328,18 @@ bool EthercatAdapterIGH::is_configured(int index) {
         return false;
     }
     return slave_configured[index].load(std::memory_order_relaxed);
+}
+
+
+EthercatBusHealthSnapshot EthercatAdapterIGH::get_bus_health() const
+{
+    EthercatBusHealthSnapshot health;
+    health.master_link_up = health_master_link_up.load(std::memory_order_relaxed);
+    health.wc_state = static_cast<ec_wc_state_t>(
+        health_wc_state.load(std::memory_order_relaxed));
+    health.working_counter =
+        health_working_counter.load(std::memory_order_relaxed);
+    return health;
 }
 
 

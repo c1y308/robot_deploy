@@ -24,10 +24,81 @@ void add_period_ns(timespec& time, long period_ns)
     }
 }
 
-void set_realtime_priority(std::thread& thread, int priority)
+const char* scheduling_policy_name(int policy)
+{
+    switch (policy) {
+        case SCHED_FIFO: return "SCHED_FIFO";
+        case SCHED_RR: return "SCHED_RR";
+        case SCHED_OTHER: return "SCHED_OTHER";
+#ifdef SCHED_BATCH
+        case SCHED_BATCH: return "SCHED_BATCH";
+#endif
+#ifdef SCHED_IDLE
+        case SCHED_IDLE: return "SCHED_IDLE";
+#endif
+    }
+    return "UNKNOWN";
+}
+
+bool read_thread_scheduling(std::thread& thread,
+                            int& policy,
+                            sched_param& param)
+{
+    const int result =
+        pthread_getschedparam(thread.native_handle(), &policy, &param);
+    if (result != 0) {
+        std::cerr << "[MotorControllerBase] failed to read realtime "
+                  << "scheduling: " << std::strerror(result) << std::endl;
+        return false;
+    }
+    return true;
+}
+
+void print_realtime_scheduling_state(int requested_priority,
+                                     bool actual_available,
+                                     int actual_policy,
+                                     int actual_priority)
+{
+    std::cerr << "[MotorControllerBase] Requested realtime scheduling:\n"
+              << "  policy   = SCHED_FIFO\n"
+              << "  priority = " << requested_priority << "\n";
+    if (actual_available) {
+        std::cerr << "[MotorControllerBase] Actual scheduling:\n"
+                  << "  policy   = " << scheduling_policy_name(actual_policy) << "\n"
+                  << "  priority = " << actual_priority << std::endl;
+    } else {
+        std::cerr << "[MotorControllerBase] Actual scheduling: unavailable"
+                  << std::endl;
+    }
+}
+
+bool verify_realtime_priority(std::thread& thread, int expected_priority)
+{
+    int policy = 0;
+    sched_param actual{};
+    if (!read_thread_scheduling(thread, policy, actual)) {
+        print_realtime_scheduling_state(expected_priority, false, 0, 0);
+        return false;
+    }
+
+    if (policy == SCHED_FIFO && actual.sched_priority == expected_priority) {
+        return true;
+    }
+
+    std::cerr << "[MotorControllerBase] realtime scheduling verification failed"
+              << std::endl;
+    print_realtime_scheduling_state(
+        expected_priority,
+        true,
+        policy,
+        actual.sched_priority);
+    return false;
+}
+
+bool set_realtime_priority(std::thread& thread, int priority)
 {
     if (priority <= 0) {
-        return;
+        return true;
     }
 
     sched_param param{};
@@ -35,10 +106,21 @@ void set_realtime_priority(std::thread& thread, int priority)
     const int result =
         pthread_setschedparam(thread.native_handle(), SCHED_FIFO, &param);
     if (result != 0) {
-        std::cerr << "[MotorControllerBase] Warning: failed to set realtime "
-                  << "scheduling (SCHED_FIFO priority " << priority
-                  << "): " << std::strerror(result) << std::endl;
+        int actual_policy = 0;
+        sched_param actual{};
+        const bool actual_available =
+            read_thread_scheduling(thread, actual_policy, actual);
+        std::cerr << "[MotorControllerBase] failed to set realtime scheduling: "
+                  << std::strerror(result) << std::endl;
+        print_realtime_scheduling_state(
+            priority,
+            actual_available,
+            actual_policy,
+            actual.sched_priority);
+        return false;
     }
+
+    return verify_realtime_priority(thread, priority);
 }
 } // namespace
 
@@ -72,6 +154,7 @@ MotorControllerBase::MotorControllerBase(
 
 MotorControllerBase::~MotorControllerBase()
 {
+    rt_scheduling_ready_.store(false, std::memory_order_release);
     running_.store(false, std::memory_order_release);
     if (rt_thread_.joinable()) {
         rt_thread_.join();
@@ -90,20 +173,21 @@ bool MotorControllerBase::connect(const char* interface_name)
     return connect_impl(interface_name);
 }
 
-void MotorControllerBase::start()
+bool MotorControllerBase::start()
 {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
     if (running_.load(std::memory_order_acquire)) {
-        return;
+        return rt_scheduling_ready_.load(std::memory_order_acquire);
     }
 
+    rt_scheduling_ready_.store(false, std::memory_order_release);
     status_channel_.start();
     rt_event_dispatcher_.start();
 
     if (!realtime_start_callback()) {
         rt_event_dispatcher_.stop();
         status_channel_.stop();
-        return;
+        return false;
     }
 
     running_.store(true, std::memory_order_release);
@@ -111,13 +195,28 @@ void MotorControllerBase::start()
         rt_thread_ = std::thread(&MotorControllerBase::thread_func, this);
     } catch (...) {
         running_.store(false, std::memory_order_release);
+        rt_scheduling_ready_.store(false, std::memory_order_release);
         realtime_stop_callback();
         rt_event_dispatcher_.stop();
         status_channel_.stop();
         throw;
     }
 
-    set_realtime_priority(rt_thread_, rt_options_.rt_priority);
+    const bool scheduling_ready =
+        set_realtime_priority(rt_thread_, rt_options_.rt_priority);
+    rt_scheduling_ready_.store(scheduling_ready, std::memory_order_release);
+    if (!scheduling_ready) {
+        running_.store(false, std::memory_order_release);
+        if (rt_thread_.joinable()) {
+            rt_thread_.join();
+        }
+        realtime_stop_callback();
+        rt_event_dispatcher_.stop();
+        status_channel_.stop();
+        return false;
+    }
+
+    return true;
 }
 
 bool MotorControllerBase::realtime_start_callback()
@@ -130,6 +229,7 @@ void MotorControllerBase::shutdown()
 {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
     const bool was_running = running_.exchange(false, std::memory_order_acq_rel);
+    rt_scheduling_ready_.store(false, std::memory_order_release);
 
     if (rt_thread_.joinable()) {
         rt_thread_.join();
@@ -208,6 +308,22 @@ CommandSubmitResult MotorControllerBase::send_command(const ControlCommand& cmd)
 
         default:
             return CommandSubmitResult::INVALID_COMMAND;
+    }
+
+    const bool realtime_required = rt_options_.rt_priority > 0;
+    const bool realtime_ready    = rt_scheduling_ready_.load(std::memory_order_acquire);
+    if (realtime_required && !realtime_ready) {
+        if (cmd.kind == ControlCommandKind::SETPOINT) {
+            std::cerr << "[MotorControllerBase] Motion command rejected: "
+                      << "realtime scheduling is not active." << std::endl;
+            return CommandSubmitResult::INVALID_COMMAND;
+        }
+        if (cmd.kind == ControlCommandKind::DISCRETE &&
+            cmd.discrete_type == DiscreteCommandType::RESTART) {
+            std::cerr << "[MotorControllerBase] Motion enable rejected: "
+                      << "realtime scheduling is not active." << std::endl;
+            return CommandSubmitResult::INVALID_COMMAND;
+        }
     }
 
     const CommandSubmitResult driver_validation = validate_command(cmd);
@@ -299,6 +415,8 @@ void MotorControllerBase::enqueue_discrete_command(const ControlCommand& cmd)
 
         DiscreteCommand pending(cmd.discrete_type, cmd.mode);
         pending.phase = DiscretePhase::QUEUED;
+        pending.from_all_motors =
+            (cmd.motor_index == ControlCommand::kAllMotors);
 
         pending.enqueue_tick    = discrete_cmd_tick_;
         pending.next_retry_tick = discrete_cmd_tick_;

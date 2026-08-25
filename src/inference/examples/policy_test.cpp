@@ -70,11 +70,11 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.joint_mapping.left_ankle_parallel = {8, 10, 4, 5};
     cfg.joint_mapping.right_ankle_parallel = {9, 11, 10, 11};
 
-    cfg.motor.mit_kp = { 237.0, 237.0, 104.0, 104.0, 307.0, 307.0,
-                         237.0, 237.0, 104.0, 104.0, 307.0, 307.0};
+    cfg.motor.mit_kp = { 180.0, 230.0, 180.0, 230.0, 180.0, 180.0,
+                         180.0, 230.0, 180.0, 230.0, 180.0, 180.0};
     
-    cfg.motor.mit_kd = { 15.0, 15.0, 6.6, 6.6, 19.54, 19.54,
-                         15.0, 15.0, 6.6, 6.6, 19.54, 19.54};
+    cfg.motor.mit_kd = { 10.54, 10.54, 10.54, 10.54, 10.54, 10.54,
+                         10.54, 10.54, 10.54, 10.54, 10.54, 10.54};
 
     cfg.motor.print_motor_ids = {0, 1, 2, 3, 4, 5,
                                  6, 7, 8, 9, 10, 11};
@@ -134,7 +134,7 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.policy.step_dt = 0.02;
     cfg.policy.gait_phase_period = 0.74;
     cfg.policy.gait_phase_stand_threshold = 0.05;
-    cfg.policy.gait_phase_move_threshold = 0.15;
+    cfg.policy.gait_phase_move_threshold  = 0.15;
 
 
     // 电机观测缩放系数

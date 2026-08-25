@@ -1,5 +1,7 @@
 #pragma once
 
+#include <ecrt.h>
+
 #include "ethercat_types.hpp"
 
 namespace motor_base {
@@ -7,6 +9,12 @@ struct RtEvent;
 }
 
 namespace myactua{
+
+struct EthercatBusHealthSnapshot {
+    bool master_link_up{false};
+    ec_wc_state_t wc_state{EC_WC_ZERO};
+    unsigned int working_counter{0};
+};
 
 class EthercatAdapter
 {
@@ -28,6 +36,7 @@ public:
     virtual void send(int index, const TxPDO& pdo) = 0;
     virtual RxPDO receive(int index) = 0;
     virtual bool is_configured(int index) = 0;  // 检查电机是否已经配置完成
+    virtual EthercatBusHealthSnapshot get_bus_health() const = 0;
 };
 
 }

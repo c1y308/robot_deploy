@@ -212,6 +212,7 @@ struct DiscreteCommand {
 
     int stable_success_cycles;
     DiscreteFailReason fail_reason;    // 失败原因
+    bool from_all_motors;              // 是否来自 ControlCommand::kAllMotors
 
     DiscreteCommand(DiscreteCommandType t = DiscreteCommandType::STOP,
                     MotorControlMode    m = MotorControlMode::NONE)
@@ -219,7 +220,7 @@ struct DiscreteCommand {
         : type(t), mode(m), phase(DiscretePhase::QUEUED),
           enqueue_tick(0), next_retry_tick(0), next_verify_tick(0), deadline_tick(0),
           max_retries(0), cur_retry(0), stable_success_cycles(0),
-          fail_reason(DiscreteFailReason::NONE) {}
+          fail_reason(DiscreteFailReason::NONE), from_all_motors(false) {}
 };
 
 

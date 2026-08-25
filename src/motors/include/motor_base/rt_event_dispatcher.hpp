@@ -17,7 +17,9 @@ enum class RtEventType {
     DISCRETE_QUEUE_FULL,        // 离散命令队列满
     STATUS_CHANNEL_BUSY,
     BUS_DIAG_SAMPLE,
-    BUS_CYCLE_NOT_COMPLETE
+    BUS_CYCLE_NOT_COMPLETE,
+    COMM_WATCHDOG_FAULT,
+    COMM_WATCHDOG_CLEARED
 };
 
 struct RtEvent {

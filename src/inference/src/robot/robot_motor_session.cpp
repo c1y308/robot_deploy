@@ -115,7 +115,14 @@ bool RobotMotorSession::initialize_and_start()
         controller_->set_print_info({});
     }
 
-    controller_->start();
+    if (!controller_->start()) {
+        std::cerr << "[RobotMotorSession] RT prerequisite failed: "
+                  << "realtime scheduling is not active.\n";
+        controller_->shutdown();
+        controller_.reset();
+        adapter_.reset();
+        return false;
+    }
 
     if (!submit_command(motor_base::ControlCommand::stop(), "initial_stop")) {
         controller_.reset();
@@ -203,6 +210,11 @@ bool RobotMotorSession::restart(int motor_index)
     if (motor_index >= config_.num_motors) {
         std::cerr << "[RobotMotorSession] restart invalid motor_index="
                   << motor_index << "\n";
+        return false;
+    }
+    if (!controller_->is_realtime_scheduling_ready()) {
+        std::cerr << "[RobotMotorSession] restart rejected: "
+                  << "realtime scheduling is not active.\n";
         return false;
     }
 

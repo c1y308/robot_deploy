@@ -34,7 +34,10 @@ int main() {
     }
 
     std::cout << "[4/4] 启动实时控制线程..." << std::endl;
-    controller.start();
+    if (!controller.start()) {
+        std::cerr << "[错误] 实时调度未激活，拒绝进入运动控制。" << std::endl;
+        return -1;
+    }
     std::cout << "\n========== 控制流程开始 ==========" << std::endl;
     
     std::cout << "[阶段1] 停止电机，等待 3 秒..." << std::endl;

@@ -97,6 +97,10 @@ MYACTUA::MYACTUA(std::shared_ptr<EthercatAdapter> adapter,
       _adapter(std::move(adapter))
 {
     options_.status_publish_period_ms = std::max(1, options_.status_publish_period_ms);
+    options_.comm_watchdog_fault_cycles =
+        std::max<uint32_t>(1, options_.comm_watchdog_fault_cycles);
+    options_.comm_watchdog_recovery_cycles =
+        std::max<uint32_t>(1, options_.comm_watchdog_recovery_cycles);
 
     /* 初始化电机状态列表 */
     for (int i = 0; i < num_motors; i++) {
@@ -203,6 +207,10 @@ bool MYACTUA::wait_all_motors_ready(int timeout_ms, int poll_ms) const
 
 bool MYACTUA::realtime_start_callback()
 {
+    process_data_fail_count_ = 0;
+    recovery_healthy_count_ = 0;
+    restart_all_requested_ = false;
+
     diagnostics_channel_.start();
     if (status_monitor_.has_print_motor_ids()) {
         status_monitor_.start();
@@ -238,6 +246,12 @@ void MYACTUA::realtime_stop_callback() noexcept
 /// @brief 更新motor.observed，处理通信、故障、模式切换和目标值设置
 void MYACTUA::update()
 {
+    const EthercatBusHealthSnapshot health = _adapter
+        ? _adapter->get_bus_health()
+        : EthercatBusHealthSnapshot{};
+    const bool process_data_ok =
+        health.master_link_up && health.wc_state == EC_WC_COMPLETE;
+
     /* 接受电机回传数据，并记录当前周期通信状态 */
     for (size_t i = 0; i < _motors.size(); i++)
     {
@@ -254,7 +268,13 @@ void MYACTUA::update()
         }
     }
 
-    /* 设置电机目标值。通信异常时保持当前控制状态。 */
+    update_communication_watchdog(process_data_ok, health);
+    if (whole_body_fault_latched_.load(std::memory_order_acquire)) {
+        apply_whole_body_quick_stop();
+        return;
+    }
+
+    /* 未达到 watchdog 锁存阈值时，沿用原有单电机状态机。 */
     for (size_t i = 0; i < _motors.size(); i++)
     {
         if (!_motors[i].comm_ok) {
@@ -269,6 +289,143 @@ void MYACTUA::update()
         if (!_motors[i].comm_ok) continue;
         _adapter->send(_motors[i].motor_index, _motors[i].tx);
     }
+}
+
+
+void MYACTUA::update_communication_watchdog(
+    bool process_data_ok,
+    const EthercatBusHealthSnapshot& health)
+{
+    if (whole_body_fault_latched_.load(std::memory_order_acquire)) {
+        if (!restart_all_requested_) {
+            recovery_healthy_count_ = 0;
+            return;
+        }
+
+        if (process_data_ok) {
+            ++recovery_healthy_count_;
+            if (recovery_healthy_count_ >= options_.comm_watchdog_recovery_cycles) {
+                clear_communication_fault();
+            }
+        } else {
+            recovery_healthy_count_ = 0;
+        }
+        return;
+    }
+
+    restart_all_requested_ = false;
+    recovery_healthy_count_ = 0;
+
+    if (process_data_ok) {
+        process_data_fail_count_ = 0;
+        return;
+    }
+
+    ++process_data_fail_count_;
+    if (process_data_fail_count_ >= options_.comm_watchdog_fault_cycles) {
+        const MyactCommunicationFaultReason reason = health.master_link_up
+            ? MyactCommunicationFaultReason::WkcIncomplete
+            : MyactCommunicationFaultReason::LinkDown;
+        latch_communication_fault(reason, health);
+    }
+}
+
+
+void MYACTUA::latch_communication_fault(
+    MyactCommunicationFaultReason reason,
+    const EthercatBusHealthSnapshot& health)
+{
+    bool expected = false;
+    if (!whole_body_fault_latched_.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel)) {
+        return;
+    }
+
+    fault_reason_ = reason;
+    fault_tick_ = discrete_command_tick();
+    restart_all_requested_ = false;
+    recovery_healthy_count_ = 0;
+
+    push_communication_fault_event(mb::RtEventType::COMM_WATCHDOG_FAULT, health);
+}
+
+
+void MYACTUA::clear_communication_fault()
+{
+    const EthercatBusHealthSnapshot health = _adapter
+        ? _adapter->get_bus_health()
+        : EthercatBusHealthSnapshot{};
+
+    for (auto& motor : _motors) {
+        reset_motor_targets_to_feedback(motor);
+    }
+
+    process_data_fail_count_ = 0;
+    recovery_healthy_count_ = 0;
+    restart_all_requested_ = false;
+    fault_reason_ = MyactCommunicationFaultReason::None;
+    fault_tick_ = 0;
+    whole_body_fault_latched_.store(false, std::memory_order_release);
+
+    push_communication_fault_event(mb::RtEventType::COMM_WATCHDOG_CLEARED, health);
+}
+
+
+void MYACTUA::apply_whole_body_quick_stop()
+{
+    if (!_adapter) {
+        return;
+    }
+
+    for (auto& motor : _motors) {
+        motor.step = MyactMotorStep::FAULT;
+        motor.mode_switch_step = MyactModeSwitchStep::IDLE;
+        motor.desired.enabled = false;
+
+        motor.tx.control_word = options_.comm_fault_control_word;
+        motor.tx.op_mode = static_cast<int8_t>(motor.desired.mode);
+        motor.tx.target_pos = motor.rx.pos;
+        motor.tx.target_vel = 0;
+        motor.tx.target_torque = 0;
+        motor.tx.pvt_kp = 0;
+        motor.tx.pvt_kd = 0;
+
+        _adapter->send(motor.motor_index, motor.tx);
+    }
+}
+
+
+void MYACTUA::reset_motor_targets_to_feedback(MotorState& motor)
+{
+    const double position_rad = raw_pos_to_rad(static_cast<double>(motor.rx.pos));
+
+    motor.desired.enabled = false;
+    motor.desired.position_rad = position_rad;
+    motor.desired.velocity_rad_s = 0.0;
+    motor.desired.torque = 0.0;
+    motor.desired.impedance_setpoint =
+        mb::ImpedanceSetpoint(position_rad, 0.0, 0.0, 0.0, 0.0);
+    motor.mode_switch_step = MyactModeSwitchStep::IDLE;
+
+    motor.tx.target_pos = motor.rx.pos;
+    motor.tx.target_vel = 0;
+    motor.tx.target_torque = 0;
+    motor.tx.pvt_kp = 0;
+    motor.tx.pvt_kd = 0;
+}
+
+
+void MYACTUA::push_communication_fault_event(
+    mb::RtEventType type,
+    const EthercatBusHealthSnapshot& health)
+{
+    mb::RtEvent event;
+    event.type = type;
+    event.tick = discrete_command_tick();
+    event.motor_index = -1;
+    event.reason = static_cast<int>(fault_reason_);
+    event.value = health.working_counter;
+    push_event(event);
 }
 
 
@@ -505,6 +662,16 @@ ControlWordCommand MYACTUA::get_next_control_word(uint16_t status_word)
 mb::CommandSubmitResult MYACTUA::validate_command(
     const mb::ControlCommand& cmd) const
 {
+    if (whole_body_fault_latched_.load(std::memory_order_acquire)) {
+        if (cmd.kind == mb::ControlCommandKind::SETPOINT) {
+            return mb::CommandSubmitResult::INVALID_COMMAND;
+        }
+        if (cmd.kind == mb::ControlCommandKind::DISCRETE &&
+            cmd.discrete_type == mb::DiscreteCommandType::SET_MODE) {
+            return mb::CommandSubmitResult::INVALID_COMMAND;
+        }
+    }
+
     if (cmd.kind == mb::ControlCommandKind::DISCRETE) {
         return mb::CommandSubmitResult::ACCEPTED;
     }
@@ -540,6 +707,10 @@ mb::CommandSubmitResult MYACTUA::validate_command(
 /// @brief 设置 DesiredState 结构体中的数据
 void MYACTUA::apply_setpoint_command_callback(const mb::ControlCommand& cmd)
 {
+    if (whole_body_fault_latched_.load(std::memory_order_acquire)) {
+        return;
+    }
+
     switch (cmd.setpoint_type) {
         case mb::SetpointCommandType::POSITION_TARGETS:
             for (size_t i = 0; i < _motors.size(); i++) {
@@ -578,6 +749,28 @@ void MYACTUA::apply_discrete_command_callback(
     }
 
     MotorState& motor = _motors[motor_index];
+    if (whole_body_fault_latched_.load(std::memory_order_acquire)) {
+        switch (cmd.type) {
+            case mb::DiscreteCommandType::STOP:
+                motor.desired.enabled = false;
+                motor.mode_switch_step = MyactModeSwitchStep::IDLE;
+                break;
+
+            case mb::DiscreteCommandType::RESTART:
+                if (cmd.from_all_motors && cmd.enqueue_tick >= fault_tick_) {
+                    if (!restart_all_requested_) {
+                        restart_all_requested_ = true;
+                        recovery_healthy_count_ = 0;
+                    }
+                }
+                break;
+
+            case mb::DiscreteCommandType::SET_MODE:
+                break;
+        }
+        return;
+    }
+
     switch (cmd.type) {
         case mb::DiscreteCommandType::STOP:
             // Edge-triggered: avoid resetting mode-switch state on retries.
@@ -612,6 +805,21 @@ mb::DiscreteCommandEvaluation MYACTUA::evaluate_discrete_command_callback(
     }
 
     const MotorState& motor = _motors[static_cast<std::size_t>(motor_index)];
+    if (whole_body_fault_latched_.load(std::memory_order_acquire)) {
+        switch (cmd.type) {
+            case mb::DiscreteCommandType::STOP:
+                return mb::DiscreteCommandEvaluation::SATISFIED;
+
+            case mb::DiscreteCommandType::RESTART:
+                return (cmd.from_all_motors && cmd.enqueue_tick >= fault_tick_)
+                    ? mb::DiscreteCommandEvaluation::PENDING
+                    : mb::DiscreteCommandEvaluation::FAILED;
+
+            case mb::DiscreteCommandType::SET_MODE:
+                return mb::DiscreteCommandEvaluation::FAILED;
+        }
+    }
+
     if (!motor.comm_ok) {
         return mb::DiscreteCommandEvaluation::PENDING;
     }
@@ -681,6 +889,8 @@ void MYACTUA::update_status_snapshot()
     }
 
     mb::MotorStatusSnapshot* status_slot = write_token.data;
+    const bool whole_body_fault =
+        whole_body_fault_latched_.load(std::memory_order_acquire);
     for (size_t i = 0; i < _motors.size(); i++) {
         const auto& m = _motors[i];
         auto& s = status_slot[i];
@@ -692,11 +902,11 @@ void MYACTUA::update_status_snapshot()
         if (m.comm_ok) {
             const uint16_t sw = m.rx.status_word;
             s.enabled = is_operation_enabled(sw);
-            s.faulted = is_fault(sw) || (m.rx.error != 0);
+            s.faulted = whole_body_fault || is_fault(sw) || (m.rx.error != 0);
             s.mode = to_motor_control_mode(m.observed.mode);
         } else {
             s.enabled = false;
-            s.faulted = false;
+            s.faulted = whole_body_fault;
             s.mode = mb::MotorControlMode::NONE;
         }
         s.target_mode = to_motor_control_mode(m.desired.mode);
