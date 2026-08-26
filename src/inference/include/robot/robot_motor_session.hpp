@@ -1,10 +1,13 @@
 #pragma once
 
+#include "motor_base/realtime_feedback.hpp"
 #include "robot/robot_config.hpp"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace myactua {
@@ -13,6 +16,7 @@ class EthercatAdapterIGH;
 
 namespace motor_base {
 struct ControlCommand;
+struct RtEvent;
 class MotorControllerBase;
 }
 
@@ -51,16 +55,30 @@ public:
     bool apply_targets_rad(const std::vector<double>& target_motor_rad);
     // 通过MIT模式下发阻抗指令
     bool apply_impedance_setpoints(const std::vector<motor_base::ImpedanceSetpoint>& setpoints);
+    bool apply_impedance_setpoints_realtime(
+        const std::array<motor_base::ImpedanceSetpoint,
+                         motor_base::kMaxMotorCommandSetpoints>& setpoints,
+        std::size_t count);
+
+    bool try_consume_realtime_feedback(
+        motor_base::RealtimeMotorFeedback& feedback);
 
     MotorStateSnapshot  get_motor_snapshot() const;
     std::vector<double> get_joint_q() const;
-    std::vector<double> get_joint_vel() const;
-    std::vector<double> get_joint_torque_percent() const;
 
 private:
     bool validate_config() const;
     bool submit_command(const motor_base::ControlCommand& command,
                         const char* context);
+    bool wait_all_mode_ready(motor_base::MotorControlMode expected_mode,
+                             int timeout_ms,
+                             const char* context) const;
+    bool wait_all_control_ready(motor_base::MotorControlMode expected_mode,
+                                int timeout_ms,
+                                const char* context) const;
+    void handle_rt_event(const motor_base::RtEvent& event);
+    void reset_runtime_motion_fault();
+    bool runtime_motion_faulted(const char* context) const;
 
     MotorConfig config_;
 
@@ -69,6 +87,10 @@ private:
 
     std::atomic<bool> initialized_{false};
     std::atomic<bool> motion_enabled_{false};
+    std::atomic<bool> runtime_motion_fault_{false};
+    std::atomic<int> first_reject_motor_index_{-1};
+    std::atomic<int> first_reject_reason_{0};
+    std::atomic<std::uint32_t> first_reject_value_{0};
 };
 
 }  // namespace inference

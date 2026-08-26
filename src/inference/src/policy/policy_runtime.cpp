@@ -96,23 +96,6 @@ bool PolicyRuntime::load(const PolicyConfig& config)
     policy_config_ = config;
     last_error_.clear();
 
-    if (policy_config_.model_path.empty()) {
-        set_error("policy.model_path is empty");
-        return false;
-    }
-    if (!std::isfinite(policy_config_.step_dt) ||
-        policy_config_.step_dt <= 0.0) {
-        set_error("policy.step_dt must be a finite positive value");
-        return false;
-    }
-    if constexpr (policy_observation::kEnableGaitPhase) {
-        if (!std::isfinite(policy_config_.gait_phase_period) ||
-            policy_config_.gait_phase_period <= 0.0) {
-            set_error("gait_phase_period must be a finite positive value");
-            return false;
-        }
-    }
-
     auto runner = std::make_unique<TorchPolicyRunner>();
     if (!runner->load(policy_config_.model_path)) {
         set_error(runner->last_error());

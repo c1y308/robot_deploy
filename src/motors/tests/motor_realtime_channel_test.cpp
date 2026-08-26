@@ -137,6 +137,14 @@ public:
         }
     }
 
+    void set_rx_mode(int index, myactua::MyactControlMode mode)
+    {
+        if (index >= 0 && index < motor_count_) {
+            rx_[static_cast<std::size_t>(index)].op_mode =
+                static_cast<int8_t>(mode);
+        }
+    }
+
     myactua::TxPDO last_tx(int index) const
     {
         std::lock_guard<std::mutex> lock(tx_mutex_);
@@ -183,6 +191,13 @@ myactua::EthercatBusHealthSnapshot health(
     return snapshot;
 }
 
+uint16_t operation_enabled_status_word()
+{
+    return myactua::BIT_READY_TO_SWITCH_ON |
+           myactua::BIT_SWITCHED_ON |
+           myactua::BIT_OPERATION_ENABLED;
+}
+
 void append_health(
     std::vector<myactua::EthercatBusHealthSnapshot>& script,
     int count,
@@ -220,7 +235,7 @@ bool expect_start(myactua::MYACTUA& controller, const char* message)
 int main()
 {
     myactua::MYACTUA::Options options;
-    options.command_queue_capacity = 2;
+    options.command_queue_capacity = 3;
     options.discrete_queue_capacity_per_motor = 1;
     options.rt_event_queue_capacity = 32;
     options.max_commands_per_cycle = 8;
@@ -240,8 +255,8 @@ int main()
 
     if (!expect(
             controller.send_command(motor_base::ControlCommand::set_velocity_targets_rad_s({0.0})) ==
-                motor_base::CommandSubmitResult::INVALID_COMMAND,
-            "setpoint type should be rejected when it does not match target mode")) {
+                motor_base::CommandSubmitResult::ACCEPTED,
+            "mode-dependent setpoint validation should be deferred to RT execution")) {
         return 1;
     }
 
@@ -407,6 +422,257 @@ int main()
             return 1;
         }
         failing_controller.shutdown();
+    }
+
+    {
+        auto adapter = std::make_shared<FakeAdapter>(1);
+        adapter->set_rx_status_word(0, operation_enabled_status_word());
+        adapter->set_rx_mode(0, myactua::MyactControlMode::CSP);
+
+        myactua::MYACTUA mode_controller(adapter, 1, test_options());
+        std::atomic<int> reject_events{0};
+        std::atomic<int> reject_motor{-2};
+        std::atomic<int> reject_reason{0};
+        std::atomic<uint32_t> reject_value{0};
+        mode_controller.set_event_callback(
+            [&reject_events, &reject_motor, &reject_reason, &reject_value](
+                const motor_base::RtEvent& event) {
+                if (event.type ==
+                    motor_base::RtEventType::SETPOINT_COMMAND_REJECTED) {
+                    reject_events.fetch_add(1, std::memory_order_relaxed);
+                    reject_motor.store(event.motor_index, std::memory_order_relaxed);
+                    reject_reason.store(event.reason, std::memory_order_relaxed);
+                    reject_value.store(event.value, std::memory_order_relaxed);
+                }
+            });
+
+        if (!expect_start(mode_controller,
+                          "target-mode-not-confirmed controller should start")) {
+            return 1;
+        }
+        if (!expect(
+                mode_controller.send_command(
+                    motor_base::ControlCommand::set_mode(
+                        motor_base::MotorControlMode::IMPEDANCE)) ==
+                    motor_base::CommandSubmitResult::ACCEPTED,
+                "SET_MODE should be accepted before confirmed-mode test")) {
+            mode_controller.shutdown();
+            return 1;
+        }
+        if (!expect(adapter->wait_for_cycles(6, std::chrono::seconds(1)),
+                    "SET_MODE should be processed before confirmed-mode test")) {
+            mode_controller.shutdown();
+            return 1;
+        }
+
+        constexpr int32_t target_raw = 2222;
+        std::vector<motor_base::ImpedanceSetpoint> setpoints;
+        setpoints.emplace_back(
+            myactua::MYACTUA::raw_pos_to_rad(target_raw),
+            0.0,
+            0.0,
+            10.0,
+            1.0);
+        if (!expect(
+                mode_controller.send_command(
+                    motor_base::ControlCommand::set_impedance_targets(setpoints)) ==
+                    motor_base::CommandSubmitResult::ACCEPTED,
+                "setpoint should enqueue for RT confirmed-mode validation")) {
+            mode_controller.shutdown();
+            return 1;
+        }
+        if (!expect(adapter->wait_for_cycles(12, std::chrono::seconds(1)),
+                    "unconfirmed target-mode setpoint scenario should run")) {
+            mode_controller.shutdown();
+            return 1;
+        }
+        mode_controller.shutdown();
+
+        const myactua::TxPDO tx = adapter->last_tx(0);
+        if (!expect(reject_events.load(std::memory_order_relaxed) == 1,
+                    "target mode without observed confirmation should reject setpoint in RT")) {
+            return 1;
+        }
+        if (!expect(reject_motor.load(std::memory_order_relaxed) == 0 &&
+                        reject_reason.load(std::memory_order_relaxed) ==
+                            static_cast<int>(
+                                motor_base::SetpointRejectReason::MODE_NOT_CONFIRMED) &&
+                        reject_value.load(std::memory_order_relaxed) ==
+                            static_cast<uint32_t>(
+                                motor_base::SetpointCommandType::IMPEDANCE_TARGETS),
+                    "setpoint rejection event should describe the unconfirmed motor and type")) {
+            return 1;
+        }
+        if (!expect(tx.target_pos != target_raw,
+                    "rejected impedance setpoint should not update target position")) {
+            return 1;
+        }
+    }
+
+    {
+        auto adapter = std::make_shared<FakeAdapter>(1);
+        adapter->set_rx_status_word(0, myactua::BIT_READY_TO_SWITCH_ON);
+        adapter->set_rx_mode(0, myactua::MyactControlMode::CSP);
+
+        myactua::MYACTUA stopped_controller(adapter, 1, test_options());
+        std::atomic<int> reject_events{0};
+        stopped_controller.set_event_callback(
+            [&reject_events](const motor_base::RtEvent& event) {
+                if (event.type ==
+                    motor_base::RtEventType::SETPOINT_COMMAND_REJECTED) {
+                    reject_events.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
+
+        if (!expect_start(stopped_controller,
+                          "not-running confirmed-mode controller should start")) {
+            return 1;
+        }
+        if (!expect(adapter->wait_for_cycles(4, std::chrono::seconds(1)),
+                    "not-running confirmed-mode scenario should settle")) {
+            stopped_controller.shutdown();
+            return 1;
+        }
+
+        constexpr int32_t target_raw = 3333;
+        if (!expect(
+                stopped_controller.send_command(
+                    motor_base::ControlCommand::set_position_targets_rad(
+                        {myactua::MYACTUA::raw_pos_to_rad(target_raw)})) ==
+                    motor_base::CommandSubmitResult::ACCEPTED,
+                "setpoint should enqueue when observed mode matches but motor is not running")) {
+            stopped_controller.shutdown();
+            return 1;
+        }
+        if (!expect(adapter->wait_for_cycles(10, std::chrono::seconds(1)),
+                    "not-running setpoint rejection scenario should run")) {
+            stopped_controller.shutdown();
+            return 1;
+        }
+        stopped_controller.shutdown();
+
+        if (!expect(reject_events.load(std::memory_order_relaxed) == 1,
+                    "matching observed mode without RUNNING state should reject setpoint")) {
+            return 1;
+        }
+        if (!expect(adapter->last_tx(0).target_pos != target_raw,
+                    "not-running rejection should not update target position")) {
+            return 1;
+        }
+    }
+
+    {
+        auto adapter = std::make_shared<FakeAdapter>(1);
+        adapter->set_rx_status_word(0, operation_enabled_status_word());
+        adapter->set_rx_mode(0, myactua::MyactControlMode::CSP);
+
+        myactua::MYACTUA running_controller(adapter, 1, test_options());
+        std::atomic<int> reject_events{0};
+        running_controller.set_event_callback(
+            [&reject_events](const motor_base::RtEvent& event) {
+                if (event.type ==
+                    motor_base::RtEventType::SETPOINT_COMMAND_REJECTED) {
+                    reject_events.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
+
+        if (!expect_start(running_controller,
+                          "confirmed-running setpoint controller should start")) {
+            return 1;
+        }
+        running_controller.send_command(motor_base::ControlCommand::restart());
+        if (!expect(adapter->wait_for_cycles(6, std::chrono::seconds(1)),
+                    "confirmed-running controller should reach RUNNING")) {
+            running_controller.shutdown();
+            return 1;
+        }
+
+        constexpr int32_t target_raw = 4444;
+        if (!expect(
+                running_controller.send_command(
+                    motor_base::ControlCommand::set_position_targets_rad(
+                        {myactua::MYACTUA::raw_pos_to_rad(target_raw)})) ==
+                    motor_base::CommandSubmitResult::ACCEPTED,
+                "setpoint should enqueue when all motors are confirmed running")) {
+            running_controller.shutdown();
+            return 1;
+        }
+        if (!expect(adapter->wait_for_cycles(12, std::chrono::seconds(1)),
+                    "confirmed-running setpoint scenario should run")) {
+            running_controller.shutdown();
+            return 1;
+        }
+        running_controller.shutdown();
+
+        if (!expect(reject_events.load(std::memory_order_relaxed) == 0,
+                    "confirmed running mode should not reject setpoint")) {
+            return 1;
+        }
+        if (!expect(adapter->last_tx(0).target_pos == target_raw,
+                    "confirmed running setpoint should update target position")) {
+            return 1;
+        }
+    }
+
+    {
+        auto adapter = std::make_shared<FakeAdapter>(2);
+        adapter->set_rx_status_word(0, operation_enabled_status_word());
+        adapter->set_rx_status_word(1, myactua::BIT_READY_TO_SWITCH_ON);
+        adapter->set_rx_mode(0, myactua::MyactControlMode::CSP);
+        adapter->set_rx_mode(1, myactua::MyactControlMode::CSP);
+
+        myactua::MYACTUA partial_controller(adapter, 2, test_options());
+        std::atomic<int> reject_events{0};
+        std::atomic<int> reject_motor{-2};
+        partial_controller.set_event_callback(
+            [&reject_events, &reject_motor](const motor_base::RtEvent& event) {
+                if (event.type ==
+                    motor_base::RtEventType::SETPOINT_COMMAND_REJECTED) {
+                    reject_events.fetch_add(1, std::memory_order_relaxed);
+                    reject_motor.store(event.motor_index, std::memory_order_relaxed);
+                }
+            });
+
+        if (!expect_start(partial_controller,
+                          "partial-frame setpoint controller should start")) {
+            return 1;
+        }
+        partial_controller.send_command(motor_base::ControlCommand::restart());
+        if (!expect(adapter->wait_for_cycles(6, std::chrono::seconds(1)),
+                    "partial-frame controller should process restart")) {
+            partial_controller.shutdown();
+            return 1;
+        }
+
+        constexpr int32_t target0_raw = 5555;
+        constexpr int32_t target1_raw = 6666;
+        if (!expect(
+                partial_controller.send_command(
+                    motor_base::ControlCommand::set_position_targets_rad(
+                        {myactua::MYACTUA::raw_pos_to_rad(target0_raw),
+                         myactua::MYACTUA::raw_pos_to_rad(target1_raw)})) ==
+                    motor_base::CommandSubmitResult::ACCEPTED,
+                "partial-frame setpoint should enqueue for RT validation")) {
+            partial_controller.shutdown();
+            return 1;
+        }
+        if (!expect(adapter->wait_for_cycles(12, std::chrono::seconds(1)),
+                    "partial-frame rejection scenario should run")) {
+            partial_controller.shutdown();
+            return 1;
+        }
+        partial_controller.shutdown();
+
+        if (!expect(reject_events.load(std::memory_order_relaxed) == 1 &&
+                        reject_motor.load(std::memory_order_relaxed) == 1,
+                    "first unconfirmed motor should reject the whole setpoint frame")) {
+            return 1;
+        }
+        if (!expect(adapter->last_tx(0).target_pos != target0_raw &&
+                        adapter->last_tx(1).target_pos != target1_raw,
+                    "rejected setpoint frame should not partially update targets")) {
+            return 1;
+        }
     }
 
       {
@@ -719,9 +985,13 @@ int main()
                   myactua::BIT_OPERATION_ENABLED);
 
           myactua::MYACTUA watchdog_controller(adapter, 1, test_options());
+          std::atomic<int> fault_events{0};
           std::atomic<int> clear_events{0};
           watchdog_controller.set_event_callback(
-              [&clear_events](const motor_base::RtEvent& event) {
+              [&fault_events, &clear_events](const motor_base::RtEvent& event) {
+                  if (event.type == motor_base::RtEventType::COMM_WATCHDOG_FAULT) {
+                      fault_events.fetch_add(1, std::memory_order_relaxed);
+                  }
                   if (event.type == motor_base::RtEventType::COMM_WATCHDOG_CLEARED) {
                       clear_events.fetch_add(1, std::memory_order_relaxed);
                   }
@@ -731,10 +1001,15 @@ int main()
               return 1;
           }
           watchdog_controller.send_command(motor_base::ControlCommand::restart());
+          if (!expect(adapter->wait_for_cycles(45, std::chrono::seconds(1)),
+                      "stale setpoint scenario should settle RESTART before setpoint")) {
+              watchdog_controller.shutdown();
+              return 1;
+          }
           watchdog_controller.send_command(
               motor_base::ControlCommand::set_position_targets_rad(
                   {myactua::MYACTUA::raw_pos_to_rad(stale_raw)}));
-          if (!expect(adapter->wait_for_cycles(6, std::chrono::seconds(1)),
+          if (!expect(adapter->wait_for_cycles(51, std::chrono::seconds(1)),
                       "stale setpoint scenario should apply initial setpoint")) {
               watchdog_controller.shutdown();
               return 1;
@@ -748,13 +1023,17 @@ int main()
           std::vector<myactua::EthercatBusHealthSnapshot> fault_script;
           append_health(fault_script, 10, health(true, EC_WC_INCOMPLETE, 0));
           adapter->set_health_script(fault_script);
-          if (!expect(adapter->wait_for_cycles(20, std::chrono::seconds(1)),
+          const std::uint64_t fault_start_cycle = adapter->cycles();
+          if (!expect(adapter->wait_for_cycles(fault_start_cycle + 12,
+                                               std::chrono::seconds(1)),
                       "stale setpoint scenario should reach fault")) {
               watchdog_controller.shutdown();
               return 1;
           }
           watchdog_controller.send_command(motor_base::ControlCommand::restart());
-          if (!expect(adapter->wait_for_cycles(45, std::chrono::seconds(1)),
+          const std::uint64_t recovery_start_cycle = adapter->cycles();
+          if (!expect(adapter->wait_for_cycles(recovery_start_cycle + 25,
+                                               std::chrono::seconds(1)),
                       "stale setpoint scenario should clear fault")) {
               watchdog_controller.shutdown();
               return 1;
@@ -762,8 +1041,13 @@ int main()
           watchdog_controller.shutdown();
 
           const myactua::TxPDO tx = adapter->last_tx(0);
-          if (!expect(clear_events.load(std::memory_order_relaxed) == 1,
-                      "stale setpoint scenario should clear once")) {
+          if (clear_events.load(std::memory_order_relaxed) != 1) {
+              std::cerr << "[motor_realtime_channel_test] stale fault_events="
+                        << fault_events.load(std::memory_order_relaxed)
+                        << " clear_events="
+                        << clear_events.load(std::memory_order_relaxed)
+                        << "\n";
+              expect(false, "stale setpoint scenario should clear once");
               return 1;
           }
           if (!expect(tx.target_pos == current_raw && tx.target_pos != stale_raw,

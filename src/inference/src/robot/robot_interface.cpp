@@ -1,4 +1,5 @@
 #include "robot/robot_interface.hpp"
+#include "base/tool.hpp"
 #include "robot/action_processor.hpp"
 #include "robot/joint_mapping.hpp"
 #include "robot/observation_builder.hpp"
@@ -20,35 +21,11 @@
 
 
 namespace inference {
+
+using robot_base::finite_array;
+using robot_base::finite_vector;
+
 namespace {
-
-const std::filesystem::path& default_inference_log_dir()
-{
-    static const std::filesystem::path path{ROBOT_INFERENCE_LOG_DIR};
-    return path;
-}
-
-/* 检查 3 维数组中的数值是否全部为有限值。 */
-bool finite_array3(const std::array<double, 3>& values)
-{
-    return std::isfinite(values[0]) &&
-           std::isfinite(values[1]) &&
-           std::isfinite(values[2]);
-}
-
-bool finite_array2(const std::array<double, 2>& values)
-{
-    return std::isfinite(values[0]) &&
-           std::isfinite(values[1]);
-}
-
-/* 检查动态数组中的数值是否全部为有限值。 */
-bool finite_vector(const std::vector<double>& values)
-{
-    return std::all_of(values.begin(), values.end(), [](double value) {
-        return std::isfinite(value);
-    });
-}
 
 /* 检查 action 截断范围中的上下界是否全部为有限值。 */
 bool finite_action_clip_ranges(const std::vector<std::array<double, 2>>& ranges)
@@ -56,21 +33,6 @@ bool finite_action_clip_ranges(const std::vector<std::array<double, 2>>& ranges)
     return std::all_of(ranges.begin(), ranges.end(), [](const auto& range) {
         return std::isfinite(range[0]) && std::isfinite(range[1]);
     });
-}
-
-bool check_motor_snapshot_size(const MotorStateSnapshot& motor_state,
-                               std::size_t motor_count)
-{
-    if (motor_state.position_rad.size() != motor_count ||
-        motor_state.velocity_rad_s.size() != motor_count ||
-        motor_state.torque_percent.size() != motor_count ||
-        motor_state.comm_ok.size() != motor_count ||
-        motor_state.enabled.size() != motor_count ||
-        motor_state.faulted.size() != motor_count) {
-        return false;
-    }
-
-    return true;
 }
 
 void fill_record_motor_state(const MotorStateSnapshot& motor_state,
@@ -88,25 +50,6 @@ void fill_record_motor_state(const MotorStateSnapshot& motor_state,
     }
 }
 
-bool override_policy_zero_position_motors(
-    robot_detail::ActionProcessor::PolicyMotorCommand& command,
-    std::string& error)
-{
-    constexpr std::array<std::size_t, 2> kZeroPositionMotorIndices = {0, 6};
-
-    if (command.setpoints.size() != PolicyRuntime::kDof) {
-        error = "policy impedance command setpoint size mismatch";
-        return false;
-    }
-
-    for (const std::size_t motor_index : kZeroPositionMotorIndices) {
-        command.setpoints[motor_index].position_rad = 0.0;
-    }
-
-    error.clear();
-    return true;
-}
-
 }  // namespace
 
 /* 保存外部传入的接口配置，后续由初始化函数按模块使用。 */
@@ -115,9 +58,6 @@ RobotInterface::RobotInterface(RobotInterfaceConfig config)
       motor_session_(config_.motor),    // 构造 motor_session_
       imu_session_(config_.imu)         // 构造 imu_session_
 {
-        if (config_.recorder.directory == InferenceRecorderConfig{}.directory) {
-            config_.recorder.directory = default_inference_log_dir();
-        }
 }
 
 /* 析构时释放策略、IMU 和电机资源，保证后台线程退出。 */
@@ -168,7 +108,6 @@ bool RobotInterface::initialize() {
         return false;
     }
 
-    set_latest_policy_target(config_.policy.stand_pose_rad);
     initialized_.store(true);
     if (!start_policy_command_worker()) {
         initialized_.store(false);
@@ -234,16 +173,16 @@ bool RobotInterface::validate_policy_config() const {
         !finite_vector(config_.policy.dof_vel_scale)) {
         return fail("all vector policy values must be finite");
     }
-    if (!finite_array3(config_.policy.command_scale) ||
-        !finite_array3(config_.policy.body_ang_vel_scale)) {
+    if (!finite_array(config_.policy.command_scale) ||
+        !finite_array(config_.policy.body_ang_vel_scale)) {
         return fail("command/body_ang_vel scales must be finite");
     }
     if (!std::isfinite(config_.policy.raw_action_clip) ||
         config_.policy.raw_action_clip <= 0.0) {
         return fail("policy.raw_action_clip must be a finite positive value");
     }
-    if (!finite_array2(config_.ankle_torque.virtual_kp) ||
-        !finite_array2(config_.ankle_torque.virtual_kd)) {
+    if (!finite_array(config_.ankle_torque.virtual_kp) ||
+        !finite_array(config_.ankle_torque.virtual_kd)) {
         return fail("ankle_torque virtual_kp/virtual_kd must be finite");
     }
     if (config_.ankle_torque.virtual_kp[0] < 0.0 ||
@@ -281,12 +220,6 @@ bool RobotInterface::validate_policy_config() const {
             return fail("gait_phase_period must be a finite positive value");
         }
     }
-    std::string joint_mapping_error;
-    if (!robot_detail::JointMapping::validate(config_.motor.num_motors,
-                                              config_.joint_mapping,
-                                              joint_mapping_error)) {
-        return fail(joint_mapping_error);
-    }
 
     for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
         if (config_.policy.action_clip[i][0] > config_.policy.action_clip[i][1]) {
@@ -317,7 +250,7 @@ bool RobotInterface::initialize_model_processors() {
         return false;
     }
 
-    auto action_processor    = std::make_unique<robot_detail::ActionProcessor>(mapping, config_.policy);
+    auto action_processor    = std::make_unique<robot_detail::ActionProcessor>(mapping, config_.policy, config_.ankle_torque);
     auto observation_builder = std::make_unique<robot_detail::ObservationBuilder>(mapping, config_.policy);
 
     joint_mapping_       = std::move(mapping);
@@ -334,10 +267,6 @@ bool RobotInterface::load_policy() {
     inference_recorder_failed_ = false;
     initialize_policy_runtime_state();
 
-    if (!validate_policy_config()) {
-        return false;
-    }
-
     if (!policy_runtime_.load(config_.policy)) {
         std::cerr << "[RobotInterface] load_policy failed: "
                   << policy_runtime_.last_error() << "\n";
@@ -345,12 +274,7 @@ bool RobotInterface::load_policy() {
     }
 
     if (config_.recorder.enabled) {
-        InferenceRecorderConfig recorder_config = config_.recorder;
-        if (recorder_config.directory == InferenceRecorderConfig{}.directory) {
-            recorder_config.directory = default_inference_log_dir();
-        }
-
-        if (!inference_recorder_.start(std::move(recorder_config))) {
+        if (!inference_recorder_.start(config_.recorder)) {
             std::cerr << "[RobotInterface] failed to open inference log: "
                       << inference_recorder_.last_error() << "\n";
             inference_recorder_failed_ = true;
@@ -422,10 +346,7 @@ bool RobotInterface::reset_joints() {
         return false;
     }
 
-    std::vector<double> target_model_q(config_.motor.num_motors, 0.0);
-    if (static_cast<int>(config_.policy.stand_pose_rad.size()) == config_.motor.num_motors) {
-        target_model_q = config_.policy.stand_pose_rad;
-    }
+    const std::vector<double> target_model_q = config_.policy.stand_pose_rad;
 
     const std::vector<double> current_motor_q = motor_session_.get_joint_q();
     std::vector<double> start_model_q;
@@ -441,6 +362,7 @@ bool RobotInterface::reset_joints() {
 
     const int ramp_steps = 100;
     const auto dt = std::chrono::milliseconds(20);
+    std::vector<double> target_rad;
 
     for (int k = 1; k <= ramp_steps; ++k) {
         const double alpha = static_cast<double>(k) / static_cast<double>(ramp_steps);
@@ -448,7 +370,12 @@ bool RobotInterface::reset_joints() {
         for (int i = 0; i < config_.motor.num_motors; ++i) {
             q_cmd_model[i] = start_model_q[i] * (1.0 - alpha) + target_model_q[i] * alpha;
         }
-        if (!apply_action(q_cmd_model)) {
+        if (!action_processor_->build_motor_targets(q_cmd_model, target_rad, error)) {
+            std::cerr << "[RobotInterface] reset_joints failed: "
+                      << error << "\n";
+            return false;
+        }
+        if (!motor_session_.apply_targets_rad(target_rad)) {
             return false;
         }
         std::this_thread::sleep_for(dt);
@@ -504,17 +431,17 @@ bool RobotInterface::start_policy_command_worker()
         return false;
     }
 
+    if (latest_policy_target_sequence_ == 0) {
+        // 初始目标仅写入发布缓存，由 reset_with_value 直接暴露给 worker，
+        // 避免先 publish 再被 reset 覆盖的冗余路径。
+        policy_target_publish_cache_ =
+            build_policy_target(config_.policy.stand_pose_rad);
+    }
+    policy_target_channel_.reset_with_value(policy_target_publish_cache_);
+    policy_command_log_channel_.reset_empty();
+    policy_command_log_read_cache_ = PolicyCommandLogState{};
     {
-        std::lock_guard<std::mutex> lock(policy_command_mutex_);
-        if (latest_policy_target_q_model_rad_.empty()) {
-            latest_policy_target_q_model_rad_ = config_.policy.stand_pose_rad;
-            ++latest_policy_target_sequence_;
-        }
-        if (latest_policy_target_q_model_rad_.size() != PolicyRuntime::kDof) {
-            policy_command_worker_error_ = "policy command target size mismatch";
-            return false;
-        }
-        latest_policy_command_log_ = PolicyCommandLogState{};
+        std::lock_guard<std::mutex> lock(policy_command_error_mutex_);
         policy_command_worker_error_.clear();
     }
 
@@ -552,48 +479,57 @@ void RobotInterface::policy_command_worker_loop()
         std::max<std::int64_t>(
             1,
             static_cast<std::int64_t>(
-                std::llround(config_.ankle_torque.filter_dt_s * 1'000'000'000.0))));
+               std::llround(config_.ankle_torque.filter_dt_s * 1'000'000'000.0))));
+
     auto next_wake = std::chrono::steady_clock::now();
-    robot_detail::TargetInterpolator target_interpolator(
+    robot_detail::FixedTargetInterpolator<PolicyRuntime::kDof> target_interpolator(
         config_.policy.target_interpolation_duration_s);
     std::uint64_t active_target_sequence = 0;
 
-    {
-        std::lock_guard<std::mutex> lock(policy_command_mutex_);
-        target_interpolator.reset(latest_policy_target_q_model_rad_);
-        active_target_sequence = latest_policy_target_sequence_;
+    PolicyTargetState target_state;
+    if (!policy_target_channel_.try_consume_latest(target_state)) {
+        fail_policy_command_worker("policy command target is not initialized");
+        return;
     }
+    target_interpolator.reset(target_state.q_model_rad);
+    active_target_sequence = target_state.sequence;
+
+    motor_base::RealtimeMotorFeedback motor_feedback;
+    bool has_motor_feedback = false;
+    robot_detail::ActionProcessor::FixedPolicyMotorCommand command;
+    std::string error;
 
     try {
         while (policy_command_worker_running_.load()) {
             next_wake += period;
 
-            std::vector<double> target_q_model_rad;
-            std::uint64_t target_sequence = 0;
-            {
-                std::lock_guard<std::mutex> lock(policy_command_mutex_);
-                target_q_model_rad = latest_policy_target_q_model_rad_;
-                target_sequence = latest_policy_target_sequence_;
+            PolicyTargetState latest_target;
+            const bool has_new_target =
+                policy_target_channel_.try_consume_latest(latest_target);
+
+            const auto loop_now = std::chrono::steady_clock::now();
+            if (has_new_target &&
+                latest_target.sequence != active_target_sequence) {
+                target_interpolator.set_target(latest_target.q_model_rad, loop_now);
+                active_target_sequence = latest_target.sequence;
             }
-            if (target_q_model_rad.size() != PolicyRuntime::kDof) {
-                fail_policy_command_worker("policy command target size mismatch");
+            const auto& smoothed_target_q_model_rad =
+                target_interpolator.sample(loop_now);
+
+            motor_base::RealtimeMotorFeedback latest_feedback;
+            if (motor_session_.try_consume_realtime_feedback(latest_feedback)) {
+                motor_feedback = latest_feedback;
+                has_motor_feedback = true;
+            }
+            if (!has_motor_feedback) {
+                fail_policy_command_worker("policy motor feedback is not initialized");
                 break;
             }
 
-            const auto loop_now = std::chrono::steady_clock::now();
-            if (target_sequence != active_target_sequence) {
-                target_interpolator.set_target(target_q_model_rad, loop_now);
-                active_target_sequence = target_sequence;
-            }
-            const std::vector<double>& smoothed_target_q_model_rad =
-                target_interpolator.sample(loop_now);
-
-            const MotorStateSnapshot motor_state = motor_session_.get_motor_snapshot();
-            robot_detail::ActionProcessor::PolicyMotorCommand command;
-            std::string error;
+            error.clear();
             if (!action_processor_->build_policy_impedance_command(
                     smoothed_target_q_model_rad,
-                    motor_state,
+                    motor_feedback,
                     config_.motor.mit_kp,
                     config_.motor.mit_kd,
                     config_.ankle_torque,
@@ -602,22 +538,18 @@ void RobotInterface::policy_command_worker_loop()
                 fail_policy_command_worker("failed to build policy impedance command: " + error);
                 break;
             }
-            // if (!override_policy_zero_position_motors(command, error)) {
-            //     fail_policy_command_worker(error);
-            //     break;
-            // }
 
-            const bool applied = motor_session_.apply_impedance_setpoints(command.setpoints);
+            const bool applied =
+                motor_session_.apply_impedance_setpoints_realtime(
+                    command.setpoints,
+                    command.setpoint_count);
 
             PolicyCommandLogState log_state;
             log_state.timestamp_ns = steady_now_ns();
             for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
                 log_state.target_effort_permille[i] = command.target_effort_permille[i];
             }
-            {
-                std::lock_guard<std::mutex> lock(policy_command_mutex_);
-                latest_policy_command_log_ = log_state;
-            }
+            policy_command_log_channel_.publish(log_state);
 
             if (!applied) {
                 fail_policy_command_worker("failed to apply policy impedance command");
@@ -638,19 +570,36 @@ void RobotInterface::policy_command_worker_loop()
     }
 }
 
+RobotInterface::PolicyTargetState RobotInterface::build_policy_target(
+    const std::vector<double>& target_q_model_rad)
+{
+    PolicyTargetState target;
+    target.sequence = ++latest_policy_target_sequence_;
+    for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
+        target.q_model_rad[i] = target_q_model_rad[i];
+    }
+    return target;
+}
+
 void RobotInterface::set_latest_policy_target(
     const std::vector<double>& target_q_model_rad)
 {
-    std::lock_guard<std::mutex> lock(policy_command_mutex_);
-    latest_policy_target_q_model_rad_ = target_q_model_rad;
-    ++latest_policy_target_sequence_;
+    if (target_q_model_rad.size() != PolicyRuntime::kDof) {
+        return;
+    }
+
+    policy_target_publish_cache_ = build_policy_target(target_q_model_rad);
+    policy_target_channel_.publish(policy_target_publish_cache_);
 }
 
 RobotInterface::PolicyCommandLogState
-RobotInterface::latest_policy_command_log_state() const
+RobotInterface::latest_policy_command_log_state()
 {
-    std::lock_guard<std::mutex> lock(policy_command_mutex_);
-    return latest_policy_command_log_;
+    PolicyCommandLogState latest;
+    if (policy_command_log_channel_.try_consume_latest(latest)) {
+        policy_command_log_read_cache_ = latest;
+    }
+    return policy_command_log_read_cache_;
 }
 
 void RobotInterface::fail_policy_command_worker(std::string message)
@@ -660,7 +609,7 @@ void RobotInterface::fail_policy_command_worker(std::string message)
     policy_command_worker_running_.store(false);
     initialized_.store(false);
     {
-        std::lock_guard<std::mutex> lock(policy_command_mutex_);
+        std::lock_guard<std::mutex> lock(policy_command_error_mutex_);
         policy_command_worker_error_ = std::move(message);
     }
 
@@ -674,7 +623,7 @@ void RobotInterface::fail_policy_command_worker(std::string message)
 bool RobotInterface::policy_command_worker_healthy(std::string& error) const
 {
     if (policy_command_worker_failed_.load()) {
-        std::lock_guard<std::mutex> lock(policy_command_mutex_);
+        std::lock_guard<std::mutex> lock(policy_command_error_mutex_);
         error = policy_command_worker_error_.empty()
                     ? "policy command worker failed"
                     : policy_command_worker_error_;
@@ -705,10 +654,6 @@ bool RobotInterface::policy_step() {
 
     const MotorStateSnapshot motor_state = motor_session_.get_motor_snapshot();
     const std::size_t motor_count = static_cast<std::size_t>(config_.motor.num_motors);
-    if (!check_motor_snapshot_size(motor_state, motor_count)) {
-        return handle_policy_step_failure(
-            "failed to read motor state snapshot: motor state size mismatch");
-    }
     const ImuStateSnapshot imu_state = imu_session_.get_state();
     
     const PolicyAction last_action   = policy_runtime_.last_action();
@@ -768,9 +713,6 @@ bool RobotInterface::policy_step() {
                                                 log_target_error)) {
         return handle_policy_step_failure("failed to build log target positions: " +
                                           log_target_error);
-    }
-    if (log_target_motor_rad.size() != PolicyRuntime::kDof) {
-        return handle_policy_step_failure("failed to build log target positions: target size mismatch");
     }
 
     set_latest_policy_target(target_q_model_rad);

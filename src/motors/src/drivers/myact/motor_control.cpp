@@ -47,6 +47,54 @@ std::size_t checked_motor_count(int num_motors)
     return static_cast<std::size_t>(num_motors);
 }
 
+std::int64_t steady_now_ns() noexcept
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+
+// 返回当前命令类型对应的电机运行模式
+MyactControlMode expected_mode_for_setpoint(mb::SetpointCommandType type)
+{
+    switch (type) {
+        case mb::SetpointCommandType::POSITION_TARGETS:
+            return MyactControlMode::CSP;
+        case mb::SetpointCommandType::VELOCITY_TARGETS:
+            return MyactControlMode::CSV;
+        case mb::SetpointCommandType::TORQUE_TARGETS:
+            return MyactControlMode::CST;
+        case mb::SetpointCommandType::IMPEDANCE_TARGETS:
+            return MyactControlMode::PVT;
+    }
+    return MyactControlMode::NONE;
+}
+
+bool control_ready_for_mode(const MotorState& motor,
+                            MyactControlMode expected_mode,
+                            bool whole_body_fault)
+{
+    return !whole_body_fault &&
+           motor.comm_ok &&
+           !motor.observed.fault &&
+           motor.step == MyactMotorStep::RUNNING &&
+           motor.observed.operation_enabled &&
+           motor.mode_switch_step == MyactModeSwitchStep::IDLE &&
+           motor.observed.mode == expected_mode &&
+           motor.desired.mode  == expected_mode &&
+           expected_mode != MyactControlMode::NONE;
+}
+
+bool control_ready_for_current_target(const MotorState& motor,
+                                      bool whole_body_fault)
+{
+    return control_ready_for_mode(
+        motor,
+        motor.desired.mode,
+        whole_body_fault);
+}
+
 }
 
 MyactControlMode MYACTUA::to_myact_mode(mb::MotorControlMode mode)
@@ -210,6 +258,7 @@ bool MYACTUA::realtime_start_callback()
     process_data_fail_count_ = 0;
     recovery_healthy_count_ = 0;
     restart_all_requested_ = false;
+    realtime_feedback_sequence_ = 0;
 
     diagnostics_channel_.start();
     if (status_monitor_.has_print_motor_ids()) {
@@ -227,6 +276,7 @@ void MYACTUA::realtime_cycle_callback()
     _adapter->receive_physical();
     update();
     _adapter->send_physical();
+    update_realtime_feedback();
     update_status_snapshot();
     update_diagnostics_snapshot();
 }
@@ -397,15 +447,21 @@ void MYACTUA::apply_whole_body_quick_stop()
 
 void MYACTUA::reset_motor_targets_to_feedback(MotorState& motor)
 {
+    motor.desired.enabled = false;
+    reset_motor_setpoints_to_feedback(motor);
+    motor.mode_switch_step = MyactModeSwitchStep::IDLE;
+}
+
+
+void MYACTUA::reset_motor_setpoints_to_feedback(MotorState& motor)
+{
     const double position_rad = raw_pos_to_rad(static_cast<double>(motor.rx.pos));
 
-    motor.desired.enabled = false;
     motor.desired.position_rad = position_rad;
     motor.desired.velocity_rad_s = 0.0;
     motor.desired.torque = 0.0;
     motor.desired.impedance_setpoint =
         mb::ImpedanceSetpoint(position_rad, 0.0, 0.0, 0.0, 0.0);
-    motor.mode_switch_step = MyactModeSwitchStep::IDLE;
 
     motor.tx.target_pos = motor.rx.pos;
     motor.tx.target_vel = 0;
@@ -672,43 +728,31 @@ mb::CommandSubmitResult MYACTUA::validate_command(
         }
     }
 
-    if (cmd.kind == mb::ControlCommandKind::DISCRETE) {
-        return mb::CommandSubmitResult::ACCEPTED;
-    }
-
-    MyactControlMode expected_mode = MyactControlMode::NONE;
-    switch (cmd.setpoint_type) {
-        case mb::SetpointCommandType::POSITION_TARGETS:
-            expected_mode = MyactControlMode::CSP;
-            break;
-
-        case mb::SetpointCommandType::VELOCITY_TARGETS:
-            expected_mode = MyactControlMode::CSV;
-            break;
-
-        case mb::SetpointCommandType::TORQUE_TARGETS:
-            expected_mode = MyactControlMode::CST;
-            break;
-
-        case mb::SetpointCommandType::IMPEDANCE_TARGETS:
-            expected_mode = MyactControlMode::PVT;
-            break;
-    }
-
-    for (std::size_t i = 0; i < _motors.size(); ++i) {
-        if (_motors[i].desired.mode != expected_mode) {
-            return mb::CommandSubmitResult::INVALID_COMMAND;
-        }
-    }
-
     return mb::CommandSubmitResult::ACCEPTED;
 }
 
-/// @brief 设置 DesiredState 结构体中的数据
+/// @brief 针对连续命令，直接执行的回调
 void MYACTUA::apply_setpoint_command_callback(const mb::ControlCommand& cmd)
 {
-    if (whole_body_fault_latched_.load(std::memory_order_acquire)) {
+    const bool whole_body_fault =
+        whole_body_fault_latched_.load(std::memory_order_acquire);
+    if (whole_body_fault) {
         return;
+    }
+
+    const MyactControlMode expected_mode = expected_mode_for_setpoint(cmd.setpoint_type);
+    for (std::size_t i = 0; i < _motors.size(); ++i) {
+        if (!control_ready_for_mode(_motors[i], expected_mode, whole_body_fault)) {
+            mb::RtEvent event;
+            event.type = mb::RtEventType::SETPOINT_COMMAND_REJECTED;
+            event.tick = discrete_command_tick();
+            event.motor_index = _motors[i].motor_index;
+            event.reason = static_cast<int>(
+                mb::SetpointRejectReason::MODE_NOT_CONFIRMED);
+            event.value = static_cast<uint32_t>(cmd.setpoint_type);
+            push_event(event);
+            return;
+        }
     }
 
     switch (cmd.setpoint_type) {
@@ -782,6 +826,7 @@ void MYACTUA::apply_discrete_command_callback(
         case mb::DiscreteCommandType::RESTART:
             // Edge-triggered: first restart arms enable flow; later retries are no-op.
             if (!motor.desired.enabled) {
+                reset_motor_setpoints_to_feedback(motor);
                 motor.desired.enabled = true;
                 motor.mode_switch_step = MyactModeSwitchStep::IDLE;
             }
@@ -789,6 +834,7 @@ void MYACTUA::apply_discrete_command_callback(
         case mb::DiscreteCommandType::SET_MODE:
             if (motor.desired.mode != to_myact_mode(cmd.mode)) {
                 motor.desired.mode  = to_myact_mode(cmd.mode);
+                reset_motor_setpoints_to_feedback(motor);
                 motor.mode_switch_step = MyactModeSwitchStep::IDLE;
             }
             break;
@@ -876,6 +922,29 @@ void MYACTUA::discrete_queue_full_callback(
 }
 
 
+void MYACTUA::update_realtime_feedback()
+{
+    if (_motors.empty()) {
+        return;
+    }
+
+    mb::RealtimeMotorFeedback feedback;
+    feedback.sequence = ++realtime_feedback_sequence_;
+    feedback.timestamp_ns = steady_now_ns();
+    feedback.motor_count = _motors.size();
+
+    for (std::size_t i = 0; i < _motors.size(); ++i) {
+        const auto& motor = _motors[i];
+        feedback.q[i] = raw_pos_to_rad(static_cast<double>(motor.rx.pos));
+        feedback.dq[i] = raw_vel_to_rad_s(static_cast<double>(motor.rx.vel));
+        feedback.torque_percent[i] =
+            static_cast<double>(motor.rx.torque) * kRawTorqueToPercent;
+    }
+
+    publish_realtime_feedback(feedback);
+}
+
+
 void MYACTUA::update_status_snapshot()
 {
     if (_motors.empty()) {
@@ -909,6 +978,7 @@ void MYACTUA::update_status_snapshot()
             s.faulted = whole_body_fault;
             s.mode = mb::MotorControlMode::NONE;
         }
+        s.control_ready = control_ready_for_current_target(m, whole_body_fault);
         s.target_mode = to_motor_control_mode(m.desired.mode);
     }
 

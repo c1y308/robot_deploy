@@ -1,10 +1,12 @@
 #include "robot/robot_motor_session.hpp"
 
+#include "base/tool.hpp"
 #include "driver/myact/motor_control.hpp"
 #include "ethercat_adapter_igh.hpp"
 #include "motor_base/motor_base.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -13,14 +15,10 @@
 #include <utility>
 
 namespace inference {
-namespace {
 
-bool finite_vector(const std::vector<double>& values)
-{
-    return std::all_of(values.begin(), values.end(), [](double value) {
-        return std::isfinite(value);
-    });
-}
+using robot_base::finite_vector;
+
+namespace {
 
 bool finite_impedance_setpoints(
     const std::vector<motor_base::ImpedanceSetpoint>& setpoints)
@@ -300,13 +298,39 @@ bool RobotMotorSession::apply_impedance_setpoints(
     return true;
 }
 
+bool RobotMotorSession::apply_impedance_setpoints_realtime(
+    const std::array<motor_base::ImpedanceSetpoint,
+                     motor_base::kMaxMotorCommandSetpoints>& setpoints,
+    std::size_t count)
+{
+    const motor_base::ControlCommand command =
+        motor_base::ControlCommand::set_impedance_targets_fixed(
+            setpoints.data(),
+            count);
+    const motor_base::CommandSubmitResult result =
+        controller_->send_realtime_setpoint_command(command);
+    if (result == motor_base::CommandSubmitResult::ACCEPTED) {
+        return true;
+    }
+
+    std::cerr << "[RobotMotorSession] apply_impedance_setpoints command rejected: "
+              << command_submit_result_name(result) << "\n";
+    return false;
+}
+
+bool RobotMotorSession::try_consume_realtime_feedback(
+    motor_base::RealtimeMotorFeedback& feedback)
+{
+    if (!initialized_.load() || !controller_) {
+        return false;
+    }
+    return controller_->try_consume_realtime_feedback(feedback);
+}
+
 
 bool RobotMotorSession::submit_command(const motor_base::ControlCommand& command,
                                        const char* context)
 {
-    if (!controller_) {
-        return false;
-    }
     const motor_base::CommandSubmitResult result = controller_->send_command(command);
     if (result == motor_base::CommandSubmitResult::ACCEPTED) {
         return true;
@@ -323,34 +347,7 @@ bool RobotMotorSession::submit_command(const motor_base::ControlCommand& command
 
 std::vector<double> RobotMotorSession::get_joint_q() const
 {
-    std::vector<double> q(config_.num_motors, 0.0);
-    if (!controller_) {
-        return q;
-    }
-    q = controller_->get_joint_q_rad();
-    return q;
-}
-
-
-std::vector<double> RobotMotorSession::get_joint_vel() const
-{
-    std::vector<double> dq(config_.num_motors, 0.0);
-    if (!controller_) {
-        return dq;
-    }
-    dq = controller_->get_joint_vel_rad_s();
-    return dq;
-}
-
-
-std::vector<double> RobotMotorSession::get_joint_torque_percent() const
-{
-    std::vector<double> torque(config_.num_motors, 0.0);
-    if (!controller_) {
-        return torque;
-    }
-    torque = controller_->get_joint_torque_percent();
-    return torque;
+    return controller_->get_joint_q_rad();
 }
 
 

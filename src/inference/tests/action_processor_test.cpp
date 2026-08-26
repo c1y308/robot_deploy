@@ -90,6 +90,33 @@ inference::MotorStateSnapshot make_motor_state()
     return state;
 }
 
+motor_base::RealtimeMotorFeedback make_realtime_feedback(
+    const inference::MotorStateSnapshot& state)
+{
+    motor_base::RealtimeMotorFeedback feedback;
+    feedback.sequence = 1;
+    feedback.timestamp_ns = state.timestamp_ns;
+    feedback.motor_count = state.position_rad.size();
+    for (std::size_t i = 0; i < state.position_rad.size(); ++i) {
+        feedback.q[i] = state.position_rad[i];
+        feedback.dq[i] = state.velocity_rad_s[i];
+        feedback.torque_percent[i] = state.torque_percent[i];
+    }
+    return feedback;
+}
+
+inference::robot_detail::ActionProcessor::FixedModelTarget make_fixed_target(
+    const std::vector<double>& values)
+{
+    inference::robot_detail::ActionProcessor::FixedModelTarget target{};
+    expect(values.size() == target.size(),
+           "fixed target helper requires exactly one policy frame");
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        target[i] = values[i];
+    }
+    return target;
+}
+
 inference::AnkleTorqueControlConfig make_torque_config()
 {
     inference::AnkleTorqueControlConfig config;
@@ -170,7 +197,8 @@ double clamp_symmetric(double value, double limit)
 void test_build_motor_targets()
 {
     inference::robot_detail::ActionProcessor processor(make_mapping(),
-                                                       make_policy_config());
+                                                       make_policy_config(),
+                                                       make_torque_config());
     std::vector<double> model_targets(12, 0.0);
     model_targets[0] = 2.0;    // clipped to +1.0, motor 0 direction +1
     model_targets[1] = 0.25;   // motor 6 direction -1
@@ -199,7 +227,8 @@ void test_build_motor_targets()
 void test_target_size_validation()
 {
     inference::robot_detail::ActionProcessor processor(make_mapping(),
-                                                       make_policy_config());
+                                                       make_policy_config(),
+                                                       make_torque_config());
     std::vector<double> motor_targets;
     std::string error;
     expect(!processor.build_motor_targets(std::vector<double>(11, 0.0),
@@ -212,7 +241,8 @@ void test_target_size_validation()
 void test_reset_start_model_pose()
 {
     inference::robot_detail::ActionProcessor processor(make_mapping(),
-                                                       make_policy_config());
+                                                       make_policy_config(),
+                                                       make_torque_config());
     std::vector<double> current_motor_q(12, 0.0);
     current_motor_q[0] = 0.40;
     current_motor_q[6] = -0.30;
@@ -233,8 +263,11 @@ void test_reset_start_model_pose()
 void test_policy_impedance_command_uses_ankle_torque()
 {
     const auto mapping = make_mapping();
+    const inference::AnkleTorqueControlConfig torque_config =
+        make_torque_config();
     inference::robot_detail::ActionProcessor processor(mapping,
-                                                       make_policy_config());
+                                                       make_policy_config(),
+                                                       torque_config);
     inference::MotorStateSnapshot motor_state = make_motor_state();
 
     constexpr double pitch = -0.05;
@@ -261,20 +294,22 @@ void test_policy_impedance_command_uses_ankle_torque()
     model_targets[pitch_model_index] = pitch + 0.10;
     model_targets[roll_model_index] = roll - 0.05;
 
-    inference::robot_detail::ActionProcessor::PolicyMotorCommand command;
+    inference::robot_detail::ActionProcessor::FixedPolicyMotorCommand command;
     std::string error;
-    const inference::AnkleTorqueControlConfig torque_config = make_torque_config();
     const std::vector<double> kp = make_motor_kp();
     const std::vector<double> kd = make_motor_kd();
-    expect(processor.build_policy_impedance_command(model_targets,
-                                                    motor_state,
+    const auto fixed_target = make_fixed_target(model_targets);
+    const motor_base::RealtimeMotorFeedback feedback =
+        make_realtime_feedback(motor_state);
+    expect(processor.build_policy_impedance_command(fixed_target,
+                                                    feedback,
                                                     kp,
                                                     kd,
                                                     torque_config,
                                                     command,
                                                     error),
            "policy impedance command should build: " + error);
-    expect(command.setpoints.size() == 12, "policy setpoint size should match DOF count");
+    expect(command.setpoint_count == 12, "policy setpoint count should match DOF count");
     expect(command.target_effort_permille.size() == 12,
            "policy target effort size should match DOF count");
 
@@ -363,7 +398,8 @@ void test_policy_ankle_torque_clamps_to_config_limit()
 {
     const auto mapping = make_mapping();
     inference::robot_detail::ActionProcessor processor(mapping,
-                                                       make_policy_config());
+                                                       make_policy_config(),
+                                                       make_torque_config());
     inference::MotorStateSnapshot motor_state = make_motor_state();
 
     constexpr double pitch = -0.05;
@@ -389,10 +425,10 @@ void test_policy_ankle_torque_clamps_to_config_limit()
     torque_config.virtual_kp = {10000.0, 10000.0};
     torque_config.target_torque_limit_permille = 1.0;
 
-    inference::robot_detail::ActionProcessor::PolicyMotorCommand command;
+    inference::robot_detail::ActionProcessor::FixedPolicyMotorCommand command;
     std::string error;
-    expect(processor.build_policy_impedance_command(model_targets,
-                                                    motor_state,
+    expect(processor.build_policy_impedance_command(make_fixed_target(model_targets),
+                                                    make_realtime_feedback(motor_state),
                                                     make_motor_kp(),
                                                     make_motor_kd(),
                                                     torque_config,
@@ -418,7 +454,9 @@ void test_policy_ankle_pitch_hard_limit_rejects_current_state()
     const auto mapping = make_mapping();
     inference::PolicyConfig policy_config = make_policy_config();
     policy_config.joint_max_rad[8] = 0.02;
-    inference::robot_detail::ActionProcessor processor(mapping, policy_config);
+    inference::robot_detail::ActionProcessor processor(mapping,
+                                                       policy_config,
+                                                       make_torque_config());
     inference::MotorStateSnapshot motor_state = make_motor_state();
     set_ankle_state(motor_state,
                     *mapping,
@@ -426,15 +464,16 @@ void test_policy_ankle_pitch_hard_limit_rejects_current_state()
                     0.05,
                     0.0);
 
-    inference::robot_detail::ActionProcessor::PolicyMotorCommand command;
+    inference::robot_detail::ActionProcessor::FixedPolicyMotorCommand command;
     std::string error;
-    expect(!processor.build_policy_impedance_command(std::vector<double>(12, 0.0),
-                                                     motor_state,
-                                                     make_motor_kp(),
-                                                     make_motor_kd(),
-                                                     make_torque_config(),
-                                                     command,
-                                                     error),
+    expect(!processor.build_policy_impedance_command(
+               make_fixed_target(std::vector<double>(12, 0.0)),
+               make_realtime_feedback(motor_state),
+               make_motor_kp(),
+               make_motor_kd(),
+               make_torque_config(),
+               command,
+               error),
            "current pitch beyond hard limit should reject policy command");
     expect(error.find("left ankle") != std::string::npos,
            "pitch hard-limit error should include ankle side");
@@ -449,7 +488,9 @@ void test_policy_ankle_roll_hard_limit_rejects_current_state()
     const auto mapping = make_mapping();
     inference::PolicyConfig policy_config = make_policy_config();
     policy_config.joint_min_rad[10] = -0.02;
-    inference::robot_detail::ActionProcessor processor(mapping, policy_config);
+    inference::robot_detail::ActionProcessor processor(mapping,
+                                                       policy_config,
+                                                       make_torque_config());
     inference::MotorStateSnapshot motor_state = make_motor_state();
     set_ankle_state(motor_state,
                     *mapping,
@@ -457,15 +498,16 @@ void test_policy_ankle_roll_hard_limit_rejects_current_state()
                     0.0,
                     -0.05);
 
-    inference::robot_detail::ActionProcessor::PolicyMotorCommand command;
+    inference::robot_detail::ActionProcessor::FixedPolicyMotorCommand command;
     std::string error;
-    expect(!processor.build_policy_impedance_command(std::vector<double>(12, 0.0),
-                                                     motor_state,
-                                                     make_motor_kp(),
-                                                     make_motor_kd(),
-                                                     make_torque_config(),
-                                                     command,
-                                                     error),
+    expect(!processor.build_policy_impedance_command(
+               make_fixed_target(std::vector<double>(12, 0.0)),
+               make_realtime_feedback(motor_state),
+               make_motor_kp(),
+               make_motor_kd(),
+               make_torque_config(),
+               command,
+               error),
            "current roll beyond hard limit should reject policy command");
     expect(error.find("left ankle") != std::string::npos,
            "roll hard-limit error should include ankle side");
@@ -483,7 +525,9 @@ void test_policy_target_limit_does_not_trip_current_state_hard_limit()
     policy_config.joint_max_rad[8] = 0.05;
     policy_config.joint_min_rad[10] = -0.05;
     policy_config.joint_max_rad[10] = 0.05;
-    inference::robot_detail::ActionProcessor processor(mapping, policy_config);
+    inference::robot_detail::ActionProcessor processor(mapping,
+                                                       policy_config,
+                                                       make_torque_config());
     inference::MotorStateSnapshot motor_state = make_motor_state();
     set_ankle_state(motor_state,
                     *mapping,
@@ -495,10 +539,10 @@ void test_policy_target_limit_does_not_trip_current_state_hard_limit()
     model_targets[8] = 1.0;
     model_targets[10] = -1.0;
 
-    inference::robot_detail::ActionProcessor::PolicyMotorCommand command;
+    inference::robot_detail::ActionProcessor::FixedPolicyMotorCommand command;
     std::string error;
-    expect(processor.build_policy_impedance_command(model_targets,
-                                                    motor_state,
+    expect(processor.build_policy_impedance_command(make_fixed_target(model_targets),
+                                                    make_realtime_feedback(motor_state),
                                                     make_motor_kp(),
                                                     make_motor_kd(),
                                                     make_torque_config(),
@@ -506,7 +550,7 @@ void test_policy_target_limit_does_not_trip_current_state_hard_limit()
                                                     error),
            "target beyond relative limits should clip without tripping current-state hard limit: " +
            error);
-    expect(command.setpoints.size() == 12,
+    expect(command.setpoint_count == 12,
            "clipped target policy command should still produce all motor setpoints");
 }
 

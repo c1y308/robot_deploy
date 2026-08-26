@@ -62,6 +62,27 @@ const char* discrete_command_name(mb::DiscreteCommandType type)
     return "UNKNOWN";
 }
 
+const char* setpoint_command_name(mb::SetpointCommandType type)
+{
+    switch (type) {
+        case mb::SetpointCommandType::POSITION_TARGETS: return "POSITION_TARGETS";
+        case mb::SetpointCommandType::VELOCITY_TARGETS: return "VELOCITY_TARGETS";
+        case mb::SetpointCommandType::TORQUE_TARGETS: return "TORQUE_TARGETS";
+        case mb::SetpointCommandType::IMPEDANCE_TARGETS: return "IMPEDANCE_TARGETS";
+    }
+    return "UNKNOWN";
+}
+
+const char* setpoint_reject_reason_name(mb::SetpointRejectReason reason)
+{
+    switch (reason) {
+        case mb::SetpointRejectReason::NONE: return "NONE";
+        case mb::SetpointRejectReason::MODE_NOT_CONFIRMED:
+            return "MODE_NOT_CONFIRMED";
+    }
+    return "UNKNOWN";
+}
+
 } // namespace
 
 void print_myact_status_table(
@@ -186,6 +207,16 @@ void print_myact_event(const mb::RtEvent& event)
             std::cerr << "[MYACTUA] communication watchdog cleared, cycle="
                       << event.tick
                       << ", wc=" << event.value << "\n";
+            break;
+
+        case mb::RtEventType::SETPOINT_COMMAND_REJECTED:
+            std::cerr << "[MYACTUA] setpoint command rejected on motor "
+                      << event.motor_index
+                      << ", type=" << setpoint_command_name(
+                             static_cast<mb::SetpointCommandType>(event.value))
+                      << ", reason=" << setpoint_reject_reason_name(
+                             static_cast<mb::SetpointRejectReason>(event.reason))
+                      << "\n";
             break;
     }
 }

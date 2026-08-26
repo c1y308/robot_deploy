@@ -1,16 +1,16 @@
 #include "robot/joint_mapping.hpp"
 
+#include "base/tool.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <utility>
 
 namespace inference::robot_detail {
-namespace {
 
-bool index_in_range(int index, int count)
-{
-    return index >= 0 && index < count;
-}
+using robot_base::index_in_range;
+
+namespace {
 
 // 检查 AnkleParallelMap 中的索引是否都在 [0, count) 范围内
 bool ankle_parallel_map_indices_in_range(const inference::AnkleParallelMap& ankle_map,
@@ -212,44 +212,18 @@ bool JointMapping::configure(int dof_count, const inference::JointMappingConfig&
     return true;
 }
 
-bool JointMapping::validate(int dof_count,
-                            const inference::JointMappingConfig& config,
-                            std::string& error)
-{
-    int next_dof_count = 0;
-    std::vector<unsigned char> parallel_model_dof;
-    std::vector<int> direct_motor_for_model_dof;
-    std::vector<int> motor_to_model_direction;
-    return build_mapping(dof_count,
-                         config,
-                         next_dof_count,
-                         parallel_model_dof,
-                         direct_motor_for_model_dof,
-                         motor_to_model_direction,
-                         error);
-}
-
 bool JointMapping::is_parallel_model_dof(int model_index) const
 {
-    if (!configured_ || !index_in_range(model_index, dof_count_)) {
-        return false;
-    }
     return parallel_model_dof_[static_cast<std::size_t>(model_index)] != 0U;
 }
 
 int JointMapping::direct_motor_for_model_dof(int model_index) const
 {
-    if (!configured_ || !index_in_range(model_index, dof_count_)) {
-        return -1;
-    }
     return direct_motor_for_model_dof_[static_cast<std::size_t>(model_index)];
 }
 
 int JointMapping::direction_for_motor(int motor_index) const
 {
-    if (!configured_ || !index_in_range(motor_index, dof_count_)) {
-        return 1;
-    }
     return motor_to_model_direction_[static_cast<std::size_t>(motor_index)];
 }
 

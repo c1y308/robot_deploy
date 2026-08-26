@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <cstddef>
 #include <utility>
@@ -76,8 +77,9 @@ struct ControlCommand {
 
     int motor_index;                     // 电机索引，kAllMotors 表示全部电机
 
-    std::vector<double> setpoints;
-    std::vector<ImpedanceSetpoint> impedance_setpoints;
+    std::array<double, kMaxMotorCommandSetpoints> setpoints;
+    std::array<ImpedanceSetpoint, kMaxMotorCommandSetpoints> impedance_setpoints;
+    std::size_t payload_size;
 
     MotorControlMode mode; // 目标电机模式，仅 SET_MODE 使用
 
@@ -90,6 +92,7 @@ struct ControlCommand {
           motor_index(kAllMotors),
           setpoints(),
           impedance_setpoints(),
+          payload_size(0),
           mode(MotorControlMode::NONE),
           payload_valid(true) {}
 
@@ -119,54 +122,90 @@ struct ControlCommand {
     }
 
     static ControlCommand set_position_targets_rad(std::vector<double> values) {
+        return set_position_targets_rad_fixed(values.data(), values.size());
+    }
+
+    static ControlCommand set_position_targets_rad_fixed(
+        const double* values,
+        std::size_t count) {
         ControlCommand cmd;
         cmd.kind = ControlCommandKind::SETPOINT;
         cmd.setpoint_type = SetpointCommandType::POSITION_TARGETS;
         cmd.motor_index = kAllMotors;
-        if (values.size() > kMaxMotorCommandSetpoints) {
+        if (count > kMaxMotorCommandSetpoints || (!values && count != 0)) {
             cmd.payload_valid = false;
             return cmd;
         }
-        cmd.setpoints = std::move(values);
+        cmd.payload_size = count;
+        for (std::size_t i = 0; i < count; ++i) {
+            cmd.setpoints[i] = values[i];
+        }
         return cmd;
     }
 
     static ControlCommand set_velocity_targets_rad_s(std::vector<double> values) {
+        return set_velocity_targets_rad_s_fixed(values.data(), values.size());
+    }
+
+    static ControlCommand set_velocity_targets_rad_s_fixed(
+        const double* values,
+        std::size_t count) {
         ControlCommand cmd;
         cmd.kind = ControlCommandKind::SETPOINT;
         cmd.setpoint_type = SetpointCommandType::VELOCITY_TARGETS;
         cmd.motor_index = kAllMotors;
-        if (values.size() > kMaxMotorCommandSetpoints) {
+        if (count > kMaxMotorCommandSetpoints || (!values && count != 0)) {
             cmd.payload_valid = false;
             return cmd;
         }
-        cmd.setpoints = std::move(values);
+        cmd.payload_size = count;
+        for (std::size_t i = 0; i < count; ++i) {
+            cmd.setpoints[i] = values[i];
+        }
         return cmd;
     }
 
     static ControlCommand set_torque_targets(std::vector<double> torque) {
+        return set_torque_targets_fixed(torque.data(), torque.size());
+    }
+
+    static ControlCommand set_torque_targets_fixed(
+        const double* torque,
+        std::size_t count) {
         ControlCommand cmd;
         cmd.kind = ControlCommandKind::SETPOINT;
         cmd.setpoint_type = SetpointCommandType::TORQUE_TARGETS;
         cmd.motor_index = kAllMotors;
-        if (torque.size() > kMaxMotorCommandSetpoints) {
+        if (count > kMaxMotorCommandSetpoints || (!torque && count != 0)) {
             cmd.payload_valid = false;
             return cmd;
         }
-        cmd.setpoints = std::move(torque);
+        cmd.payload_size = count;
+        for (std::size_t i = 0; i < count; ++i) {
+            cmd.setpoints[i] = torque[i];
+        }
         return cmd;
     }
 
     static ControlCommand set_impedance_targets(std::vector<ImpedanceSetpoint> values) {
+        return set_impedance_targets_fixed(values.data(), values.size());
+    }
+
+    static ControlCommand set_impedance_targets_fixed(
+        const ImpedanceSetpoint* values,
+        std::size_t count) {
         ControlCommand cmd;
         cmd.kind = ControlCommandKind::SETPOINT;
         cmd.setpoint_type = SetpointCommandType::IMPEDANCE_TARGETS;
         cmd.motor_index = kAllMotors;
-        if (values.size() > kMaxMotorCommandSetpoints) {
+        if (count > kMaxMotorCommandSetpoints || (!values && count != 0)) {
             cmd.payload_valid = false;
             return cmd;
         }
-        cmd.impedance_setpoints = std::move(values);
+        cmd.payload_size = count;
+        for (std::size_t i = 0; i < count; ++i) {
+            cmd.impedance_setpoints[i] = values[i];
+        }
         return cmd;
     }
 };
@@ -192,6 +231,11 @@ enum class DiscreteFailReason : int {
     FAULT = 1,
     TIMEOUT = 2,
     MAX_RETRY = 3
+};
+
+enum class SetpointRejectReason : int {
+    NONE = 0,
+    MODE_NOT_CONFIRMED = 1
 };
 
 

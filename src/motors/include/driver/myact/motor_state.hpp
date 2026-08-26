@@ -9,7 +9,7 @@
 namespace myactua {
 
 
-/// @brief 电机期望的值与模式
+/// @brief 电机期望值与目标模式；mode 表示 target mode，不表示驱动器已确认运行模式。
 struct DesiredState {
     bool enabled;
 

@@ -94,6 +94,7 @@ target_compile_definitions(robot_interface PUBLIC
 target_link_libraries(robot_interface
     PUBLIC
     inference_recorder
+    robot_base
     myactua_ethercat
     imu_a100_core
     ${TORCH_LIBRARIES}
@@ -147,6 +148,7 @@ add_executable(joint_mapping_test
 target_include_directories(joint_mapping_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+target_link_libraries(joint_mapping_test PRIVATE robot_base)
 
 add_executable(target_interpolator_test
     tests/target_interpolator_test.cpp
@@ -164,6 +166,7 @@ target_include_directories(action_processor_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
 )
+target_link_libraries(action_processor_test PRIVATE robot_base)
 
 add_executable(observation_builder_test
     tests/observation_builder_test.cpp
@@ -174,6 +177,7 @@ target_include_directories(observation_builder_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
 )
+target_link_libraries(observation_builder_test PRIVATE robot_base)
 target_compile_definitions(observation_builder_test PRIVATE
     ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=$<BOOL:${ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS}>
 )

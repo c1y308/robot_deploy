@@ -147,17 +147,9 @@ bool TorchPolicyRunner::infer(const std::array<float, kInputSize>& observation,
             torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU));
 
         torch::jit::IValue output_value = impl_->module->forward({input});
-        if (!output_value.isTensor()) {
-            set_error("TorchScript policy output must be a tensor");
-            return false;
-        }
 
+        // 输出形状与类型已在 load 时 dry-run 验证，模型运行期不会变化。
         torch::Tensor output = output_value.toTensor();
-        std::string output_error;
-        if (!tensor_is_valid_policy_output(output, action.size(), output_error)) {
-            set_error(output_error);
-            return false;
-        }
 
         // 输出统一整理为 CPU contiguous float32，便于复制到固定 12 维动作数组。
         output = output.to(torch::kCPU).contiguous();

@@ -1,5 +1,7 @@
 #include "robot/observation_builder.hpp"
 
+#include "base/tool.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <cmath>
@@ -7,28 +9,10 @@
 #include <vector>
 
 namespace inference::robot_detail {
-namespace {
 
-bool index_in_range(int index, int count)
-{
-    return index >= 0 && index < count;
-}
-
-bool finite_array3(const std::array<double, 3>& values)
-{
-    return std::isfinite(values[0]) &&
-           std::isfinite(values[1]) &&
-           std::isfinite(values[2]);
-}
-
-bool finite_vector(const std::vector<double>& values)
-{
-    return std::all_of(values.begin(), values.end(), [](double value) {
-        return std::isfinite(value);
-    });
-}
-
-}  // namespace
+using robot_base::finite_array;
+using robot_base::finite_vector;
+using robot_base::index_in_range;
 
 ObservationBuilder::ObservationBuilder(std::shared_ptr<const JointMapping> mapping,
                                        PolicyConfig policy_config)
@@ -96,12 +80,12 @@ bool ObservationBuilder::build(
         error = "projected gravity is invalid";
         return false;
     }
-    if (!finite_array3(target_velocity)) {
+    if (!finite_array(target_velocity)) {
         error = "velocity command is not finite";
         return false;
     }
     if (!finite_vector(motor_state.position_rad) || !finite_vector(motor_state.velocity_rad_s) ||
-        !finite_array3(imu_state.body_ang_vel)   || !finite_array3(imu_state.projected_gravity)) {
+        !finite_array(imu_state.body_ang_vel)   || !finite_array(imu_state.projected_gravity)) {
         error = "observation source value is not finite";
         return false;
     }
@@ -153,21 +137,6 @@ bool ObservationBuilder::fill_joint_terms(
     JointTermArray& joint_vel_rel,         // 输出模型顺序的关节的相对偏移和速度
     std::string& error)
 {
-    if (!mapping_ || !mapping_->configured()) {
-        error = "joint mapping is not configured";
-        return false;
-    }
-    if (mapping_->dof_count() != static_cast<int>(kDof)) {
-        error = "joint mapping DOF count does not match policy DOF";
-        return false;
-    }
-    if (policy_config_.stand_pose_rad.size() != kDof ||
-        policy_config_.dof_pos_scale.size()  != kDof ||
-        policy_config_.dof_vel_scale.size()  != kDof) {
-        error = "policy observation vectors must have one value per DOF";
-        return false;
-    }
-
     joint_pos_rel.fill(0.0F);
     joint_vel_rel.fill(0.0F);
 
@@ -235,13 +204,6 @@ bool ObservationBuilder::fill_ankle_fk_joint_terms(
     // 获取脚踝模型的pitch和roll关节索引
     const int ankle_model_pitch_dof = ankle_map.model_pitch_dof;
     const int ankle_model_roll_dof  = ankle_map.model_roll_dof;
-    if (!index_in_range(ankle_model_pitch_dof, kDof) ||
-        !index_in_range(ankle_model_roll_dof, kDof) ||
-        !index_in_range(ankle_map.upper_motor_index, kDof) ||
-        !index_in_range(ankle_map.lower_motor_index, kDof)) {
-        error = "ankle map contains an out-of-range index";
-        return false;
-    }
 
     // 和运动学解算器中电机的旋转方向对齐
     const int upper_motor_direction =

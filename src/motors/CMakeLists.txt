@@ -7,6 +7,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)
 
 set(IGH_PATH /home/cat/ethercat)
 
+if(NOT TARGET robot_base)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../base
+                     ${CMAKE_CURRENT_BINARY_DIR}/base_build)
+endif()
+
 # 库目录设置
 link_directories(
     ${IGH_PATH}/lib
@@ -32,6 +37,9 @@ target_include_directories(myactua_ethercat PUBLIC
 
 # 目标库链接依赖库
 target_link_libraries(myactua_ethercat
+    PUBLIC
+    robot_base
+    PRIVATE
     ethercat
     pthread
     rt

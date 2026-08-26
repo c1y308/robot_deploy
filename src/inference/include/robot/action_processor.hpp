@@ -2,28 +2,41 @@
 
 #include "kinematics/ankle_motor_fk.hpp"
 #include "kinematics/ankle_motor_ik.hpp"
+#include "motor_base/realtime_feedback.hpp"
+#include "policy/policy_observation_config.hpp"
 #include "robot/joint_mapping.hpp"
 #include "robot/robot_config.hpp"
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
 
-namespace inference {
-struct MotorStateSnapshot;
-}
-
 namespace inference::robot_detail {
+
+struct LowPass2Coefficients {
+    double b0 = 0.0;
+    double b1 = 0.0;
+    double b2 = 0.0;
+    double a1 = 0.0;
+    double a2 = 0.0;
+};
 
 class ActionProcessor {
 public:
-    struct PolicyMotorCommand {
-        std::vector<motor_base::ImpedanceSetpoint> setpoints;
-        std::vector<double> target_effort_permille;
+    struct FixedPolicyMotorCommand {
+        std::array<motor_base::ImpedanceSetpoint,
+                   motor_base::kMaxMotorCommandSetpoints> setpoints{};
+        std::array<double, policy_observation::kDof> target_effort_permille{};
+        std::size_t setpoint_count{0};
     };
 
+    using FixedModelTarget =
+        std::array<double, policy_observation::kDof>;
+
     ActionProcessor(std::shared_ptr<const JointMapping> mapping,
-                    PolicyConfig policy_config);
+                    PolicyConfig policy_config,
+                    AnkleTorqueControlConfig torque_config);
 
     void reset_runtime_state();
 
@@ -37,12 +50,12 @@ public:
                                       std::string& error) const;
 
     bool build_policy_impedance_command(
-        const std::vector<double>& target_q_model_rad,
-        const MotorStateSnapshot& motor_state,
+        const FixedModelTarget& target_q_model_rad,
+        const motor_base::RealtimeMotorFeedback& motor_feedback,
         const std::vector<double>& motor_kp,
         const std::vector<double>& motor_kd,
         const AnkleTorqueControlConfig& torque_config,
-        PolicyMotorCommand& command,
+        FixedPolicyMotorCommand& command,
         std::string& error);
 
 private:
@@ -82,17 +95,18 @@ private:
                         std::string& error);
 
     bool apply_ankle_torque_control(
-        const std::vector<double>& target_q_model_rad,
-        const MotorStateSnapshot& motor_state,
+        const FixedModelTarget& target_q_model_rad,
+        const motor_base::RealtimeMotorFeedback& motor_feedback,
         const char* ankle_name,
         const AnkleParallelMap& ankle_map,
         const AnkleTorqueControlConfig& torque_config,
         AnkleTorqueState& state,
-        PolicyMotorCommand& command,
+        FixedPolicyMotorCommand& command,
         std::string& error);
 
     std::shared_ptr<const JointMapping> mapping_;
     PolicyConfig policy_config_;
+    LowPass2Coefficients low_pass_coeffs_;
     AnkleIkState left_ankle_ik_;
     AnkleIkState right_ankle_ik_;
     AnkleTorqueState left_ankle_torque_;

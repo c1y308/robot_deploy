@@ -17,6 +17,7 @@ struct MotorConfig {
 
     int wait_all_motors_timeout_ms = 20000;
     int wait_all_motors_poll_ms    = 100;
+    int control_ready_timeout_ms   = 4000;
 
     bool print_motors_info = false;
     std::vector<int> print_motor_ids = {-1};

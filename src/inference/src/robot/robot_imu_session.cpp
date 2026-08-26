@@ -106,28 +106,4 @@ ImuStateSnapshot RobotImuSession::get_state() const
     return state_;
 }
 
-std::array<double, 4> RobotImuSession::get_quat() const
-{
-    return get_state().quat;
-}
-
-std::array<double, 3> RobotImuSession::get_body_ang_vel() const
-{
-    return get_state().body_ang_vel;
-}
-
-std::array<double, 3> RobotImuSession::get_euler() const
-{
-    return get_state().euler;
-}
-
-std::array<double, 3> RobotImuSession::get_projected_gravity() const
-{
-    const ImuStateSnapshot state = get_state();
-    if (!state.projected_gravity_valid) {
-        return {0.0, 0.0, 0.0};
-    }
-    return state.projected_gravity;
-}
-
 }  // namespace inference

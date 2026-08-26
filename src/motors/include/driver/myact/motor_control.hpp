@@ -63,6 +63,7 @@ private:
 
     std::atomic<bool> whole_body_fault_latched_{false};
     bool restart_all_requested_{false};
+    uint64_t realtime_feedback_sequence_{0};
     uint32_t process_data_fail_count_{0};
     uint32_t recovery_healthy_count_{0};
     MyactCommunicationFaultReason fault_reason_{MyactCommunicationFaultReason::None};
@@ -95,6 +96,7 @@ private:
     void realtime_stop_callback() noexcept override;
 
     void update();
+    void update_realtime_feedback();
     void update_status_snapshot();
     void update_diagnostics_snapshot();
     void update_communication_watchdog(
@@ -105,6 +107,7 @@ private:
         const EthercatBusHealthSnapshot& health);
     void clear_communication_fault();
     void apply_whole_body_quick_stop();
+    void reset_motor_setpoints_to_feedback(MotorState& motor);
     void reset_motor_targets_to_feedback(MotorState& motor);
     void push_communication_fault_event(
         motor_base::RtEventType type,

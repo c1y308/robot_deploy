@@ -8,8 +8,10 @@
 #include <thread>
 #include <vector>
 
+#include "base/spsc_latest_value.hpp"
 #include "motor_base/command_queue.hpp"
 #include "motor_base/command_types.hpp"
+#include "motor_base/realtime_feedback.hpp"
 #include "motor_base/rt_event_dispatcher.hpp"
 #include "motor_base/status_channel.hpp"
 
@@ -85,14 +87,20 @@ public:
 
     /// @brief 异步发送控制命令（stop / restart / set_mode / setpoints）
     /// @param cmd 控制命令，详见 ControlCommand
-    /// @return 命令提交结果（ACCEPTED / QUEUE_FULL / INVALID_*）
+    /// @return 命令提交结果；ACCEPTED 仅表示命令已提交，不保证已执行
     CommandSubmitResult send_command(const ControlCommand& cmd);
+
+    /// @brief 专供单 producer 控制线程使用的 latest-value setpoint 提交通道。
+    CommandSubmitResult send_realtime_setpoint_command(const ControlCommand& cmd);
 
 
     // ──────────────────── 状态反馈（物理量） ────────────────────
 
     /// @brief 获取全部电机公共状态快照
     std::vector<MotorStatusSnapshot> get_status();
+
+    /// @brief 读取专用 RT feedback latest-value 快照；无新快照时返回 false。
+    bool try_consume_realtime_feedback(RealtimeMotorFeedback& feedback);
 
     /// @brief 获取全部电机关节位置，单位 rad
     std::vector<double> get_joint_q_rad();
@@ -137,6 +145,7 @@ protected:
 
     bool write_status(StatusWriteToken& token);
     void publish_status(const StatusWriteToken& token);
+    void publish_realtime_feedback(const RealtimeMotorFeedback& feedback);
     
     void push_event(const RtEvent& event);
     void set_event_fallback_printer(RtEventDispatcher::EventPrinter printer);
@@ -148,10 +157,13 @@ protected:
 
     virtual bool connect_impl(const char* interface_name) = 0;
     virtual void realtime_cycle_callback() = 0;
+
+    // 如何处理连续命令和离散命令的回调，派生类必须实现
     virtual void apply_setpoint_command_callback(const ControlCommand& cmd) = 0;
     virtual void apply_discrete_command_callback(
         int motor_index,
         const DiscreteCommand& cmd) = 0;
+        
     virtual DiscreteCommandEvaluation evaluate_discrete_command_callback(
         int motor_index,
         const DiscreteCommand& cmd) const = 0;
@@ -178,6 +190,7 @@ protected:
 private:
     //  thread_func()中调用，从命令队列中取出命令进行分发
     void process_queued_commands();
+    void process_realtime_setpoint_command();
 
     // 直接在process_queued_commands()中调用，将离散命令入各个电机的命令队列
     void enqueue_discrete_command(const ControlCommand& cmd);
@@ -191,6 +204,8 @@ private:
 
     // 电机控制命令队列（stop / restart / set_mode / setpoints）
     CommandQueue cmd_queue_;
+    robot_base::SpscLatestValue<ControlCommand> realtime_setpoint_channel_;
+    robot_base::SpscLatestValue<RealtimeMotorFeedback> realtime_feedback_channel_;
     
     // 每个电机的离散命令队列（stop / restart / set_mode）
     std::vector<DiscreteCommandQueue> discrete_cmd_queues_;

@@ -32,10 +32,6 @@ public:
         int dof_count,
         const inference::JointMappingConfig& config,
         std::string& error);
-        
-    static bool validate(int dof_count,
-                         const inference::JointMappingConfig& config,
-                         std::string& error);
 
     bool configured() const noexcept { return configured_; }
     int dof_count() const noexcept { return dof_count_; }

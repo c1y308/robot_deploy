@@ -42,11 +42,6 @@ public:
 
     ImuStateSnapshot get_state() const;
 
-    std::array<double, 4> get_quat() const;
-    std::array<double, 3> get_body_ang_vel() const;
-    std::array<double, 3> get_euler() const;
-    std::array<double, 3> get_projected_gravity() const;
-
 private:
     ImuConfig config_;
     std::unique_ptr<imu::IMUReader> reader_;

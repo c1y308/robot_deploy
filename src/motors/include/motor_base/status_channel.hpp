@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/spsc_latest_value.hpp"
 #include "motor_base/command_types.hpp"
 
 namespace motor_base {
@@ -28,6 +29,7 @@ struct MotorStatusSnapshot {
     bool comm_ok;
     bool enabled;
     bool faulted;
+    bool control_ready;
 
     MotorControlMode mode;
     MotorControlMode target_mode;
@@ -35,7 +37,7 @@ struct MotorStatusSnapshot {
     MotorStatusSnapshot()
         : motor_index(-1), position_rad(0.0), velocity_rad_s(0.0),
           torque_percent(0.0), comm_ok(false), enabled(false), faulted(false),
-          mode(MotorControlMode::NONE),
+          control_ready(false), mode(MotorControlMode::NONE),
           target_mode(MotorControlMode::NONE) {}
 };
 
@@ -101,45 +103,10 @@ public:
 #endif
 
 private:
-    // ================================================================
-    // Triple-buffer: Writing / Middle / Reading
-    // ================================================================
-    //
-    // Producer private Writing
-    //         <-> atomic shared Middle
-    //         <-> Consumer private Reading
-    //
-    // Producer 只交换 Writing <-> Middle；Consumer 只交换 Reading <-> Middle。
-    // 没有 Producer <-> Reading 的直接 ownership 转移，因此 Consumer 正在复制
-    // Reading 槽时，Producer 的下一轮 Writing 永远不会指向该槽。
-    //
-    // 关键不变量：
-    //   - Producer 绝不等待 Consumer，不用 mutex，不做 CAS retry，不搜索槽位
-    //   - Middle 至多保存一个 latest snapshot；dirty=true 表示未消费
-    //   - 中间帧可被覆盖；这是 latest-value semantics，不是队列
-
-    static constexpr std::size_t kStatusSlotCount = 3;
-
-    using MiddleState = std::uint32_t;
-    static constexpr MiddleState kSlotMask = 0x3u;
-    static constexpr MiddleState kDirtyBit = 0x4u;
-
-    static constexpr MiddleState make_middle_state(int slot,
-                                                   bool dirty) noexcept
-    {
-        return (static_cast<MiddleState>(slot) & kSlotMask) |
-               (dirty ? kDirtyBit : 0u);
-    }
-
-    static constexpr int middle_slot(MiddleState state) noexcept
-    {
-        return static_cast<int>(state & kSlotMask);
-    }
-
-    static constexpr bool middle_dirty(MiddleState state) noexcept
-    {
-        return (state & kDirtyBit) != 0u;
-    }
+    struct StatusFrame {
+        std::size_t count{0};
+        std::array<Snapshot, kMaxMotorCommandSetpoints> values{};
+    };
 
     bool copy_latest_status(std::vector<Snapshot>& out);
     void thread_func();
@@ -147,15 +114,7 @@ private:
     std::size_t motor_count_{0};
     int publish_period_ms_{1};   // 读取频率
 
-    // 三槽数据存储
-    std::array<std::array<Snapshot, kMaxMotorCommandSetpoints>, kStatusSlotCount> slots_{};
-
-    // writing_idx_: 仅 Producer 读写（非原子）
-    int writing_idx_{0};
-    // reading_idx_: 仅 Consumer 读写（非原子）
-    int reading_idx_{1};
-    // middle_index_: 唯一共享 ownership 点，低两位为槽号，bit2 为 dirty。
-    std::atomic<MiddleState> middle_index_{make_middle_state(2, false)};
+    robot_base::SpscLatestValue<StatusFrame> latest_frame_;
 
     // ── 统计 ──
     std::atomic<std::uint64_t> publish_count_{0};
@@ -209,12 +168,7 @@ void LatestStatusChannel<Snapshot>::configure(std::size_t motor_count,
 
     status_cache_.assign(motor_count_, Snapshot());
 
-    // configure 前已 stop()，此时没有 Producer/Consumer 并发访问。
-    // 初始 ownership: slot0=Writing, slot1=Reading, slot2=Middle(clean)。
-    writing_idx_ = 0;
-    reading_idx_ = 1;
-    middle_index_.store(make_middle_state(2, false),
-                        std::memory_order_relaxed);
+    latest_frame_.reset_empty();
 
     publish_count_.store(0, std::memory_order_relaxed);
     overwritten_count_.store(0, std::memory_order_relaxed);
@@ -232,12 +186,12 @@ bool LatestStatusChannel<Snapshot>::write(WriteToken& token)
     if (motor_count_ == 0)
         return false;
 
-    // Producer 始终独占 writing_idx_，无需 CAS、无需查找；
-    token.slot = static_cast<std::size_t>(writing_idx_);
-    token.data = slots_[writing_idx_].data();   // 直接给令牌填充数据（令牌为引用传入）
+    StatusFrame* frame = latest_frame_.acquire_write_slot();
+    frame->count = motor_count_;
+    token.slot = 0;
+    token.data = frame->values.data();
     return true;
 }
-
 
 // ---------------------------------------------------------------------------
 // publish — Producer 发布写入槽（RT 路径，O(1) 无 CAS 循环）
@@ -247,25 +201,15 @@ template <typename Snapshot>
 void LatestStatusChannel<Snapshot>::publish(const WriteToken& token)
 {
     if (!token.data ||
-        token.slot != static_cast<std::size_t>(writing_idx_) ||
-        token.data != slots_[static_cast<std::size_t>(writing_idx_)].data()) {
+        token.slot != 0 ||
+        token.data != latest_frame_.acquire_write_slot()->values.data()) {
         return;
     }
 
-    // publish当前轮的 write 槽后，将其作为 middle 槽（且设为 dirty）
-    const MiddleState new_middle = make_middle_state(writing_idx_, true);
-
-    // 单次 RMW 完成 Writing <-> Middle：
-    // - release: 发布前对 slots_[writing_idx_] 的普通写入对 Consumer 可见。
-    // - acquire: 若旧 Middle 是 Consumer 刚释放的 Reading，Producer 在重用该槽
-    //   为下一轮 Writing 前，能看到 Consumer 对该槽读取完成的 release。
-    const MiddleState old_middle = middle_index_.exchange(new_middle, std::memory_order_acq_rel);
-
-    if (middle_dirty(old_middle)) {
+    const bool overwritten = latest_frame_.publish_written();
+    if (overwritten) {
         overwritten_count_.fetch_add(1, std::memory_order_relaxed);
     }
-    // 当前轮之前的 middle 槽作为下一轮 Writing 槽
-    writing_idx_ = middle_slot(old_middle);
     publish_count_.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -352,26 +296,16 @@ bool LatestStatusChannel<Snapshot>::copy_latest_status(std::vector<Snapshot>& ou
 {
     out.resize(motor_count_);
 
-    // 单次 RMW 完成 Reading <-> Middle：
-    // - acquire: 若 old_middle.dirty=true 且来自 Producer release，Consumer 复制
-    //   slots_[reading_idx_] 时能看到完整 Snapshot。
-    // - release: 把上一轮 Reading 槽归还为 clean Middle；Producer 之后 acquire 到
-    //   该槽时，Consumer 对该槽的读取已经完成。
-
-    // 当前的 reading 槽作为下一次的 middle 槽（给 Producer 用）
-    const MiddleState released_reading = make_middle_state(reading_idx_, false);
-    const MiddleState old_middle = middle_index_.exchange(released_reading, std::memory_order_acq_rel);
-    // 当前的 middle 槽作为 reading 槽
-    reading_idx_ = middle_slot(old_middle);
-
-    if (!middle_dirty(old_middle)) {
+    StatusFrame latest;
+    if (!latest_frame_.try_consume_latest(latest)) {
         return false;
     }
 
-    // 读取当前轮的 middle 槽
-    const auto& src = slots_[static_cast<std::size_t>(reading_idx_)];
-    for (std::size_t i = 0; i < motor_count_; ++i) {
-        out[i] = src[i];
+    const std::size_t count =
+        std::min<std::size_t>(latest.count, motor_count_);
+    out.resize(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        out[i] = latest.values[i];
     }
 
     return true;
