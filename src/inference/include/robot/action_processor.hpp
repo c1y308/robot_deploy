@@ -2,7 +2,7 @@
 
 #include "kinematics/ankle_motor_fk.hpp"
 #include "kinematics/ankle_motor_ik.hpp"
-#include "motor_base/realtime_feedback.hpp"
+#include "motor_base/status_channel.hpp"
 #include "policy/policy_observation_config.hpp"
 #include "robot/joint_mapping.hpp"
 #include "robot/robot_config.hpp"
@@ -36,6 +36,9 @@ public:
 
     ActionProcessor(std::shared_ptr<const JointMapping> mapping,
                     PolicyConfig policy_config,
+                    AnkleMotorLimitConfig ankle_motor_limits,
+                    std::vector<double> motor_kp,
+                    std::vector<double> motor_kd,
                     AnkleTorqueControlConfig torque_config);
 
     void reset_runtime_state();
@@ -51,10 +54,8 @@ public:
 
     bool build_policy_impedance_command(
         const FixedModelTarget& target_q_model_rad,
-        const motor_base::RealtimeMotorFeedback& motor_feedback,
-        const std::vector<double>& motor_kp,
-        const std::vector<double>& motor_kd,
-        const AnkleTorqueControlConfig& torque_config,
+        const std::array<motor_base::MotorStatusSnapshot,
+                         motor_base::kMaxMotorCommandSetpoints>& motor_feedback,
         FixedPolicyMotorCommand& command,
         std::string& error);
 
@@ -86,7 +87,6 @@ private:
     };
 
     int dof_count() const noexcept;
-    bool has_relative_limits() const;
 
     bool apply_ankle_ik(const std::vector<double>& target_q_model_rad,
                         std::vector<double>& target_motor_rad,
@@ -96,19 +96,24 @@ private:
 
     bool apply_ankle_torque_control(
         const FixedModelTarget& target_q_model_rad,
-        const motor_base::RealtimeMotorFeedback& motor_feedback,
-        const char* ankle_name,
+        const std::array<motor_base::MotorStatusSnapshot,
+                         motor_base::kMaxMotorCommandSetpoints>& motor_feedback,
         const AnkleParallelMap& ankle_map,
-        const AnkleTorqueControlConfig& torque_config,
         AnkleTorqueState& state,
         FixedPolicyMotorCommand& command,
         std::string& error);
 
     std::shared_ptr<const JointMapping> mapping_;
     PolicyConfig policy_config_;
+    AnkleMotorLimitConfig ankle_motor_limits_;
+    std::vector<double> motor_kp_;
+    std::vector<double> motor_kd_;
+    AnkleTorqueControlConfig torque_config_;
     LowPass2Coefficients low_pass_coeffs_;
+
     AnkleIkState left_ankle_ik_;
     AnkleIkState right_ankle_ik_;
+
     AnkleTorqueState left_ankle_torque_;
     AnkleTorqueState right_ankle_torque_;
 };

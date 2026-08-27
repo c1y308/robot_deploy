@@ -47,8 +47,9 @@ public:
 private:
     JointMapping() = default;
 
-    bool configure(int dof_count, const inference::JointMappingConfig& config);
+    bool configure(int dof_count);
 
+    inference::JointMappingConfig config_;
     int dof_count_ = 0;
     bool configured_ = false;
     std::string last_error_;

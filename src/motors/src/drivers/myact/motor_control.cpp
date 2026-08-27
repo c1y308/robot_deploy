@@ -2,6 +2,7 @@
 #include "driver/myact/myact_debug_printers.hpp"
 #include "driver/myact/motor_units.hpp"
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <iostream>
@@ -46,14 +47,6 @@ std::size_t checked_motor_count(int num_motors)
     }
     return static_cast<std::size_t>(num_motors);
 }
-
-std::int64_t steady_now_ns() noexcept
-{
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(
-               std::chrono::steady_clock::now().time_since_epoch())
-        .count();
-}
-
 
 // 返回当前命令类型对应的电机运行模式
 MyactControlMode expected_mode_for_setpoint(mb::SetpointCommandType type)
@@ -258,7 +251,6 @@ bool MYACTUA::realtime_start_callback()
     process_data_fail_count_ = 0;
     recovery_healthy_count_ = 0;
     restart_all_requested_ = false;
-    realtime_feedback_sequence_ = 0;
 
     diagnostics_channel_.start();
     if (status_monitor_.has_print_motor_ids()) {
@@ -455,7 +447,13 @@ void MYACTUA::reset_motor_targets_to_feedback(MotorState& motor)
 
 void MYACTUA::reset_motor_setpoints_to_feedback(MotorState& motor)
 {
-    const double position_rad = raw_pos_to_rad(static_cast<double>(motor.rx.pos));
+    const bool ankle_motor = motor.motor_index == 4 ||
+                             motor.motor_index == 5 ||
+                             motor.motor_index == 10 ||
+                             motor.motor_index == 11;
+    const double position_rad =
+        raw_pos_to_rad(static_cast<double>(motor.rx.pos)) /
+        (ankle_motor ? 2.0 : 1.0);
 
     motor.desired.position_rad = position_rad;
     motor.desired.velocity_rad_s = 0.0;
@@ -561,6 +559,11 @@ void MYACTUA::process_single_motor(MotorState& motor)
         motor.step = MyactMotorStep::RUNNING;
         motor.tx.pvt_kp = 0;
         motor.tx.pvt_kd = 0;
+        const bool ankle_motor = motor.motor_index == 4 ||
+                                 motor.motor_index == 5 ||
+                                 motor.motor_index == 10 ||
+                                 motor.motor_index == 11;
+        const double position_scale = ankle_motor ? 2.0 : 1.0;
         switch (desired.mode) {
             case MyactControlMode::CSV:
                 motor.tx.target_vel = double_to_i32(
@@ -568,7 +571,7 @@ void MYACTUA::process_single_motor(MotorState& motor)
                 break;
             case MyactControlMode::CSP:
                 motor.tx.target_pos = double_to_i32(
-                    desired.position_rad / kRawPosToRad);
+                    (desired.position_rad / kRawPosToRad) * position_scale);
                 break;
             case MyactControlMode::CST:
                 motor.tx.target_torque = double_to_i16(desired.torque);
@@ -576,7 +579,7 @@ void MYACTUA::process_single_motor(MotorState& motor)
             case MyactControlMode::PVT: {
                 const mb::ImpedanceSetpoint& impedance = desired.impedance_setpoint;
                 motor.tx.target_pos = double_to_i32(
-                    impedance.position_rad / kRawPosToRad);
+                    (impedance.position_rad / kRawPosToRad) * position_scale);
                 motor.tx.target_vel = double_to_i32(
                     impedance.velocity_rad_s / kRawVelToRadPerSec);
                 motor.tx.target_torque = double_to_i16(impedance.effort_ff);
@@ -928,16 +931,20 @@ void MYACTUA::update_realtime_feedback()
         return;
     }
 
-    mb::RealtimeMotorFeedback feedback;
-    feedback.sequence = ++realtime_feedback_sequence_;
-    feedback.timestamp_ns = steady_now_ns();
-    feedback.motor_count = _motors.size();
+    std::array<mb::MotorStatusSnapshot, mb::kMaxMotorCommandSetpoints> feedback{};
 
     for (std::size_t i = 0; i < _motors.size(); ++i) {
         const auto& motor = _motors[i];
-        feedback.q[i] = raw_pos_to_rad(static_cast<double>(motor.rx.pos));
-        feedback.dq[i] = raw_vel_to_rad_s(static_cast<double>(motor.rx.vel));
-        feedback.torque_percent[i] =
+        const bool ankle_motor = motor.motor_index == 4 ||
+                                 motor.motor_index == 5 ||
+                                 motor.motor_index == 10 ||
+                                 motor.motor_index == 11;
+        feedback[i].motor_index = motor.motor_index;
+        feedback[i].position_rad =
+            raw_pos_to_rad(static_cast<double>(motor.rx.pos)) /
+            (ankle_motor ? 2.0 : 1.0);
+        feedback[i].velocity_rad_s = raw_vel_to_rad_s(static_cast<double>(motor.rx.vel));
+        feedback[i].torque_percent =
             static_cast<double>(motor.rx.torque) * kRawTorqueToPercent;
     }
 
@@ -962,9 +969,15 @@ void MYACTUA::update_status_snapshot()
         whole_body_fault_latched_.load(std::memory_order_acquire);
     for (size_t i = 0; i < _motors.size(); i++) {
         const auto& m = _motors[i];
+        const bool ankle_motor = m.motor_index == 4 ||
+                                 m.motor_index == 5 ||
+                                 m.motor_index == 10 ||
+                                 m.motor_index == 11;
         auto& s = status_slot[i];
         s.motor_index = m.motor_index;
-        s.position_rad = raw_pos_to_rad(static_cast<double>(m.rx.pos));
+        s.position_rad =
+            raw_pos_to_rad(static_cast<double>(m.rx.pos)) /
+            (ankle_motor ? 2.0 : 1.0);
         s.velocity_rad_s = raw_vel_to_rad_s(static_cast<double>(m.rx.vel));
         s.torque_percent = static_cast<double>(m.rx.torque) * kRawTorqueToPercent;
         s.comm_ok = m.comm_ok;

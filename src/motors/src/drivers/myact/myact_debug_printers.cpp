@@ -111,12 +111,18 @@ void print_myact_status_table(
         if (m.step == MyactMotorStep::STOPPED) color_code = "\033[35m";
         if (m.step == MyactMotorStep::MODE_SWITCHING) color_code = "\033[33m";
 
-        const double rx_pos_rad = raw_pos_to_rad(m.position);
+        const bool ankle_motor = m.motor_index == 4 ||
+                                 m.motor_index == 5 ||
+                                 m.motor_index == 10 ||
+                                 m.motor_index == 11;
+        const double position_scale = ankle_motor ? 2.0 : 1.0;
+        const double rx_pos_rad = raw_pos_to_rad(m.position) / position_scale;
         const double rx_pos_deg = rad_to_deg(rx_pos_rad);
         const double target_pos_deg =
             static_cast<double>(m.command_position) *
             kRawPosToRad *
-            kRadToDeg;
+            kRadToDeg /
+            position_scale;
         const double target_error_deg = target_pos_deg - rx_pos_deg;
         char tx_target_info[64] = {};
         switch (m.tx_mode) {

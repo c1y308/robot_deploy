@@ -51,6 +51,7 @@ private:
 
     struct PolicyCommandLogState {
         std::int64_t timestamp_ns{0};
+        std::array<double, policy_observation::kDof> target_pos_rad{};
         std::array<double, policy_observation::kDof> target_effort_permille{};
     };
 
@@ -81,7 +82,6 @@ private:
     std::thread policy_command_worker_thread_;
     robot_base::SpscLatestValue<PolicyTargetState> policy_target_channel_;
     robot_base::SpscLatestValue<PolicyCommandLogState> policy_command_log_channel_;
-    PolicyTargetState policy_target_publish_cache_;
     PolicyCommandLogState policy_command_log_read_cache_;
     std::uint64_t latest_policy_target_sequence_{0};
 
@@ -104,7 +104,6 @@ private:
     bool start_policy_command_worker();
     void stop_policy_command_worker();
     void policy_command_worker_loop();
-    PolicyTargetState build_policy_target(const std::vector<double>& target_q_model_rad);
     void set_latest_policy_target(const std::vector<double>& target_q_model_rad);
     PolicyCommandLogState latest_policy_command_log_state();
     void fail_policy_command_worker(std::string message);

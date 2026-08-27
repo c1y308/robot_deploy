@@ -46,7 +46,6 @@ void fill_record_motor_state(const MotorStateSnapshot& motor_state,
         record.torque_percent[i] = motor_state.torque_percent[i];
         record.comm_ok[i] = motor_state.comm_ok[i];
         record.enabled[i] = motor_state.enabled[i];
-        record.faulted[i] = motor_state.faulted[i];
     }
 }
 
@@ -155,10 +154,6 @@ bool RobotInterface::validate_policy_config() const {
     if (config_.policy.action_scale.size() != PolicyRuntime::kDof) {
         return fail("action_scale must have 12 values");
     }
-    if (config_.policy.joint_min_rad.size() != PolicyRuntime::kDof ||
-        config_.policy.joint_max_rad.size() != PolicyRuntime::kDof) {
-        return fail("joint_min_rad and joint_max_rad must have 12 values");
-    }
     if (config_.policy.dof_pos_scale.size() != PolicyRuntime::kDof ||
         config_.policy.dof_vel_scale.size() != PolicyRuntime::kDof) {
         return fail("dof_pos_scale and dof_vel_scale must have 12 values");
@@ -167,8 +162,6 @@ bool RobotInterface::validate_policy_config() const {
     if (!finite_vector(config_.policy.stand_pose_rad) ||
         !finite_action_clip_ranges(config_.policy.action_clip) ||
         !finite_vector(config_.policy.action_scale) ||
-        !finite_vector(config_.policy.joint_min_rad) ||
-        !finite_vector(config_.policy.joint_max_rad) ||
         !finite_vector(config_.policy.dof_pos_scale) ||
         !finite_vector(config_.policy.dof_vel_scale)) {
         return fail("all vector policy values must be finite");
@@ -176,6 +169,10 @@ bool RobotInterface::validate_policy_config() const {
     if (!finite_array(config_.policy.command_scale) ||
         !finite_array(config_.policy.body_ang_vel_scale)) {
         return fail("command/body_ang_vel scales must be finite");
+    }
+    if (!finite_array(config_.ankle_motor_limits.min_rad) ||
+        !finite_array(config_.ankle_motor_limits.max_rad)) {
+        return fail("ankle motor physical limits must be finite");
     }
     if (!std::isfinite(config_.policy.raw_action_clip) ||
         config_.policy.raw_action_clip <= 0.0) {
@@ -228,11 +225,11 @@ bool RobotInterface::validate_policy_config() const {
         if (config_.policy.action_scale[i] <= 0.0) {
             return fail("action_scale must be > 0 for every model DOF");
         }
-        if (config_.policy.joint_min_rad[i] > config_.policy.joint_max_rad[i]) {
-            return fail("joint_min_rad must be <= joint_max_rad for every model DOF");
-        }
-        if (config_.policy.joint_min_rad[i] > 0.0 || config_.policy.joint_max_rad[i] < 0.0) {
-            return fail("relative joint limits must include 0 for every model DOF");
+    }
+    for (std::size_t i = 0; i < config_.ankle_motor_limits.min_rad.size(); ++i) {
+        if (config_.ankle_motor_limits.min_rad[i] >
+            config_.ankle_motor_limits.max_rad[i]) {
+            return fail("ankle motor physical limit min must be <= max");
         }
     }
 
@@ -250,7 +247,13 @@ bool RobotInterface::initialize_model_processors() {
         return false;
     }
 
-    auto action_processor    = std::make_unique<robot_detail::ActionProcessor>(mapping, config_.policy, config_.ankle_torque);
+    auto action_processor = std::make_unique<robot_detail::ActionProcessor>(
+        mapping,
+        config_.policy,
+        config_.ankle_motor_limits,
+        config_.motor.mit_kp,
+        config_.motor.mit_kd,
+        config_.ankle_torque);
     auto observation_builder = std::make_unique<robot_detail::ObservationBuilder>(mapping, config_.policy);
 
     joint_mapping_       = std::move(mapping);
@@ -431,13 +434,12 @@ bool RobotInterface::start_policy_command_worker()
         return false;
     }
 
-    if (latest_policy_target_sequence_ == 0) {
-        // 初始目标仅写入发布缓存，由 reset_with_value 直接暴露给 worker，
-        // 避免先 publish 再被 reset 覆盖的冗余路径。
-        policy_target_publish_cache_ =
-            build_policy_target(config_.policy.stand_pose_rad);
+    PolicyTargetState initial_target;
+    initial_target.sequence = ++latest_policy_target_sequence_;
+    for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
+        initial_target.q_model_rad[i] = config_.policy.stand_pose_rad[i];
     }
-    policy_target_channel_.reset_with_value(policy_target_publish_cache_);
+    policy_target_channel_.reset_with_value(initial_target);
     policy_command_log_channel_.reset_empty();
     policy_command_log_read_cache_ = PolicyCommandLogState{};
     {
@@ -494,7 +496,8 @@ void RobotInterface::policy_command_worker_loop()
     target_interpolator.reset(target_state.q_model_rad);
     active_target_sequence = target_state.sequence;
 
-    motor_base::RealtimeMotorFeedback motor_feedback;
+    std::array<motor_base::MotorStatusSnapshot,
+               motor_base::kMaxMotorCommandSetpoints> motor_feedback;
     bool has_motor_feedback = false;
     robot_detail::ActionProcessor::FixedPolicyMotorCommand command;
     std::string error;
@@ -516,7 +519,8 @@ void RobotInterface::policy_command_worker_loop()
             const auto& smoothed_target_q_model_rad =
                 target_interpolator.sample(loop_now);
 
-            motor_base::RealtimeMotorFeedback latest_feedback;
+            std::array<motor_base::MotorStatusSnapshot,
+                       motor_base::kMaxMotorCommandSetpoints> latest_feedback;
             if (motor_session_.try_consume_realtime_feedback(latest_feedback)) {
                 motor_feedback = latest_feedback;
                 has_motor_feedback = true;
@@ -530,9 +534,6 @@ void RobotInterface::policy_command_worker_loop()
             if (!action_processor_->build_policy_impedance_command(
                     smoothed_target_q_model_rad,
                     motor_feedback,
-                    config_.motor.mit_kp,
-                    config_.motor.mit_kd,
-                    config_.ankle_torque,
                     command,
                     error)) {
                 fail_policy_command_worker("failed to build policy impedance command: " + error);
@@ -547,6 +548,7 @@ void RobotInterface::policy_command_worker_loop()
             PolicyCommandLogState log_state;
             log_state.timestamp_ns = steady_now_ns();
             for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
+                log_state.target_pos_rad[i] = command.setpoints[i].position_rad;
                 log_state.target_effort_permille[i] = command.target_effort_permille[i];
             }
             policy_command_log_channel_.publish(log_state);
@@ -570,26 +572,18 @@ void RobotInterface::policy_command_worker_loop()
     }
 }
 
-RobotInterface::PolicyTargetState RobotInterface::build_policy_target(
-    const std::vector<double>& target_q_model_rad)
-{
-    PolicyTargetState target;
-    target.sequence = ++latest_policy_target_sequence_;
-    for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
-        target.q_model_rad[i] = target_q_model_rad[i];
-    }
-    return target;
-}
-
-void RobotInterface::set_latest_policy_target(
-    const std::vector<double>& target_q_model_rad)
+void RobotInterface::set_latest_policy_target(const std::vector<double>& target_q_model_rad)
 {
     if (target_q_model_rad.size() != PolicyRuntime::kDof) {
         return;
     }
 
-    policy_target_publish_cache_ = build_policy_target(target_q_model_rad);
-    policy_target_channel_.publish(policy_target_publish_cache_);
+    PolicyTargetState target;
+    target.sequence = ++latest_policy_target_sequence_;
+    for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
+        target.q_model_rad[i] = target_q_model_rad[i];
+    }
+    policy_target_channel_.publish(target);
 }
 
 RobotInterface::PolicyCommandLogState
@@ -690,38 +684,31 @@ bool RobotInterface::policy_step() {
     std::vector<double> target_q_model_rad(PolicyRuntime::kDof, 0.0);
     for (std::size_t model_index = 0; model_index < PolicyRuntime::kDof; ++model_index) {
 
-        // 模型输出先按 raw_action_clip 截断，再缩放并限制动作偏移，最后叠加模型顺序的站立姿态。
-        const auto& action_clip = config_.policy.action_clip[model_index];
+        // 对模型原始输出截断[-1, 1]
         const double clipped_raw_action =
             std::max(-config_.policy.raw_action_clip,
                      std::min(config_.policy.raw_action_clip,
                               static_cast<double>(policy_result.raw_action[model_index])));
-        const double scaled_action =
-            clipped_raw_action * config_.policy.action_scale[model_index];
+        // 进行缩放
+        const double scaled_action = clipped_raw_action * config_.policy.action_scale[model_index];
+        // 进行截断
+        const auto& action_clip = config_.policy.action_clip[model_index];
         const double clipped_action_offset =
-            std::max(action_clip[0],
-                     std::min(action_clip[1], scaled_action));
+            std::max(action_clip[0], std::min(action_clip[1], scaled_action));
 
+        // 叠加模型顺序的站立姿态，得到模型顺序的目标关节角
         target_q_model_rad[model_index] = config_.policy.stand_pose_rad[model_index] + clipped_action_offset;
         record.target_q_model_rad[model_index] = target_q_model_rad[model_index];
     }
 
-    std::vector<double> log_target_motor_rad;
-    std::string log_target_error;
-    if (!action_processor_->build_motor_targets(target_q_model_rad,
-                                                log_target_motor_rad,
-                                                log_target_error)) {
-        return handle_policy_step_failure("failed to build log target positions: " +
-                                          log_target_error);
-    }
-
+    // 把处理后的模型目标值传递给policy_target_channel_，调用publish函数
     set_latest_policy_target(target_q_model_rad);
-    const PolicyCommandLogState command_log_state =
-        latest_policy_command_log_state();
+
+    // 获取最新的策略命令日志状态，保存到日志记录中
+    const PolicyCommandLogState command_log_state = latest_policy_command_log_state();
     for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
-        record.target_pos_rad[i] = log_target_motor_rad[i];
-        record.target_effort_permille[i] =
-            command_log_state.target_effort_permille[i];
+        record.target_pos_rad[i] = command_log_state.target_pos_rad[i];
+        record.target_effort_permille[i] = command_log_state.target_effort_permille[i];
     }
 
 

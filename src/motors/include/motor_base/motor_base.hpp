@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -11,7 +12,6 @@
 #include "base/spsc_latest_value.hpp"
 #include "motor_base/command_queue.hpp"
 #include "motor_base/command_types.hpp"
-#include "motor_base/realtime_feedback.hpp"
 #include "motor_base/rt_event_dispatcher.hpp"
 #include "motor_base/status_channel.hpp"
 
@@ -100,7 +100,8 @@ public:
     std::vector<MotorStatusSnapshot> get_status();
 
     /// @brief 读取专用 RT feedback latest-value 快照；无新快照时返回 false。
-    bool try_consume_realtime_feedback(RealtimeMotorFeedback& feedback);
+    bool try_consume_realtime_feedback(
+        std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback);
 
     /// @brief 获取全部电机关节位置，单位 rad
     std::vector<double> get_joint_q_rad();
@@ -145,7 +146,8 @@ protected:
 
     bool write_status(StatusWriteToken& token);
     void publish_status(const StatusWriteToken& token);
-    void publish_realtime_feedback(const RealtimeMotorFeedback& feedback);
+    void publish_realtime_feedback(
+        const std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback);
     
     void push_event(const RtEvent& event);
     void set_event_fallback_printer(RtEventDispatcher::EventPrinter printer);
@@ -205,7 +207,8 @@ private:
     // 电机控制命令队列（stop / restart / set_mode / setpoints）
     CommandQueue cmd_queue_;
     robot_base::SpscLatestValue<ControlCommand> realtime_setpoint_channel_;
-    robot_base::SpscLatestValue<RealtimeMotorFeedback> realtime_feedback_channel_;
+    robot_base::SpscLatestValue<
+        std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>> realtime_feedback_channel_;
     
     // 每个电机的离散命令队列（stop / restart / set_mode）
     std::vector<DiscreteCommandQueue> discrete_cmd_queues_;

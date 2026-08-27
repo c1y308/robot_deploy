@@ -69,7 +69,6 @@ void write_header(std::ostream& stream)
     append_motor_columns(stream, "torque_pct", kInferenceMotorCount);
     append_motor_columns(stream, "comm_ok", kInferenceMotorCount);
     append_motor_columns(stream, "enabled", kInferenceMotorCount);
-    append_motor_columns(stream, "faulted", kInferenceMotorCount);
     stream << '\n';
 }
 
@@ -129,7 +128,6 @@ void write_record(std::ostream&          stream,
     append_values(stream, record.torque_percent);
     append_u8_values(stream, record.comm_ok);
     append_u8_values(stream, record.enabled);
-    append_u8_values(stream, record.faulted);
     stream << '\n';
 }
 

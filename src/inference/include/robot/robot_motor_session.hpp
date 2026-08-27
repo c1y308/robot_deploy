@@ -1,6 +1,6 @@
 #pragma once
 
-#include "motor_base/realtime_feedback.hpp"
+#include "motor_base/status_channel.hpp"
 #include "robot/robot_config.hpp"
 
 #include <array>
@@ -61,7 +61,8 @@ public:
         std::size_t count);
 
     bool try_consume_realtime_feedback(
-        motor_base::RealtimeMotorFeedback& feedback);
+        std::array<motor_base::MotorStatusSnapshot,
+                   motor_base::kMaxMotorCommandSetpoints>& feedback);
 
     MotorStateSnapshot  get_motor_snapshot() const;
     std::vector<double> get_joint_q() const;

@@ -60,6 +60,8 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.motor.print_motors_info = true;
 
     cfg.recorder.enabled = true;
+    cfg.ankle_torque.virtual_kp = {150.0, 40.0};
+    cfg.ankle_torque.virtual_kd = {4.0, 2.0};
     cfg.ankle_torque.target_torque_limit_permille = 2000.0;
 
     // 对齐训练 joint_ids_map:
@@ -70,11 +72,11 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.joint_mapping.left_ankle_parallel = {8, 10, 4, 5};
     cfg.joint_mapping.right_ankle_parallel = {9, 11, 10, 11};
 
-    cfg.motor.mit_kp = { 180.0, 230.0, 180.0, 230.0, 180.0, 180.0,
-                         180.0, 230.0, 180.0, 230.0, 180.0, 180.0};
-    
-    cfg.motor.mit_kd = { 10.54, 10.54, 10.54, 10.54, 10.54, 10.54,
-                         10.54, 10.54, 10.54, 10.54, 10.54, 10.54};
+    cfg.motor.mit_kp = {180.0, 180.0, 180.0, 180.0, 187.0, 187.0,
+                        180.0, 180.0, 180.0, 180.0, 187.0, 187.0};
+
+    cfg.motor.mit_kd = {10.0, 10.0, 10.0, 10.0, 9.07, 9.07,
+                        10.0, 10.0, 10.0, 10.0, 9.07, 9.07};
 
     cfg.motor.print_motor_ids = {0, 1, 2, 3, 4, 5,
                                  6, 7, 8, 9, 10, 11};
@@ -83,7 +85,7 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.policy.stand_pose_rad = {
         0.0, 0.0, -0.2, -0.2,
         0.0, 0.0,  0.2,  0.2,
-       -0.05, -0.05, 0.0, 0.0
+       -0.05, -0.05,  0.0,  0.0
     };
 
 
@@ -92,35 +94,27 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.policy.action_clip = {
         {-0.22, 0.22},
         {-0.22, 0.22},
-
         {-0.28, 0.35},
         {-0.28, 0.35},
-
         {-0.16, 0.16},
         {-0.16, 0.16},
-
         {-0.22, 0.38},
         {-0.22, 0.38},
-
         {-0.14, 0.2},
         {-0.14, 0.2},
-
         {-0.12, 0.12},
         {-0.12, 0.12},
     };
     cfg.policy.action_scale = {
-        0.16, 0.16,
-        0.32, 0.32,
-        0.1,  0.1,
-        0.36, 0.36,
-        0.18, 0.18,
-        0.1, 0.1
+        0.16, 0.16, 0.32, 0.32,
+        0.1, 0.1, 0.36, 0.36,
+        0.18, 0.18, 0.1, 0.1
     };
     cfg.policy.raw_action_clip = 1.0;
 
-    // joint_min/max 是相对 stand_pose_rad 的偏移限位。
-    cfg.policy.joint_min_rad.assign(12, -0.7);
-    cfg.policy.joint_max_rad.assign(12,  0.7);
+    // 顺序对应当前映射下的 M4, M5, M10, M11。
+    cfg.ankle_motor_limits.min_rad = {-1.1, -1.1, -1.1, -1.1};
+    cfg.ankle_motor_limits.max_rad = { 1.1,  1.1,  1.1,  1.1};
 
     //  按照 物理电机 顺序配置电机方向，1 表示方向一致，-1 表示方向相反；为空时全部按 1
     cfg.joint_mapping.motor_to_model_direction = {
@@ -212,8 +206,8 @@ int main()
         return 1;
     }
 
-    std::cout << "[INFO] Waiting 5 seconds before entering policy loop...\n";
-    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+    std::cout << "[INFO] Waiting 3 seconds before entering policy loop...\n";
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
     if (g_stop_requested.load()) {
         safe_shutdown(robot, false);
         return 0;
@@ -249,9 +243,10 @@ int main()
             safe_shutdown(robot, true);
             return 1;
         }
-        robot.set_target_velocity(command.vx, 0.0, 0.0);
+        // robot.set_target_velocity(0.0, 0.0, 0.0);
         // robot.set_target_velocity(0, command.vx, 0.0);
-
+        // robot.set_target_velocity( command.vx, 0.0, 0.0);
+        robot.set_target_velocity( 0.0, command.vx, 0.0);
 
         const auto step_start = Clock::now();
         if (!robot.policy_step()) {

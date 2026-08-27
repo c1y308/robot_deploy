@@ -14,7 +14,7 @@ namespace imu {
 /* IMU配置结构体 */
 struct Config_t {
     std::string device;
-    int baudrate;
+    int  baudrate;
     bool print_imu;
     bool print_ahrs;
     
@@ -54,7 +54,7 @@ private:
     std::thread worker_thread_;
     std::atomic<bool> running_;
     std::chrono::steady_clock::time_point start_time_;
-    bool has_yaw_offset_;
+    bool  has_yaw_offset_;
     float yaw_offset_;
 };
 

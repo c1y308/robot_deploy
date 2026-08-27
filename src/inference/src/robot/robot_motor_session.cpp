@@ -319,7 +319,8 @@ bool RobotMotorSession::apply_impedance_setpoints_realtime(
 }
 
 bool RobotMotorSession::try_consume_realtime_feedback(
-    motor_base::RealtimeMotorFeedback& feedback)
+    std::array<motor_base::MotorStatusSnapshot,
+               motor_base::kMaxMotorCommandSetpoints>& feedback)
 {
     if (!initialized_.load() || !controller_) {
         return false;

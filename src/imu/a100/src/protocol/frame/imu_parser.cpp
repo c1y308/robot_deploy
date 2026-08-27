@@ -6,7 +6,6 @@
 #include <iomanip>
 
 namespace imu {
-namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kTwoPi = 2.0 * kPi;
@@ -21,41 +20,6 @@ double wrap_to_pi(double angle)
     return angle;
 }
 
-bool compute_projected_gravity(float roll,
-                               float pitch,
-                               float& projected_gravity_x,
-                               float& projected_gravity_y,
-                               float& projected_gravity_z)
-{
-    if (!std::isfinite(roll) || !std::isfinite(pitch)) {
-        return false;
-    }
-
-    const double roll_rad = static_cast<double>(roll);
-    const double pitch_rad = static_cast<double>(pitch);
-    const double sin_roll = std::sin(roll_rad);
-    const double cos_roll = std::cos(roll_rad);
-    const double sin_pitch = std::sin(pitch_rad);
-    const double cos_pitch = std::cos(pitch_rad);
-
-    // IsaacLab projected gravity for body axes x-forward, y-left, z-up.
-    // Use compensated AHRS Euler angles because the raw quaternion is still in the IMU mount frame.
-    const double projected_x = sin_pitch;
-    const double projected_y = -sin_roll * cos_pitch;
-    const double projected_z = -cos_roll * cos_pitch;
-    if (!std::isfinite(projected_x) ||
-        !std::isfinite(projected_y) ||
-        !std::isfinite(projected_z)) {
-        return false;
-    }
-
-    projected_gravity_x = static_cast<float>(projected_x);
-    projected_gravity_y = static_cast<float>(projected_y);
-    projected_gravity_z = static_cast<float>(projected_z);
-    return true;
-}
-
-}  // namespace
 
 IMUParser::IMUParser() 
     : rx_index_(0),
@@ -79,11 +43,14 @@ void IMUParser::reset() {
     frame_length_ = 0;
     last_byte_ = 0;
     parsing_state_ = false;
-    imu_ready_ = false;
+
+    imu_ready_  = false;
     ahrs_ready_ = false;
-    imu_data_ = IMUData_t();
+    imu_data_  = IMUData_t();
     ahrs_data_ = AHRSData_t();
+
     stats_ = ParserInfo_t();
+
     std::fill(rx_buffer_.begin(), rx_buffer_.end(), 0);
     std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0);
 }
@@ -238,13 +205,48 @@ bool IMUParser::parse_imu_frame(const uint8_t *data) {
 }
 
 
+bool compute_projected_gravity(float roll,
+                               float pitch,
+                               float& projected_gravity_x,
+                               float& projected_gravity_y,
+                               float& projected_gravity_z)
+{
+    if (!std::isfinite(roll) || !std::isfinite(pitch)) {
+        return false;
+    }
+
+    const double roll_rad = static_cast<double>(roll);
+    const double pitch_rad = static_cast<double>(pitch);
+    const double sin_roll = std::sin(roll_rad);
+    const double cos_roll = std::cos(roll_rad);
+    const double sin_pitch = std::sin(pitch_rad);
+    const double cos_pitch = std::cos(pitch_rad);
+
+    // IsaacLab projected gravity for body axes x-forward, y-left, z-up.
+    // Use compensated AHRS Euler angles because the raw quaternion is still in the IMU mount frame.
+    const double projected_x = sin_pitch;
+    const double projected_y = -sin_roll * cos_pitch;
+    const double projected_z = -cos_roll * cos_pitch;
+    if (!std::isfinite(projected_x) ||
+        !std::isfinite(projected_y) ||
+        !std::isfinite(projected_z)) {
+        return false;
+    }
+
+    projected_gravity_x = static_cast<float>(projected_x);
+    projected_gravity_y = static_cast<float>(projected_y);
+    projected_gravity_z = static_cast<float>(projected_z);
+    return true;
+}
+
+
 bool IMUParser::parse_ahrs_frame(const uint8_t* data) {
     if (data[1] != TYPE_AHRS) {
         return false;
     }
 
-    ahrs_data_.roll_speed    = data_to_float(data[7], data[8], data[9], data[10]);
-    ahrs_data_.pitch_speed   = data_to_float(data[11], data[12], data[13], data[14]);
+    ahrs_data_.roll_speed    =  data_to_float(data[7], data[8], data[9], data[10]);
+    ahrs_data_.pitch_speed   = -data_to_float(data[11], data[12], data[13], data[14]);
     ahrs_data_.heading_speed = -data_to_float(data[15], data[16], data[17], data[18]);
 
     double compensated_roll =

@@ -38,8 +38,6 @@ struct ImuConfig {
 struct PolicyConfig {
     std::string model_path;
 
-    std::vector<double> joint_min_rad;
-    std::vector<double> joint_max_rad;
     std::vector<double> stand_pose_rad = {};
 
     std::vector<std::array<double, 2>> action_clip;
@@ -66,6 +64,12 @@ struct PolicyConfig {
     double gait_phase_move_threshold = 0.15;
 };
 
+struct AnkleMotorLimitConfig {
+    // 顺序: left upper, left lower, right upper, right lower。
+    std::array<double, 4> min_rad = {};
+    std::array<double, 4> max_rad = {};
+};
+
 struct AnkleTorqueControlConfig {
     std::array<double, 2> virtual_kp = {180.0, 180.0};    // [pitch, roll]
     std::array<double, 2> virtual_kd = {10.54, 10.54};    // [pitch, roll]
@@ -80,6 +84,7 @@ struct RobotInterfaceConfig {
     ImuConfig   imu;
     JointMappingConfig joint_mapping;
     PolicyConfig policy;
+    AnkleMotorLimitConfig ankle_motor_limits;
     AnkleTorqueControlConfig ankle_torque;
     InferenceRecorderConfig recorder;
 };

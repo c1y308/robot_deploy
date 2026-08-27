@@ -11,7 +11,7 @@ constexpr size_t MAX_BUFFER_SIZE = 512;
 
 class IMUParser {
 public:
-    using IMUCallback_t = std::function<void(const IMUData_t&)>;
+    using IMUCallback_t  = std::function<void(const IMUData_t&)>;
     using AHRSCallback_t = std::function<void(const AHRSData_t&)>;
     
     IMUParser();
@@ -20,13 +20,13 @@ public:
     void feed(const uint8_t* data, int len);
     void reset();
     
-    bool get_imu_data(IMUData_t& imu);
-    bool get_ahrs_data(AHRSData_t& ahrs);
-    
     /* 设置回调函数 */
     void set_imu_callback(IMUCallback_t callback) { imu_callback_ = callback; }
     void set_ahrs_callback(AHRSCallback_t callback) { ahrs_callback_ = callback; }
     
+    bool get_imu_data(IMUData_t& imu);
+    bool get_ahrs_data(AHRSData_t& ahrs);
+
     const ParserInfo_t& get_info() const { return stats_; }
     void reset_info();
     
@@ -37,7 +37,7 @@ private:
     uint8_t  crc8_table(const std::vector<uint8_t>& data);
     uint16_t crc16_table(const std::vector<uint8_t>& data);
 
-    bool parse_imu_frame(const uint8_t* data);
+    bool parse_imu_frame(const uint8_t*  data);
     bool parse_ahrs_frame(const uint8_t* data);
 
     float  data_to_float(uint8_t d1, uint8_t d2, uint8_t d3, uint8_t d4);

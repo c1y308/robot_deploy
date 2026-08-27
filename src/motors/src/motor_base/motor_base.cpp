@@ -401,7 +401,7 @@ std::vector<MotorStatusSnapshot> MotorControllerBase::get_status()
 }
 
 bool MotorControllerBase::try_consume_realtime_feedback(
-    RealtimeMotorFeedback& feedback)
+    std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback)
 {
     return realtime_feedback_channel_.try_consume_latest(feedback);
 }
@@ -431,7 +431,7 @@ void MotorControllerBase::publish_status(const StatusWriteToken& token)
 }
 
 void MotorControllerBase::publish_realtime_feedback(
-    const RealtimeMotorFeedback& feedback)
+    const std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback)
 {
     realtime_feedback_channel_.publish(feedback);
 }

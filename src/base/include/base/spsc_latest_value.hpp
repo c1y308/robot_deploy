@@ -35,6 +35,17 @@ public:
                             std::memory_order_relaxed);
     }
 
+
+    /// @brief 拷贝发布：将值拷入写入槽后发布。
+    /// @return 是否覆盖了消费者尚未读取的旧帧
+    bool publish(const T& value) noexcept
+    {
+        // 获取当前写入槽指针，并完成数据写入
+        *acquire_write_slot() = value;
+        // 发布当前写入槽（把当前写入槽作为新的 middle 槽），并把当前 middle 槽作为新的写入槽
+        return publish_written();
+    }
+
     /// @brief 获取当前写入槽指针。仅生产者线程可调用；
     ///        在调用 publish_written() 之前必须完成对该槽的全部写入。
     T* acquire_write_slot() noexcept
@@ -42,7 +53,7 @@ public:
         return &slots_[static_cast<std::size_t>(writing_slot_)];
     }
 
-    /// @brief 发布当前写入槽（零拷贝）。仅生产者线程可调用。
+    /// @brief  发布当前写入槽（零拷贝）。仅生产者线程可调用。
     /// @return 是否覆盖了消费者尚未读取的旧帧
     bool publish_written() noexcept
     {
@@ -53,21 +64,13 @@ public:
         return middle_dirty(old_middle);
     }
 
-    /// @brief 拷贝发布：将值拷入写入槽后发布。
-    /// @return 是否覆盖了消费者尚未读取的旧帧
-    bool publish(const T& value) noexcept
-    {
-        *acquire_write_slot() = value;
-        return publish_written();
-    }
 
     bool try_consume_latest(T& out) noexcept
     {
-        const MiddleState released_reading =
-            make_middle_state(reading_slot_, false);
-        const MiddleState old_middle =
-            middle_state_.exchange(released_reading,
-                                   std::memory_order_acq_rel);
+        const MiddleState released_reading = make_middle_state(reading_slot_, false);
+
+        const MiddleState old_middle = middle_state_.exchange(released_reading, std::memory_order_acq_rel);
+
         reading_slot_ = middle_slot(old_middle);
 
         if (!middle_dirty(old_middle)) {
@@ -103,7 +106,11 @@ private:
 
     std::array<T, kSlotCount> slots_{};
     int writing_slot_{0};
+
+    // reading_slot_ 表示 消费者当前占有/保护的槽位，避免 producer 写这个槽。
     int reading_slot_{1};
+
+    // 读取的时候读取这个槽
     std::atomic<MiddleState> middle_state_{make_middle_state(2, false)};
 };
 

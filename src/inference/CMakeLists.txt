@@ -157,16 +157,19 @@ target_include_directories(target_interpolator_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-add_executable(action_processor_test
-    tests/action_processor_test.cpp
-    src/robot/action_processor.cpp
-    src/robot/joint_mapping.cpp
+add_executable(ankle_inverse_kinematics_test
+    tests/ankle_inverse_kinematics_test.cpp
+    src/robot/robot_motor_session.cpp
 )
-target_include_directories(action_processor_test PRIVATE
+target_include_directories(ankle_inverse_kinematics_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../motors/src/protocol/ethercat
 )
-target_link_libraries(action_processor_test PRIVATE robot_base)
+target_link_libraries(ankle_inverse_kinematics_test PRIVATE
+    myactua_ethercat
+    robot_base
+)
 
 add_executable(observation_builder_test
     tests/observation_builder_test.cpp

@@ -48,7 +48,6 @@ struct InferenceRecord {
 
     std::array<std::uint8_t, kInferenceMotorCount> comm_ok{};
     std::array<std::uint8_t, kInferenceMotorCount> enabled{};
-    std::array<std::uint8_t, kInferenceMotorCount> faulted{};
 
     bool command_applied{false};
 };

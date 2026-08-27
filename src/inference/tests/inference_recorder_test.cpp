@@ -98,7 +98,6 @@ inference::InferenceRecord make_record(std::uint64_t frame_index,
         record.torque_percent[i] = static_cast<double>(i);
         record.comm_ok[i] = 1;
         record.enabled[i] = static_cast<std::uint8_t>(i % 2);
-        record.faulted[i] = 0;
     }
 
     return record;

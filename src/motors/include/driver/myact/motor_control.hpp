@@ -63,7 +63,6 @@ private:
 
     std::atomic<bool> whole_body_fault_latched_{false};
     bool restart_all_requested_{false};
-    uint64_t realtime_feedback_sequence_{0};
     uint32_t process_data_fail_count_{0};
     uint32_t recovery_healthy_count_{0};
     MyactCommunicationFaultReason fault_reason_{MyactCommunicationFaultReason::None};

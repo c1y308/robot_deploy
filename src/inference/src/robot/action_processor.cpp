@@ -17,19 +17,6 @@ using robot_base::index_in_range;
 
 namespace {
 
-bool finite_feedback(const motor_base::RealtimeMotorFeedback& feedback,
-                     std::size_t count)
-{
-    for (std::size_t i = 0; i < count; ++i) {
-        if (!std::isfinite(feedback.q[i]) ||
-            !std::isfinite(feedback.dq[i]) ||
-            !std::isfinite(feedback.torque_percent[i])) {
-            return false;
-        }
-    }
-    return true;
-}
-
 // filter_cutoff/filter_dt 已由 validate_policy_config 校验为有限正值，这里只做纯计算。
 LowPass2Coefficients compute_low_pass_coefficients(
     const AnkleTorqueControlConfig& config)
@@ -53,28 +40,21 @@ double clamp_symmetric(double value, double limit)
     return std::max(-limit, std::min(limit, value));
 }
 
-std::string ankle_limit_error(const char* ankle_name,
-                              const char* axis_name,
-                              int model_dof,
-                              double current,
-                              double lower,
-                              double upper)
-{
-    return std::string(ankle_name) + " " + axis_name +
-           " dof " + std::to_string(model_dof) +
-           " exceeded hard limit: current=" + std::to_string(current) +
-           ", range=[" + std::to_string(lower) +
-           ", " + std::to_string(upper) + "]";
-}
-
 }  // namespace
 
 ActionProcessor::ActionProcessor(std::shared_ptr<const JointMapping> mapping,
                                  PolicyConfig policy_config,
+                                 AnkleMotorLimitConfig ankle_motor_limits,
+                                 std::vector<double> motor_kp,
+                                 std::vector<double> motor_kd,
                                  AnkleTorqueControlConfig torque_config)
     : mapping_(std::move(mapping)),
       policy_config_(std::move(policy_config)),
-      low_pass_coeffs_(compute_low_pass_coefficients(torque_config))
+      ankle_motor_limits_(ankle_motor_limits),
+      motor_kp_(std::move(motor_kp)),
+      motor_kd_(std::move(motor_kd)),
+      torque_config_(torque_config),
+      low_pass_coeffs_(compute_low_pass_coefficients(torque_config_))
 {
     reset_runtime_state();
 }
@@ -133,7 +113,6 @@ bool ActionProcessor::build_motor_targets(
     }
 
     target_motor_rad.assign(static_cast<std::size_t>(count), 0.0);
-    const bool apply_relative_limits = has_relative_limits();
 
     for (int model_index = 0; model_index < count; ++model_index) {
         if (mapping_->is_parallel_model_dof(model_index)) {
@@ -148,14 +127,6 @@ bool ActionProcessor::build_motor_targets(
         }
 
         double q = target_q_model_rad[static_cast<std::size_t>(model_index)];
-        if (apply_relative_limits) {
-            const auto index = static_cast<std::size_t>(model_index);
-            const double lower_limit =
-                policy_config_.stand_pose_rad[index] + policy_config_.joint_min_rad[index];
-            const double upper_limit =
-                policy_config_.stand_pose_rad[index] + policy_config_.joint_max_rad[index];
-            q = std::max(lower_limit, std::min(upper_limit, q));
-        }
 
         target_motor_rad[static_cast<std::size_t>(motor_index)] =
             mapping_->direction_for_motor(motor_index) * q;
@@ -174,6 +145,26 @@ bool ActionProcessor::build_motor_targets(
                         right_ankle_ik_,
                         error)) {
         return false;
+    }
+
+    const std::array<int, 4> ankle_motor_indices = {
+        mapping_->left_ankle().upper_motor_index,
+        mapping_->left_ankle().lower_motor_index,
+        mapping_->right_ankle().upper_motor_index,
+        mapping_->right_ankle().lower_motor_index
+    };
+    for (std::size_t i = 0; i < ankle_motor_indices.size(); ++i) {
+        const int motor_index = ankle_motor_indices[i];
+        const double position_rad = target_motor_rad[static_cast<std::size_t>(motor_index)];
+        const double lower = ankle_motor_limits_.min_rad[i];
+        const double upper = ankle_motor_limits_.max_rad[i];
+        if (position_rad < lower || position_rad > upper) {
+            error = "target ankle motor " + std::to_string(motor_index) +
+                    " exceeded physical limit: position=" + std::to_string(position_rad) +
+                    ", range=[" + std::to_string(lower) +
+                    ", " + std::to_string(upper) + "]";
+            return false;
+        }
     }
 
     error.clear();
@@ -201,23 +192,8 @@ bool ActionProcessor::apply_ankle_ik(
         return false;
     }
 
-    double pitch = target_q_model_rad[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
-    double roll  = target_q_model_rad[static_cast<std::size_t>(ankle_map.model_roll_dof)];
-
-    if (has_relative_limits()) {
-        const auto pitch_index = static_cast<std::size_t>(ankle_map.model_pitch_dof);
-        const auto roll_index = static_cast<std::size_t>(ankle_map.model_roll_dof);
-        const double pitch_lo = policy_config_.stand_pose_rad[pitch_index] +
-                                policy_config_.joint_min_rad[pitch_index];
-        const double pitch_hi = policy_config_.stand_pose_rad[pitch_index] +
-                                policy_config_.joint_max_rad[pitch_index];
-        const double roll_lo = policy_config_.stand_pose_rad[roll_index] +
-                               policy_config_.joint_min_rad[roll_index];
-        const double roll_hi = policy_config_.stand_pose_rad[roll_index] +
-                               policy_config_.joint_max_rad[roll_index];
-        pitch = std::max(pitch_lo, std::min(pitch_hi, pitch));
-        roll  = std::max(roll_lo,  std::min(roll_hi, roll));
-    }
+    const double pitch = target_q_model_rad[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
+    const double roll  = target_q_model_rad[static_cast<std::size_t>(ankle_map.model_roll_dof)];
 
     const ankle_motor_ik::MotorAngles result = state.solver.solve(roll, pitch);
 
@@ -238,10 +214,13 @@ bool ActionProcessor::apply_ankle_ik(
         mapping_->direction_for_motor(ankle_map.upper_motor_index);
     const int lower_motor_direction =
         mapping_->direction_for_motor(ankle_map.lower_motor_index);
+    const double upper_motor_target = upper_motor_direction * upper_motor;
+    const double lower_motor_target = lower_motor_direction * lower_motor;
+
     target_motor_rad[static_cast<std::size_t>(ankle_map.upper_motor_index)] =
-        upper_motor_direction * upper_motor;
+        upper_motor_target;
     target_motor_rad[static_cast<std::size_t>(ankle_map.lower_motor_index)] =
-        lower_motor_direction * lower_motor;
+        lower_motor_target;
     error.clear();
     return true;
 }
@@ -263,27 +242,37 @@ void ActionProcessor::AnkleTorqueState::reset(double roll, double pitch)
 
 bool ActionProcessor::build_policy_impedance_command(
     const FixedModelTarget& target_q_model_rad,
-    const motor_base::RealtimeMotorFeedback& motor_feedback,
-    const std::vector<double>& motor_kp,
-    const std::vector<double>& motor_kd,
-    const AnkleTorqueControlConfig& torque_config,
+    const std::array<motor_base::MotorStatusSnapshot,
+                     motor_base::kMaxMotorCommandSetpoints>& motor_feedback,
     FixedPolicyMotorCommand& command,
     std::string& error)
 {
     const int count = dof_count();
-    if (motor_feedback.motor_count != static_cast<std::size_t>(count)) {
-        error = "policy impedance command size mismatch";
-        return false;
-    }
-    if (!finite_feedback(motor_feedback, static_cast<std::size_t>(count))) {
-        error = "policy impedance command inputs must be finite";
-        return false;
+
+    const std::array<int, 4> ankle_motor_indices = {
+        mapping_->left_ankle().upper_motor_index,
+        mapping_->left_ankle().lower_motor_index,
+        mapping_->right_ankle().upper_motor_index,
+        mapping_->right_ankle().lower_motor_index
+    };
+    for (std::size_t i = 0; i < ankle_motor_indices.size(); ++i) {
+        const int motor_index = ankle_motor_indices[i];
+        const double position_rad =
+            motor_feedback[static_cast<std::size_t>(motor_index)].position_rad;
+        const double lower = ankle_motor_limits_.min_rad[i];
+        const double upper = ankle_motor_limits_.max_rad[i];
+        if (position_rad < lower || position_rad > upper) {
+            error = "feedback ankle motor " + std::to_string(motor_index) +
+                    " exceeded physical limit: position=" + std::to_string(position_rad) +
+                    ", range=[" + std::to_string(lower) +
+                    ", " + std::to_string(upper) + "]";
+            return false;
+        }
     }
 
     command = FixedPolicyMotorCommand{};
     command.setpoint_count = static_cast<std::size_t>(count);
 
-    const bool apply_relative_limits = has_relative_limits();
     for (int model_index = 0; model_index < count; ++model_index) {
         if (mapping_->is_parallel_model_dof(model_index)) {
             continue;
@@ -296,15 +285,7 @@ bool ActionProcessor::build_policy_impedance_command(
             return false;
         }
 
-        double q = target_q_model_rad[static_cast<std::size_t>(model_index)];
-        if (apply_relative_limits) {
-            const auto index = static_cast<std::size_t>(model_index);
-            const double lower_limit =
-                policy_config_.stand_pose_rad[index] + policy_config_.joint_min_rad[index];
-            const double upper_limit =
-                policy_config_.stand_pose_rad[index] + policy_config_.joint_max_rad[index];
-            q = std::max(lower_limit, std::min(upper_limit, q));
-        }
+        const double q = target_q_model_rad[static_cast<std::size_t>(model_index)];
 
         const auto motor_slot = static_cast<std::size_t>(motor_index);
         const double motor_target =
@@ -313,15 +294,13 @@ bool ActionProcessor::build_policy_impedance_command(
             motor_base::ImpedanceSetpoint(motor_target,
                                           0.0,
                                           0.0,
-                                          motor_kp[motor_slot],
-                                          motor_kd[motor_slot]);
+                                          motor_kp_[motor_slot],
+                                          motor_kd_[motor_slot]);
     }
 
     if (!apply_ankle_torque_control(target_q_model_rad,
                                     motor_feedback,
-                                    "left ankle",
                                     mapping_->left_ankle(),
-                                    torque_config,
                                     left_ankle_torque_,
                                     command,
                                     error)) {
@@ -329,9 +308,7 @@ bool ActionProcessor::build_policy_impedance_command(
     }
     if (!apply_ankle_torque_control(target_q_model_rad,
                                     motor_feedback,
-                                    "right ankle",
                                     mapping_->right_ankle(),
-                                    torque_config,
                                     right_ankle_torque_,
                                     command,
                                     error)) {
@@ -344,10 +321,9 @@ bool ActionProcessor::build_policy_impedance_command(
 
 bool ActionProcessor::apply_ankle_torque_control(
     const FixedModelTarget& target_q_model_rad,
-    const motor_base::RealtimeMotorFeedback& motor_feedback,
-    const char* ankle_name,
+    const std::array<motor_base::MotorStatusSnapshot,
+                     motor_base::kMaxMotorCommandSetpoints>& motor_feedback,
     const AnkleParallelMap& ankle_map,
-    const AnkleTorqueControlConfig& torque_config,
     AnkleTorqueState& state,
     FixedPolicyMotorCommand& command,
     std::string& error)
@@ -357,29 +333,19 @@ bool ActionProcessor::apply_ankle_torque_control(
     const auto upper_index = static_cast<std::size_t>(ankle_map.upper_motor_index);
     const auto lower_index = static_cast<std::size_t>(ankle_map.lower_motor_index);
 
-    double desired_pitch = target_q_model_rad[pitch_index];
-    double desired_roll = target_q_model_rad[roll_index];
-    if (has_relative_limits()) {
-        const double pitch_lo =
-            policy_config_.stand_pose_rad[pitch_index] + policy_config_.joint_min_rad[pitch_index];
-        const double pitch_hi =
-            policy_config_.stand_pose_rad[pitch_index] + policy_config_.joint_max_rad[pitch_index];
-        const double roll_lo =
-            policy_config_.stand_pose_rad[roll_index] + policy_config_.joint_min_rad[roll_index];
-        const double roll_hi =
-            policy_config_.stand_pose_rad[roll_index] + policy_config_.joint_max_rad[roll_index];
-        desired_pitch = std::max(pitch_lo, std::min(pitch_hi, desired_pitch));
-        desired_roll = std::max(roll_lo, std::min(roll_hi, desired_roll));
-    }
+    const double desired_pitch = target_q_model_rad[pitch_index];
+    const double desired_roll = target_q_model_rad[roll_index];
 
     const int upper_direction = mapping_->direction_for_motor(ankle_map.upper_motor_index);
     const int lower_direction = mapping_->direction_for_motor(ankle_map.lower_motor_index);
-    const double upper_motor = upper_direction * motor_feedback.q[upper_index];
-    const double lower_motor = lower_direction * motor_feedback.q[lower_index];
+    const double upper_position_rad = motor_feedback[upper_index].position_rad;
+    const double lower_position_rad = motor_feedback[lower_index].position_rad;
+    const double upper_motor = upper_direction * upper_position_rad;
+    const double lower_motor = lower_direction * lower_position_rad;
     const double upper_motor_velocity =
-        upper_direction * motor_feedback.dq[upper_index];
+        upper_direction * motor_feedback[upper_index].velocity_rad_s;
     const double lower_motor_velocity =
-        lower_direction * motor_feedback.dq[lower_index];
+        lower_direction * motor_feedback[lower_index].velocity_rad_s;
 
     const ankle_motor_fk::FootAngles foot =
         state.fk_solver.solve(upper_motor, lower_motor);
@@ -387,33 +353,6 @@ bool ActionProcessor::apply_ankle_torque_control(
         !std::isfinite(foot.pitch) ||
         !std::isfinite(foot.roll)) {
         error = "ankle FK failed while building policy impedance command";
-        return false;
-    }
-
-    const double pitch_lower =
-        policy_config_.stand_pose_rad[pitch_index] + policy_config_.joint_min_rad[pitch_index];
-    const double pitch_upper =
-        policy_config_.stand_pose_rad[pitch_index] + policy_config_.joint_max_rad[pitch_index];
-    const double roll_lower =
-        policy_config_.stand_pose_rad[roll_index] + policy_config_.joint_min_rad[roll_index];
-    const double roll_upper =
-        policy_config_.stand_pose_rad[roll_index] + policy_config_.joint_max_rad[roll_index];
-    if (foot.pitch < pitch_lower || foot.pitch > pitch_upper) {
-        error = ankle_limit_error(ankle_name,
-                                  "pitch",
-                                  ankle_map.model_pitch_dof,
-                                  foot.pitch,
-                                  pitch_lower,
-                                  pitch_upper);
-        return false;
-    }
-    if (foot.roll < roll_lower || foot.roll > roll_upper) {
-        error = ankle_limit_error(ankle_name,
-                                  "roll",
-                                  ankle_map.model_roll_dof,
-                                  foot.roll,
-                                  roll_lower,
-                                  roll_upper);
         return false;
     }
 
@@ -437,11 +376,11 @@ bool ActionProcessor::apply_ankle_torque_control(
         jacobian.virtual_from_motor[1][1] * lower_motor_velocity;
 
     const double pitch_torque_des =
-        torque_config.virtual_kp[0] * (desired_pitch - foot.pitch) -
-        torque_config.virtual_kd[0] * pitch_velocity;
+        torque_config_.virtual_kp[0] * (desired_pitch - foot.pitch) -
+        torque_config_.virtual_kd[0] * pitch_velocity;
     const double roll_torque_des =
-        torque_config.virtual_kp[1] * (desired_roll - foot.roll) -
-        torque_config.virtual_kd[1] * roll_velocity;
+        torque_config_.virtual_kp[1] * (desired_roll - foot.roll) -
+        torque_config_.virtual_kd[1] * roll_velocity;
 
     auto apply_low_pass = [this](double input, LowPass2State& filter_state) {
         const double output =
@@ -470,22 +409,22 @@ bool ActionProcessor::apply_ankle_torque_control(
         jacobian.virtual_from_motor[0][1] * pitch_torque_lp +
         jacobian.virtual_from_motor[1][1] * roll_torque_lp;
 
-    const double scale = 1000.0 / torque_config.motor_rated_torque_nm;
+    const double scale = 1000.0 / torque_config_.motor_rated_torque_nm;
     const double upper_effort_permille = clamp_symmetric(
         upper_direction * upper_torque_nm * scale,
-        torque_config.target_torque_limit_permille);
+        torque_config_.target_torque_limit_permille);
     const double lower_effort_permille = clamp_symmetric(
         lower_direction * lower_torque_nm * scale,
-        torque_config.target_torque_limit_permille);
+        torque_config_.target_torque_limit_permille);
 
     command.setpoints[upper_index] =
-        motor_base::ImpedanceSetpoint(motor_feedback.q[upper_index],
+        motor_base::ImpedanceSetpoint(upper_position_rad,
                                       0.0,
                                       upper_effort_permille,
                                       0.0,
                                       0.0);
     command.setpoints[lower_index] =
-        motor_base::ImpedanceSetpoint(motor_feedback.q[lower_index],
+        motor_base::ImpedanceSetpoint(lower_position_rad,
                                       0.0,
                                       lower_effort_permille,
                                       0.0,
@@ -501,16 +440,6 @@ int ActionProcessor::dof_count() const noexcept
 {
     return mapping_ ? mapping_->dof_count() : 0;
 }
-
-bool ActionProcessor::has_relative_limits() const
-{
-    const auto count = static_cast<std::size_t>(dof_count());
-    return policy_config_.stand_pose_rad.size() == count &&
-           policy_config_.joint_min_rad.size()  == count &&
-           policy_config_.joint_max_rad.size()  == count;
-}
-
-
 
 bool ActionProcessor::build_reset_start_model_pose(
     const std::vector<double>& current_motor_q, // 当前电机真实角度(rad)
@@ -583,4 +512,3 @@ bool ActionProcessor::build_reset_start_model_pose(
 }
 
 }  // namespace inference::robot_detail
-
