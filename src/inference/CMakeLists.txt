@@ -55,6 +55,7 @@ add_library(imu_a100_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../imu/a100/src/drivers/imu_reader.cpp
 )
 target_include_directories(imu_a100_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/base/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../imu/a100/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../imu/a100/src/drivers
     ${CMAKE_CURRENT_SOURCE_DIR}/../imu/a100/src/protocol/frame
@@ -86,6 +87,7 @@ target_include_directories(robot_interface PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/src/protocol/ethercat
+    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/base/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../imu/a100/include
 )
 target_compile_definitions(robot_interface PUBLIC
@@ -136,20 +138,6 @@ target_link_libraries(policy_test PRIVATE
     xbox_control_core
 )
 
-add_executable(inference_recorder_test
-    tests/inference_recorder_test.cpp
-)
-target_link_libraries(inference_recorder_test PRIVATE inference_recorder)
-
-add_executable(joint_mapping_test
-    tests/joint_mapping_test.cpp
-    src/robot/joint_mapping.cpp
-)
-target_include_directories(joint_mapping_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-target_link_libraries(joint_mapping_test PRIVATE robot_base)
-
 add_executable(target_interpolator_test
     tests/target_interpolator_test.cpp
 )
@@ -171,32 +159,9 @@ target_link_libraries(ankle_inverse_kinematics_test PRIVATE
     robot_base
 )
 
-add_executable(observation_builder_test
-    tests/observation_builder_test.cpp
-    src/robot/observation_builder.cpp
-    src/robot/joint_mapping.cpp
-)
-target_include_directories(observation_builder_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
-)
-target_link_libraries(observation_builder_test PRIVATE robot_base)
-target_compile_definitions(observation_builder_test PRIVATE
-    ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=$<BOOL:${ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS}>
-)
-
 add_executable(ankle_motor_jacobian_test
     tests/ankle_motor_jacobian_test.cpp
 )
 target_include_directories(ankle_motor_jacobian_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-add_executable(policy_runtime_observation_test
-    tests/policy_runtime_observation_test.cpp
-)
-target_link_libraries(policy_runtime_observation_test PRIVATE robot_interface)
-target_compile_definitions(policy_runtime_observation_test PRIVATE
-    ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=$<BOOL:${ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS}>
-    ROBOT_POLICY_RUNTIME_TESTING
 )

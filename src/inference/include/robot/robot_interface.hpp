@@ -1,5 +1,5 @@
 #pragma once
-#include "base/spsc_latest_value.hpp"
+#include "spsc_latest_value/spsc_latest_value.hpp"
 #include "policy/policy_runtime.hpp"
 #include "recorder/inference_recorder.hpp"
 #include "policy/policy_observation_config.hpp"

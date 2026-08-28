@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include "ethercat_types.hpp"
+#include "protocol/ethercat/ethercat_types.hpp"
 #include "driver/myact/myact_types.hpp"
 #include "motor_base/command_types.hpp"
 
@@ -14,6 +14,7 @@ struct DesiredState {
     bool enabled;
 
     MyactControlMode mode;
+
     double position_rad;
     double velocity_rad_s;
     double torque;
@@ -26,18 +27,24 @@ struct DesiredState {
     }
 };
 
-/// @brief 电机观测的状态与模式
+/// @brief 电机观测的解码后状态（物理单位 + 0x6041 状态字位镜像 + 预转型模式；
+/// 不含 0x603F 错误寄存器，fault 判定需调用点补充 rx.error）
 struct ObservedState {
-    bool fault;
+    double position_rad;      // rx.pos 转换后的弧度
+    double velocity_rad_s;    // rx.vel 转换后的弧度/秒
+    double torque_percent;    // rx.torque 转换后的百分比
+
+    bool sw_faulted;
     bool operation_enabled;
-    uint16_t status_word;
-    MyactControlMode mode;
+    MyactControlMode observed_mode;
 
     ObservedState()
-        : fault(false),
+        : position_rad(0.0),
+          velocity_rad_s(0.0),
+          torque_percent(0.0),
+          sw_faulted(false),
           operation_enabled(false),
-          status_word(0),
-          mode(MyactControlMode::CSP)
+          observed_mode(MyactControlMode::CSP)
     {
     }
 };
@@ -54,9 +61,10 @@ struct MotorState {
     TxPDO tx;
     RxPDO rx;
 
-    bool comm_ok;
+    bool     comm_ok;
     uint32_t comm_offline_total_count;
 
+    MotorState() : MotorState(-1) {}
     explicit MotorState(int index)
         : motor_index(index),
           desired(),

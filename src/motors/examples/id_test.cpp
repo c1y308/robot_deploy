@@ -1,5 +1,5 @@
 #include "driver/myact/motor_control.hpp"
-#include "ethercat_adapter_igh.hpp"
+#include "protocol/ethercat/ethercat_adapter_igh.hpp"
 #include "motor_base/command_types.hpp"
 #include "motor_base/rt_event_dispatcher.hpp"
 #include <array>

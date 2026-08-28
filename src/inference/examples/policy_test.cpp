@@ -72,8 +72,8 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.joint_mapping.left_ankle_parallel = {8, 10, 4, 5};
     cfg.joint_mapping.right_ankle_parallel = {9, 11, 10, 11};
 
-    cfg.motor.mit_kp = {180.0, 180.0, 180.0, 180.0, 187.0, 187.0,
-                        180.0, 180.0, 180.0, 180.0, 187.0, 187.0};
+    cfg.motor.mit_kp = {250.0, 250.0, 250.0, 250.0, 187.0, 187.0,
+                        250.0, 250.0, 250.0, 250.0, 187.0, 187.0};
 
     cfg.motor.mit_kd = {10.0, 10.0, 10.0, 10.0, 9.07, 9.07,
                         10.0, 10.0, 10.0, 10.0, 9.07, 9.07};
@@ -244,9 +244,8 @@ int main()
             return 1;
         }
         // robot.set_target_velocity(0.0, 0.0, 0.0);
-        // robot.set_target_velocity(0, command.vx, 0.0);
-        // robot.set_target_velocity( command.vx, 0.0, 0.0);
-        robot.set_target_velocity( 0.0, command.vx, 0.0);
+        robot.set_target_velocity( command.vx, 0.0, 0.0);
+        // robot.set_target_velocity( 0.0, command.vx, 0.0);
 
         const auto step_start = Clock::now();
         if (!robot.policy_step()) {

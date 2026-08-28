@@ -1,5 +1,6 @@
 #include "robot/robot_imu_session.hpp"
 
+#include "imu_base/imu_base.hpp"
 #include "imu_reader.hpp"
 
 #include <chrono>
@@ -32,7 +33,7 @@ bool RobotImuSession::initialize_and_start()
         return true;
     }
 
-    imu::Config_t imu_cfg;
+    imu_base::ReaderConfig imu_cfg;
     imu_cfg.device      = config_.device;
     imu_cfg.baudrate    = config_.baudrate;
     imu_cfg.print_imu   = config_.print_imu;
@@ -46,10 +47,10 @@ bool RobotImuSession::initialize_and_start()
     }
 
     reader_ = std::make_unique<imu::IMUReader>();
-    reader_->set_imu_callback([](const imu::IMUData_t& data) {
+    reader_->set_imu_callback([](const imu_base::IMUData& data) {
         (void)data;
     });
-    reader_->set_ahrs_callback([this](const imu::AHRSData_t& data) {
+    reader_->set_ahrs_callback([this](const imu_base::AHRSData& data) {
         std::lock_guard<std::mutex> lock(mutex_);
         state_.timestamp_ns = imu_steady_now_ns();
 

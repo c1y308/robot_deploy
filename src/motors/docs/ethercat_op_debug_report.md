@@ -92,7 +92,7 @@ sudo MYACTUA_ECAT_DIAG=1 MYACTUA_ECAT_DIAG_INTERVAL=1000 ./id_test
 
 ## 第三层排查：映射逻辑索引到 EtherCAT 物理位置
 
-`ethercat_adapter_igh.hpp` 中当前逻辑索引到物理 position 的映射是：
+`include/protocol/ethercat/ethercat_adapter_igh.hpp` 中当前逻辑索引到物理 position 的映射是：
 
 ```cpp
 inline constexpr std::array<uint16_t, 12> kSlavePositions = {

@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-#include "base/spsc_latest_value.hpp"
+#include "spsc_latest_value/spsc_latest_value.hpp"
 #include "motor_base/command_types.hpp"
 
 namespace motor_base {
@@ -156,15 +156,19 @@ template <typename Snapshot>
 void LatestStatusChannel<Snapshot>::configure(std::size_t motor_count,
                                               int publish_period_ms)
 {
-    stop();
-
     if (motor_count > kMaxMotorCommandSetpoints) {
         throw std::invalid_argument(
             "LatestStatusChannel motor_count exceeds fixed capacity");
     }
+    if (publish_period_ms <= 0) {
+        throw std::invalid_argument(
+            "LatestStatusChannel publish_period_ms must be positive");
+    }
+
+    stop();
 
     motor_count_ = motor_count;
-    publish_period_ms_ = std::max(1, publish_period_ms);
+    publish_period_ms_ = publish_period_ms;
 
     status_cache_.assign(motor_count_, Snapshot());
 

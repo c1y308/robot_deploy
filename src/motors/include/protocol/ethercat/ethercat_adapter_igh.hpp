@@ -1,5 +1,5 @@
 #pragma once
-#include "ethercat_adapter.hpp"
+#include "protocol/ethercat/ethercat_adapter.hpp"
 #include <ecrt.h>
 #include <array>
 #include <cstddef>

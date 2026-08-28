@@ -20,6 +20,7 @@ add_library(imu_a100_core STATIC
 )
 
 target_include_directories(imu_a100_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../base/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/drivers
     ${CMAKE_CURRENT_SOURCE_DIR}/src/protocol/frame

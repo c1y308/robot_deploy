@@ -1,11 +1,10 @@
 #pragma once
 
-#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <mutex>
-#include <vector>
 
+#include "ringbuffer/ring_buffer.hpp"
 #include "motor_base/command_types.hpp"
 
 namespace motor_base {
@@ -13,8 +12,7 @@ namespace motor_base {
 class CommandQueue {
 public:
     explicit CommandQueue(std::size_t capacity)
-        : buffer_(std::max<std::size_t>(1, capacity), ControlCommand::stop()),
-          capacity_(buffer_.size())
+        : buffer_(capacity)
     {
     }
 
@@ -23,11 +21,11 @@ public:
         std::lock_guard<std::mutex> lock(push_mutex_);
         const std::size_t head = head_.load(std::memory_order_relaxed);
         const std::size_t tail = tail_.load(std::memory_order_acquire);
-        if (head - tail >= capacity_) {
+        if (head - tail >= buffer_.capacity()) {
             return false;
         }
 
-        buffer_[head % capacity_] = value;
+        buffer_.slot(head) = value;
         head_.store(head + 1, std::memory_order_release);
         return true;
     }
@@ -39,7 +37,7 @@ public:
         if (tail == head) {
             return nullptr;
         }
-        return &buffer_[tail % capacity_];
+        return &buffer_.slot(tail);
     }
 
     void pop_front()
@@ -49,8 +47,7 @@ public:
     }
 
 private:
-    std::vector<ControlCommand> buffer_;
-    std::size_t capacity_;
+    robot_base::RingBuffer<ControlCommand> buffer_;
     std::atomic<std::size_t> head_{0};
     std::atomic<std::size_t> tail_{0};
     std::mutex push_mutex_;
@@ -58,47 +55,30 @@ private:
 
 class DiscreteCommandQueue {
 public:
-    explicit DiscreteCommandQueue(std::size_t capacity = 0)
-        : buffer_(std::max<std::size_t>(1, capacity)),
-          capacity_(buffer_.size()),
-          head_(0),
-          count_(0)
+    explicit DiscreteCommandQueue(std::size_t capacity)
+        : buffer_(capacity)
     {
     }
 
     bool push_back(const DiscreteCommand& value)
     {
-        if (count_ >= capacity_) {
-            return false;
-        }
-
-        const std::size_t tail = (head_ + count_) % capacity_;
-        buffer_[tail] = value;
-        ++count_;
-        return true;
+        return buffer_.push_back(value);
     }
 
-    bool empty() const { return count_ == 0; }
+    bool empty() const { return buffer_.empty(); }
 
     DiscreteCommand& front()
     {
-        return buffer_[head_];
+        return buffer_.front();
     }
 
     void pop_front()
     {
-        if (count_ == 0) {
-            return;
-        }
-        head_ = (head_ + 1) % capacity_;
-        --count_;
+        buffer_.pop_front();
     }
 
 private:
-    std::vector<DiscreteCommand> buffer_;
-    std::size_t capacity_;
-    std::size_t head_;
-    std::size_t count_;
+    robot_base::RingBuffer<DiscreteCommand> buffer_;
 };
 
 } // namespace motor_base

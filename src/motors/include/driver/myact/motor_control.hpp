@@ -6,16 +6,14 @@
 #include <cstdint>
 #include <functional>
 #include "motor_base/motor_base.hpp"
-#include "ethercat_types.hpp"
-#include "ethercat_adapter.hpp"
+#include "protocol/ethercat/ethercat_types.hpp"
+#include "protocol/ethercat/ethercat_adapter.hpp"
 #include "motor_base/command_types.hpp"
 #include "motor_base/motor_status_monitor.hpp"
 #include "motor_base/rt_event_dispatcher.hpp"
 #include "motor_base/status_channel.hpp"
 #include "driver/myact/motor_state.hpp"
 #include "driver/myact/myact_types.hpp"
-
-#define LIMIT(VAL, MIN, MAX) ((VAL)<(MIN)?(MIN):((VAL)>(MAX)?(MAX):(VAL)))
 
 namespace myactua{
 
@@ -24,11 +22,10 @@ namespace myactua{
 /// 继承 MotorControllerBase，实现 CiA 402 状态机与 PDO 收发。
 class MYACTUA : public motor_base::MotorControllerBase {
 public:
-    using MyactDiagnosticsCallback = std::function<void(const std::vector<MyactDiagnosticsSnapshot>&)>;
+    using MyactDiagnosticsCallback = std::function<void(const std::vector<MotorState>&)>;
 
     struct Options : motor_base::MotorControllerBase::RealtimeOptions {
         uint32_t comm_watchdog_fault_cycles = 10;
-        uint32_t comm_watchdog_recovery_cycles = 10;
         ControlWordCommand comm_fault_control_word = CMD_QUICK_STOP;
     };
 
@@ -39,46 +36,36 @@ public:
 
     bool wait_all_motors_ready(int timeout_ms = 30000, int poll_ms = 100) const override;
 
-    std::vector<MyactDiagnosticsSnapshot> get_myact_diagnostics();
+    std::vector<MotorState> get_myact_diagnostics();
 
     void set_myact_diagnostics_callback(MyactDiagnosticsCallback cb);
 
     void set_print_info(const std::vector<int>& motor_index) override;
 
-    /// @name MYACTUA 特有静态工具方法（电机编码器分辨率相关）
-    /// @{
-    static double raw_pos_to_rad(double raw_pos);
-    static double raw_vel_to_rad_s(double raw_vel);
-    /// @}
-
-    
 private:
     Options options_;
     std::shared_ptr<EthercatAdapter> _adapter;
     std::vector<MotorState> _motors;
 
     std::atomic<uint64_t> status_channel_busy_count_{0};
-    motor_base::LatestStatusChannel<MyactDiagnosticsSnapshot> diagnostics_channel_;
-    motor_base::MotorStatusMonitor<MyactDiagnosticsSnapshot>  status_monitor_;
+    motor_base::LatestStatusChannel<MotorState> diagnostics_channel_;
+    motor_base::MotorStatusMonitor<MotorState>  status_monitor_;
 
     std::atomic<bool> whole_body_fault_latched_{false};
-    bool restart_all_requested_{false};
     uint32_t process_data_fail_count_{0};
-    uint32_t recovery_healthy_count_{0};
     MyactCommunicationFaultReason fault_reason_{MyactCommunicationFaultReason::None};
-    uint64_t fault_tick_{0};
 
     bool connect_impl(const char* ifname) override;
 
     motor_base::CommandSubmitResult validate_command(
         const motor_base::ControlCommand& cmd) const override;
 
-    void apply_setpoint_command_callback(
+    void apply_setpoint_command_impl(
         const motor_base::ControlCommand& cmd) override;
-    void apply_discrete_command_callback(
+    void apply_discrete_command_impl(
         int motor_index,
         const motor_base::DiscreteCommand& cmd) override;
-    motor_base::DiscreteCommandEvaluation evaluate_discrete_command_callback(
+    motor_base::DiscreteCommandEvaluation evaluate_discrete_command_impl(
         int motor_index,
         const motor_base::DiscreteCommand& cmd) const override;
 
@@ -104,13 +91,8 @@ private:
     void latch_communication_fault(
         MyactCommunicationFaultReason reason,
         const EthercatBusHealthSnapshot& health);
-    void clear_communication_fault();
     void apply_whole_body_quick_stop();
     void reset_motor_setpoints_to_feedback(MotorState& motor);
-    void reset_motor_targets_to_feedback(MotorState& motor);
-    void push_communication_fault_event(
-        motor_base::RtEventType type,
-        const EthercatBusHealthSnapshot& health);
 
     void push_status_channel_busy_event();
 
@@ -118,13 +100,10 @@ private:
         void* context,
         const motor_base::RtEvent& event);
 
-    void refresh_observed_state(MotorState& motor);
-
     void process_single_motor(MotorState& motor);
 
     void handle_mode_switching(MotorState& motor);
 
-    ControlWordCommand get_next_control_word(uint16_t status_word);
     static MyactControlMode to_myact_mode(motor_base::MotorControlMode mode);
     static motor_base::MotorControlMode to_motor_control_mode(MyactControlMode mode);
 };

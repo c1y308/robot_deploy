@@ -1,6 +1,7 @@
 #ifndef __IMU_READER_HPP__
 #define __IMU_READER_HPP__
 
+#include "imu_base/imu_base.hpp"
 #include "serial_port.hpp"
 #include "imu_parser.hpp"
 #include <atomic>
@@ -10,38 +11,23 @@
 #include <thread>
 
 namespace imu {
-    
-/* IMU配置结构体 */
-struct Config_t {
-    std::string device;
-    int  baudrate;
-    bool print_imu;
-    bool print_ahrs;
-    
-    Config_t() : device("/dev/ttyUSB0"), 
-                 baudrate(921600),
-                 print_imu(false),
-                 print_ahrs(false)
-                {}
-};
 
-
-class IMUReader {
+class IMUReader : public imu_base::IMUReaderBase {
 public:
     IMUReader();
-    ~IMUReader();
+    ~IMUReader() override;
     
     IMUReader(const IMUReader&) = delete;
     IMUReader& operator=(const IMUReader&) = delete;
     
-    bool start(const Config_t& config);
-    void stop();
-    bool is_running() const { return running_.load(); }
+    bool start(const Config_t& config) override;
+    void stop() override;
+    bool is_running() const override { return running_.load(); }
     
-    const ParserInfo_t& get_info() const;
+    const ParserInfo_t& get_info() const override;
     
-    void set_imu_callback(IMUParser::IMUCallback_t callback);
-    void set_ahrs_callback(IMUParser::AHRSCallback_t callback);
+    void set_imu_callback(imu_base::IMUReaderBase::IMUCallback callback) override;
+    void set_ahrs_callback(imu_base::IMUReaderBase::AHRSCallback callback) override;
 
 private:
     void read_loop();

@@ -1,4 +1,4 @@
-#include "base/spsc_latest_value.hpp"
+#include "spsc_latest_value/spsc_latest_value.hpp"
 
 #include <array>
 #include <atomic>

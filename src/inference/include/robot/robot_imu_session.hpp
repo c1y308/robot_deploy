@@ -8,8 +8,8 @@
 #include <memory>
 #include <mutex>
 
-namespace imu {
-class IMUReader;
+namespace imu_base {
+class IMUReaderBase;
 }
 
 namespace inference {
@@ -44,7 +44,7 @@ public:
 
 private:
     ImuConfig config_;
-    std::unique_ptr<imu::IMUReader> reader_;
+    std::unique_ptr<imu_base::IMUReaderBase> reader_;
 
     std::atomic<bool> initialized_{false};
     std::atomic<bool> ahrs_ready_{false};

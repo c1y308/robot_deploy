@@ -2,7 +2,7 @@
 
 #include <ecrt.h>
 
-#include "ethercat_types.hpp"
+#include "protocol/ethercat/ethercat_types.hpp"
 
 namespace motor_base {
 struct RtEvent;

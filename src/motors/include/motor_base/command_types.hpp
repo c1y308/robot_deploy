@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstddef>
 #include <utility>
@@ -138,6 +139,10 @@ struct ControlCommand {
         }
         cmd.payload_size = count;
         for (std::size_t i = 0; i < count; ++i) {
+            if (!std::isfinite(values[i])) {
+                cmd.payload_valid = false;
+                return cmd;
+            }
             cmd.setpoints[i] = values[i];
         }
         return cmd;
@@ -160,6 +165,10 @@ struct ControlCommand {
         }
         cmd.payload_size = count;
         for (std::size_t i = 0; i < count; ++i) {
+            if (!std::isfinite(values[i])) {
+                cmd.payload_valid = false;
+                return cmd;
+            }
             cmd.setpoints[i] = values[i];
         }
         return cmd;
@@ -182,6 +191,10 @@ struct ControlCommand {
         }
         cmd.payload_size = count;
         for (std::size_t i = 0; i < count; ++i) {
+            if (!std::isfinite(torque[i])) {
+                cmd.payload_valid = false;
+                return cmd;
+            }
             cmd.setpoints[i] = torque[i];
         }
         return cmd;
@@ -204,6 +217,15 @@ struct ControlCommand {
         }
         cmd.payload_size = count;
         for (std::size_t i = 0; i < count; ++i) {
+            const auto& value = values[i];
+            if (!std::isfinite(value.position_rad) ||
+                !std::isfinite(value.velocity_rad_s) ||
+                !std::isfinite(value.effort_ff) ||
+                !std::isfinite(value.kp) ||
+                !std::isfinite(value.kd)) {
+                cmd.payload_valid = false;
+                return cmd;
+            }
             cmd.impedance_setpoints[i] = values[i];
         }
         return cmd;

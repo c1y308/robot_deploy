@@ -16,3 +16,10 @@ target_link_libraries(spsc_latest_value_test PRIVATE
     robot_base
     pthread
 )
+
+add_executable(ring_buffer_test
+    tests/ring_buffer_test.cpp
+)
+target_link_libraries(ring_buffer_test PRIVATE
+    robot_base
+)

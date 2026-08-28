@@ -3,26 +3,20 @@
 namespace myactua {
 
 constexpr double kPi = 3.14159265358979323846;
-constexpr double kPosPulsePerRev = 131072.0;
-constexpr double kRawPosToRad = (2.0 * kPi) / kPosPulsePerRev;
-constexpr double kRawVelToRpm = 60.0 / kPosPulsePerRev;
-constexpr double kRpmToRadPerSec = (2.0 * kPi) / 60.0;
-constexpr double kRawVelToRadPerSec = kRawVelToRpm * kRpmToRadPerSec;
 constexpr double kRadToDeg = 180.0 / kPi;
 
-inline double raw_pos_to_rad(double raw_pos)
-{
-    return raw_pos * kRawPosToRad;
-}
+constexpr double kPosPulsePerRev = 131072.0;
+constexpr double kRadToRawPos = kPosPulsePerRev / (2.0 * kPi);
+constexpr double kRawPosToRad = (2.0 * kPi) / kPosPulsePerRev;
 
-inline double rad_to_deg(double rad)
-{
-    return rad * kRadToDeg;
-}
+constexpr double kRawVelToRadPerSec = kRawPosToRad;
+constexpr double kRadPerSecToRawVel = kRadToRawPos;
 
-inline double raw_vel_to_rad_s(double raw_vel)
-{
-    return raw_vel * kRawVelToRadPerSec;
-}
+constexpr double kAnklePosPulsePerRev = 2.0 * kPosPulsePerRev;
+constexpr double kAnkleRadToRawPos = kAnklePosPulsePerRev / (2.0 * kPi);
+constexpr double kAnkleRawPosToRad = (2.0 * kPi) / kAnklePosPulsePerRev;
+
+constexpr double kAnkleRawVelToRadPerSec = kAnkleRawPosToRad;
+constexpr double kAnkleRadPerSecToRawVel = kAnkleRadToRawPos;
 
 } // namespace myactua

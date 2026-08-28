@@ -1,6 +1,6 @@
 #include "robot/observation_builder.hpp"
 
-#include "base/tool.hpp"
+#include "tool/tool.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -243,7 +243,7 @@ bool ObservationBuilder::fill_ankle_fk_joint_terms(
     }
 
     const auto pitch_index = static_cast<std::size_t>(ankle_model_pitch_dof);
-    const auto roll_index = static_cast<std::size_t>(ankle_model_roll_dof);
+    const auto roll_index  = static_cast<std::size_t>(ankle_model_roll_dof);
 
 
     // 计算脚踝关节的相对偏移并缩放

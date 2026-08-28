@@ -1,5 +1,5 @@
 #include "motor_base/command_types.hpp"
-#include "ethercat_adapter_igh.hpp"
+#include "protocol/ethercat/ethercat_adapter_igh.hpp"
 #include "kinematics/ankle_motor_ik.hpp"
 #include "driver/myact/motor_control.hpp"
 

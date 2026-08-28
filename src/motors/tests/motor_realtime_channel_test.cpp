@@ -1,6 +1,7 @@
 #include "motor_base/command_types.hpp"
-#include "ethercat_adapter.hpp"
+#include "protocol/ethercat/ethercat_adapter.hpp"
 #include "driver/myact/motor_control.hpp"
+#include "driver/myact/motor_units.hpp"
 
 #include <array>
 #include <atomic>
@@ -289,7 +290,7 @@ int main()
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         });
     controller.set_myact_diagnostics_callback(
-        [&diagnostics_callbacks](const std::vector<myactua::MyactDiagnosticsSnapshot>&) {
+        [&diagnostics_callbacks](const std::vector<myactua::MotorState>&) {
             diagnostics_callbacks.fetch_add(1, std::memory_order_relaxed);
         });
     controller.set_event_callback(
@@ -355,7 +356,7 @@ int main()
                 [](const std::vector<motor_base::MotorStatusSnapshot>&) {});
             controller.set_myact_diagnostics_callback({});
             controller.set_myact_diagnostics_callback(
-                [](const std::vector<myactua::MyactDiagnosticsSnapshot>&) {});
+                [](const std::vector<myactua::MotorState>&) {});
         }
     });
     callback_toggler.join();
@@ -468,7 +469,7 @@ int main()
         constexpr int32_t target_raw = 2222;
         std::vector<motor_base::ImpedanceSetpoint> setpoints;
         setpoints.emplace_back(
-            myactua::MYACTUA::raw_pos_to_rad(target_raw),
+            static_cast<double>(target_raw) * myactua::kRawPosToRad,
             0.0,
             0.0,
             10.0,
@@ -538,7 +539,7 @@ int main()
         if (!expect(
                 stopped_controller.send_command(
                     motor_base::ControlCommand::set_position_targets_rad(
-                        {myactua::MYACTUA::raw_pos_to_rad(target_raw)})) ==
+                        {static_cast<double>(target_raw) * myactua::kRawPosToRad})) ==
                     motor_base::CommandSubmitResult::ACCEPTED,
                 "setpoint should enqueue when observed mode matches but motor is not running")) {
             stopped_controller.shutdown();
@@ -591,7 +592,7 @@ int main()
         if (!expect(
                 running_controller.send_command(
                     motor_base::ControlCommand::set_position_targets_rad(
-                        {myactua::MYACTUA::raw_pos_to_rad(target_raw)})) ==
+                        {static_cast<double>(target_raw) * myactua::kRawPosToRad})) ==
                     motor_base::CommandSubmitResult::ACCEPTED,
                 "setpoint should enqueue when all motors are confirmed running")) {
             running_controller.shutdown();
@@ -649,8 +650,8 @@ int main()
         if (!expect(
                 partial_controller.send_command(
                     motor_base::ControlCommand::set_position_targets_rad(
-                        {myactua::MYACTUA::raw_pos_to_rad(target0_raw),
-                         myactua::MYACTUA::raw_pos_to_rad(target1_raw)})) ==
+                        {static_cast<double>(target0_raw) * myactua::kRawPosToRad,
+                         static_cast<double>(target1_raw) * myactua::kRawPosToRad})) ==
                     motor_base::CommandSubmitResult::ACCEPTED,
                 "partial-frame setpoint should enqueue for RT validation")) {
             partial_controller.shutdown();
@@ -745,17 +746,13 @@ int main()
 
           myactua::MYACTUA watchdog_controller(adapter, 1, test_options());
           std::atomic<int> fault_events{0};
-          std::atomic<int> clear_events{0};
           std::atomic<int> last_reason{0};
           watchdog_controller.set_event_callback(
-              [&fault_events, &clear_events, &last_reason](
+              [&fault_events, &last_reason](
                   const motor_base::RtEvent& event) {
                   if (event.type == motor_base::RtEventType::COMM_WATCHDOG_FAULT) {
                       fault_events.fetch_add(1, std::memory_order_relaxed);
                       last_reason.store(event.reason, std::memory_order_relaxed);
-                  }
-                  if (event.type == motor_base::RtEventType::COMM_WATCHDOG_CLEARED) {
-                      clear_events.fetch_add(1, std::memory_order_relaxed);
                   }
               });
           if (!expect_start(watchdog_controller,
@@ -789,10 +786,6 @@ int main()
           const myactua::TxPDO tx = adapter->last_tx(0);
           if (!expect(fault_events.load(std::memory_order_relaxed) == 1,
                       "10 consecutive WKC failures should latch once")) {
-              return 1;
-          }
-          if (!expect(clear_events.load(std::memory_order_relaxed) == 0,
-                      "communication recovery without RESTART(-1) should not clear latch")) {
               return 1;
           }
           if (!expect(last_reason.load(std::memory_order_relaxed) ==
@@ -848,13 +841,6 @@ int main()
           adapter->set_health_script(script);
 
           myactua::MYACTUA watchdog_controller(adapter, 1, test_options());
-          std::atomic<int> clear_events{0};
-          watchdog_controller.set_event_callback(
-              [&clear_events](const motor_base::RtEvent& event) {
-                  if (event.type == motor_base::RtEventType::COMM_WATCHDOG_CLEARED) {
-                      clear_events.fetch_add(1, std::memory_order_relaxed);
-                  }
-              });
           if (!expect_start(watchdog_controller,
                             "single-motor restart controller should start")) {
               return 1;
@@ -871,8 +857,8 @@ int main()
               return 1;
           }
           watchdog_controller.shutdown();
-          if (!expect(clear_events.load(std::memory_order_relaxed) == 0,
-                      "RESTART(i) should not clear a whole-body communication fault")) {
+          if (!expect(adapter->last_tx(0).control_word == myactua::CMD_QUICK_STOP,
+                      "RESTART(i) should keep communication fault latched")) {
               return 1;
           }
       }
@@ -884,47 +870,36 @@ int main()
           adapter->set_health_script(script);
 
           myactua::MYACTUA watchdog_controller(adapter, 1, test_options());
-          std::atomic<int> clear_events{0};
+          std::atomic<int> fault_events{0};
           watchdog_controller.set_event_callback(
-              [&clear_events](const motor_base::RtEvent& event) {
-                  if (event.type == motor_base::RtEventType::COMM_WATCHDOG_CLEARED) {
-                      clear_events.fetch_add(1, std::memory_order_relaxed);
+              [&fault_events](const motor_base::RtEvent& event) {
+                  if (event.type == motor_base::RtEventType::COMM_WATCHDOG_FAULT) {
+                      fault_events.fetch_add(1, std::memory_order_relaxed);
                   }
               });
           if (!expect_start(watchdog_controller,
-                            "RESTART(-1) recovery controller should start")) {
+                            "RESTART(-1) latch controller should start")) {
               return 1;
           }
           if (!expect(adapter->wait_for_cycles(12, std::chrono::seconds(1)),
-                      "RESTART(-1) recovery scenario should reach fault")) {
+                      "RESTART(-1) latch scenario should reach fault")) {
               watchdog_controller.shutdown();
               return 1;
           }
 
           std::vector<myactua::EthercatBusHealthSnapshot> recovery_script;
-          append_health(recovery_script, 9, health(true, EC_WC_COMPLETE, 1));
-          append_health(recovery_script, 1, health(true, EC_WC_INCOMPLETE, 0));
+          append_health(recovery_script, 20, health(true, EC_WC_COMPLETE, 1));
           adapter->set_health_script(recovery_script);
           watchdog_controller.send_command(motor_base::ControlCommand::restart());
           if (!expect(adapter->wait_for_cycles(28, std::chrono::seconds(1)),
-                      "9-good recovery scenario should continue running")) {
-              watchdog_controller.shutdown();
-              return 1;
-          }
-          if (!expect(clear_events.load(std::memory_order_relaxed) == 0,
-                      "RESTART(-1) plus only 9 healthy cycles should not clear")) {
-              watchdog_controller.shutdown();
-              return 1;
-          }
-
-          if (!expect(adapter->wait_for_cycles(48, std::chrono::seconds(1)),
-                      "10-good recovery scenario should clear latch")) {
+                      "healthy cycles after RESTART(-1) should continue running")) {
               watchdog_controller.shutdown();
               return 1;
           }
           watchdog_controller.shutdown();
-          if (!expect(clear_events.load(std::memory_order_relaxed) == 1,
-                      "RESTART(-1) plus 10 healthy cycles should clear once")) {
+          if (!expect(fault_events.load(std::memory_order_relaxed) == 1 &&
+                          adapter->last_tx(0).control_word == myactua::CMD_QUICK_STOP,
+                      "RESTART(-1) and healthy cycles should keep communication fault latched")) {
               return 1;
           }
       }
@@ -936,13 +911,6 @@ int main()
           adapter->set_health_script(script);
 
           myactua::MYACTUA watchdog_controller(adapter, 1, test_options());
-          std::atomic<int> clear_events{0};
-          watchdog_controller.set_event_callback(
-              [&clear_events](const motor_base::RtEvent& event) {
-                  if (event.type == motor_base::RtEventType::COMM_WATCHDOG_CLEARED) {
-                      clear_events.fetch_add(1, std::memory_order_relaxed);
-                  }
-              });
           if (!expect_start(watchdog_controller,
                             "RT restart latch controller should start")) {
               return 1;
@@ -966,94 +934,11 @@ int main()
           watchdog_controller.shutdown();
 
           const myactua::TxPDO tx = adapter->last_tx(0);
-          if (!expect(clear_events.load(std::memory_order_relaxed) == 0 &&
-                          tx.control_word == myactua::CMD_QUICK_STOP,
+          if (!expect(tx.control_word == myactua::CMD_QUICK_STOP,
                       "RT thread restart should not clear communication latch")) {
               return 1;
           }
       }
 
-      {
-          auto adapter = std::make_shared<FakeAdapter>(1);
-          constexpr int32_t current_raw = 1234;
-          constexpr int32_t stale_raw = 54321;
-          adapter->set_rx_position(0, current_raw);
-          adapter->set_rx_status_word(
-              0,
-              myactua::BIT_READY_TO_SWITCH_ON |
-                  myactua::BIT_SWITCHED_ON |
-                  myactua::BIT_OPERATION_ENABLED);
-
-          myactua::MYACTUA watchdog_controller(adapter, 1, test_options());
-          std::atomic<int> fault_events{0};
-          std::atomic<int> clear_events{0};
-          watchdog_controller.set_event_callback(
-              [&fault_events, &clear_events](const motor_base::RtEvent& event) {
-                  if (event.type == motor_base::RtEventType::COMM_WATCHDOG_FAULT) {
-                      fault_events.fetch_add(1, std::memory_order_relaxed);
-                  }
-                  if (event.type == motor_base::RtEventType::COMM_WATCHDOG_CLEARED) {
-                      clear_events.fetch_add(1, std::memory_order_relaxed);
-                  }
-              });
-          if (!expect_start(watchdog_controller,
-                            "stale setpoint controller should start")) {
-              return 1;
-          }
-          watchdog_controller.send_command(motor_base::ControlCommand::restart());
-          if (!expect(adapter->wait_for_cycles(45, std::chrono::seconds(1)),
-                      "stale setpoint scenario should settle RESTART before setpoint")) {
-              watchdog_controller.shutdown();
-              return 1;
-          }
-          watchdog_controller.send_command(
-              motor_base::ControlCommand::set_position_targets_rad(
-                  {myactua::MYACTUA::raw_pos_to_rad(stale_raw)}));
-          if (!expect(adapter->wait_for_cycles(51, std::chrono::seconds(1)),
-                      "stale setpoint scenario should apply initial setpoint")) {
-              watchdog_controller.shutdown();
-              return 1;
-          }
-          if (!expect(adapter->last_tx(0).target_pos == stale_raw,
-                      "test setup should apply stale position target before fault")) {
-              watchdog_controller.shutdown();
-              return 1;
-          }
-
-          std::vector<myactua::EthercatBusHealthSnapshot> fault_script;
-          append_health(fault_script, 10, health(true, EC_WC_INCOMPLETE, 0));
-          adapter->set_health_script(fault_script);
-          const std::uint64_t fault_start_cycle = adapter->cycles();
-          if (!expect(adapter->wait_for_cycles(fault_start_cycle + 12,
-                                               std::chrono::seconds(1)),
-                      "stale setpoint scenario should reach fault")) {
-              watchdog_controller.shutdown();
-              return 1;
-          }
-          watchdog_controller.send_command(motor_base::ControlCommand::restart());
-          const std::uint64_t recovery_start_cycle = adapter->cycles();
-          if (!expect(adapter->wait_for_cycles(recovery_start_cycle + 25,
-                                               std::chrono::seconds(1)),
-                      "stale setpoint scenario should clear fault")) {
-              watchdog_controller.shutdown();
-              return 1;
-          }
-          watchdog_controller.shutdown();
-
-          const myactua::TxPDO tx = adapter->last_tx(0);
-          if (clear_events.load(std::memory_order_relaxed) != 1) {
-              std::cerr << "[motor_realtime_channel_test] stale fault_events="
-                        << fault_events.load(std::memory_order_relaxed)
-                        << " clear_events="
-                        << clear_events.load(std::memory_order_relaxed)
-                        << "\n";
-              expect(false, "stale setpoint scenario should clear once");
-              return 1;
-          }
-          if (!expect(tx.target_pos == current_raw && tx.target_pos != stale_raw,
-                      "clearing communication fault should reset target to feedback")) {
-              return 1;
-          }
-      }
       return 0;
   }

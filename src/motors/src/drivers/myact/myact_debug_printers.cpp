@@ -86,7 +86,7 @@ const char* setpoint_reject_reason_name(mb::SetpointRejectReason reason)
 } // namespace
 
 void print_myact_status_table(
-    const std::vector<MyactDiagnosticsSnapshot>& status,
+    const std::vector<MotorState>& status,
     const std::vector<int>& motor_indices)
 {
     printf("\033[2J\033[H");
@@ -115,17 +115,15 @@ void print_myact_status_table(
                                  m.motor_index == 5 ||
                                  m.motor_index == 10 ||
                                  m.motor_index == 11;
-        const double position_scale = ankle_motor ? 2.0 : 1.0;
-        const double rx_pos_rad = raw_pos_to_rad(m.position) / position_scale;
-        const double rx_pos_deg = rad_to_deg(rx_pos_rad);
+        const double pos_raw_to_rad = ankle_motor ? kAnkleRawPosToRad : kRawPosToRad;
+        const double rx_pos_deg = m.observed.position_rad * kRadToDeg;
         const double target_pos_deg =
-            static_cast<double>(m.command_position) *
-            kRawPosToRad *
-            kRadToDeg /
-            position_scale;
+            static_cast<double>(m.tx.target_pos) *
+            pos_raw_to_rad *
+            kRadToDeg;
         const double target_error_deg = target_pos_deg - rx_pos_deg;
         char tx_target_info[64] = {};
-        switch (m.tx_mode) {
+        switch (static_cast<MyactControlMode>(m.tx.op_mode)) {
             case MyactControlMode::PVT:
                 std::snprintf(tx_target_info, sizeof(tx_target_info), "%.3f",
                     target_pos_deg);
@@ -135,12 +133,12 @@ void print_myact_status_table(
                     target_pos_deg);
                 break;
             case MyactControlMode::CSV:
-                std::snprintf(tx_target_info, sizeof(tx_target_info), "%.3f rpm",
-                    static_cast<double>(m.command_velocity) * kRawVelToRpm);
+                std::snprintf(tx_target_info, sizeof(tx_target_info), "%.3f rad/s",
+                    m.desired.velocity_rad_s);
                 break;
             case MyactControlMode::CST:
                 std::snprintf(tx_target_info, sizeof(tx_target_info), "%d raw",
-                    static_cast<int>(m.command_torque));
+                    static_cast<int>(m.tx.target_torque));
                 break;
             default:
                 std::snprintf(tx_target_info, sizeof(tx_target_info), "N/A");
@@ -149,16 +147,16 @@ void print_myact_status_table(
 
         printf("M %-4d | %-10u | %s%-16s\033[0m | %s%-22s\033[0m | %-8s | %-8s | %-7s | %-16s | %-13.1f%% | %-14.3f | %-14.3f\n",
             m.motor_index,
-            static_cast<unsigned int>(m.offline_count),
+            static_cast<unsigned int>(m.comm_offline_total_count),
             color_code,
             motor_step_name(m.step),
             color_code,
             mode_switch_step_name(m.mode_switch_step),
-            control_mode_name(m.op_mode),
-            control_mode_name(m.tx_mode),
-            m.desired_enabled ? "Y" : "N",
+            control_mode_name(m.observed.observed_mode),
+            control_mode_name(static_cast<MyactControlMode>(m.tx.op_mode)),
+            m.desired.enabled ? "Y" : "N",
             tx_target_info,
-            m.torque / 10.0,
+            m.observed.torque_percent,
             rx_pos_deg,
             target_error_deg);
     }
@@ -206,12 +204,6 @@ void print_myact_event(const mb::RtEvent& event)
             std::cerr << "[MYACTUA] communication watchdog latched, cycle="
                       << event.tick
                       << ", reason=" << event.reason
-                      << ", wc=" << event.value << "\n";
-            break;
-
-        case mb::RtEventType::COMM_WATCHDOG_CLEARED:
-            std::cerr << "[MYACTUA] communication watchdog cleared, cycle="
-                      << event.tick
                       << ", wc=" << event.value << "\n";
             break;
 

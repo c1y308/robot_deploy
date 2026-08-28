@@ -9,7 +9,7 @@
 #include <thread>
 #include <vector>
 
-#include "base/spsc_latest_value.hpp"
+#include "spsc_latest_value/spsc_latest_value.hpp"
 #include "motor_base/command_queue.hpp"
 #include "motor_base/command_types.hpp"
 #include "motor_base/rt_event_dispatcher.hpp"
@@ -99,19 +99,18 @@ public:
     /// @brief 获取全部电机公共状态快照
     std::vector<MotorStatusSnapshot> get_status();
 
-    /// @brief 读取专用 RT feedback latest-value 快照；无新快照时返回 false。
-    bool try_consume_realtime_feedback(
+    /// @brief 读取 command worker 专属的 RT feedback latest-value 快照；
+    ///        无新快照时返回 false。仅限 policy_command_worker 线程消费（SPSC 单消费者）。
+    bool try_consume_command_feedback(
+        std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback);
+
+    /// @brief 读取 policy/inference 线程专属的 RT feedback latest-value 快照；
+    ///        无新快照时返回 false。仅限 policy/inference 线程消费（SPSC 单消费者）。
+    bool try_consume_policy_feedback(
         std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback);
 
     /// @brief 获取全部电机关节位置，单位 rad
     std::vector<double> get_joint_q_rad();
-
-    /// @brief 获取全部电机关节速度，单位 rad/s
-    std::vector<double> get_joint_vel_rad_s();
-
-    /// @brief 获取全部电机关节力矩反馈百分比
-    std::vector<double> get_joint_torque_percent();
-
 
     // ──────────────────── 回调 ────────────────────
 
@@ -129,11 +128,6 @@ public:
     virtual void set_print_info(const std::vector<int>& motor_index) = 0;
 
 
-    // ──────────────────── 静态工具方法 ────────────────────
-
-    /// @brief 弧度转角度的通用数学换算
-    static double rad_to_deg(double rad);
-
 protected:
     using StatusWriteToken = MotorStatusChannel::WriteToken;
 
@@ -146,7 +140,7 @@ protected:
 
     bool write_status(StatusWriteToken& token);
     void publish_status(const StatusWriteToken& token);
-    void publish_realtime_feedback(
+    void publish_feedback(
         const std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback);
     
     void push_event(const RtEvent& event);
@@ -160,13 +154,13 @@ protected:
     virtual bool connect_impl(const char* interface_name) = 0;
     virtual void realtime_cycle_callback() = 0;
 
-    // 如何处理连续命令和离散命令的回调，派生类必须实现
-    virtual void apply_setpoint_command_callback(const ControlCommand& cmd) = 0;
-    virtual void apply_discrete_command_callback(
+    // 派生类实现具体电机的命令应用与离散命令状态评估。
+    virtual void apply_setpoint_command_impl(const ControlCommand& cmd) = 0;
+    virtual void apply_discrete_command_impl(
         int motor_index,
         const DiscreteCommand& cmd) = 0;
         
-    virtual DiscreteCommandEvaluation evaluate_discrete_command_callback(
+    virtual DiscreteCommandEvaluation evaluate_discrete_command_impl(
         int motor_index,
         const DiscreteCommand& cmd) const = 0;
 
@@ -206,12 +200,20 @@ private:
 
     // 电机控制命令队列（stop / restart / set_mode / setpoints）
     CommandQueue cmd_queue_;
-    robot_base::SpscLatestValue<ControlCommand> realtime_setpoint_channel_;
-    robot_base::SpscLatestValue<
-        std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>> realtime_feedback_channel_;
-    
+
     // 每个电机的离散命令队列（stop / restart / set_mode）
     std::vector<DiscreteCommandQueue> discrete_cmd_queues_;
+    // RT setpoint 专通道（仅 policy_command_worker 生产，RT 线程消费）
+    robot_base::SpscLatestValue<ControlCommand> setpoint_channel_;
+
+    // RT feedback 双通道 fan-out（同一帧数据，两条独立 SPSC 边）：
+    // command_feedback_channel_ 仅 policy_command_worker 消费；
+    robot_base::SpscLatestValue<
+        std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>> command_feedback_channel_;
+    // policy_feedback_channel_ 仅 policy/inference 线程消费。生产者均为 RT 线程。
+    robot_base::SpscLatestValue<
+        std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>> policy_feedback_channel_;
+    
     // 离散命令队列的全局时钟，单位 tick，1 tick = 1 ms
     uint64_t discrete_cmd_tick_{0};
 

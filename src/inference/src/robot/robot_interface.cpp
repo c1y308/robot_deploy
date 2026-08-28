@@ -1,5 +1,5 @@
 #include "robot/robot_interface.hpp"
-#include "base/tool.hpp"
+#include "tool/tool.hpp"
 #include "robot/action_processor.hpp"
 #include "robot/joint_mapping.hpp"
 #include "robot/observation_builder.hpp"
@@ -521,7 +521,7 @@ void RobotInterface::policy_command_worker_loop()
 
             std::array<motor_base::MotorStatusSnapshot,
                        motor_base::kMaxMotorCommandSetpoints> latest_feedback;
-            if (motor_session_.try_consume_realtime_feedback(latest_feedback)) {
+            if (motor_session_.try_consume_command_feedback(latest_feedback)) {
                 motor_feedback = latest_feedback;
                 has_motor_feedback = true;
             }

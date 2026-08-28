@@ -1,6 +1,6 @@
 #include "robot/joint_mapping.hpp"
 
-#include "base/tool.hpp"
+#include "tool/tool.hpp"
 
 #include <algorithm>
 #include <cstddef>

@@ -1,7 +1,7 @@
 #include "motor_base/rt_event_dispatcher.hpp"
 
-#include <algorithm>
 #include <chrono>
+#include <stdexcept>
 #include <utility>
 
 namespace motor_base {
@@ -9,10 +9,13 @@ namespace motor_base {
 RtEventDispatcher::RtEventDispatcher(
     std::size_t capacity,
     EventPrinter fallback_printer)
-    : buffer_(std::max<std::size_t>(1, capacity)),
-      capacity_(buffer_.size()),
+    : buffer_(capacity),
+      capacity_(capacity),
       fallback_printer_(std::move(fallback_printer))
 {
+    if (capacity_ == 0) {
+        throw std::invalid_argument("RtEventDispatcher capacity must be positive");
+    }
 }
 
 

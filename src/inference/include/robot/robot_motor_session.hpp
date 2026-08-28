@@ -60,7 +60,7 @@ public:
                          motor_base::kMaxMotorCommandSetpoints>& setpoints,
         std::size_t count);
 
-    bool try_consume_realtime_feedback(
+    bool try_consume_command_feedback(
         std::array<motor_base::MotorStatusSnapshot,
                    motor_base::kMaxMotorCommandSetpoints>& feedback);
 
@@ -77,9 +77,6 @@ private:
     bool wait_all_control_ready(motor_base::MotorControlMode expected_mode,
                                 int timeout_ms,
                                 const char* context) const;
-    void handle_rt_event(const motor_base::RtEvent& event);
-    void reset_runtime_motion_fault();
-    bool runtime_motion_faulted(const char* context) const;
 
     MotorConfig config_;
 
@@ -88,10 +85,12 @@ private:
 
     std::atomic<bool> initialized_{false};
     std::atomic<bool> motion_enabled_{false};
-    std::atomic<bool> runtime_motion_fault_{false};
-    std::atomic<int> first_reject_motor_index_{-1};
-    std::atomic<int> first_reject_reason_{0};
-    std::atomic<std::uint32_t> first_reject_value_{0};
+
+    // policy/inference 线程专属 RT feedback 通道的缓存帧：
+    // 仅 get_motor_snapshot()（policy 线程）读写，无新帧时保留上一帧有效反馈
+    mutable std::array<motor_base::MotorStatusSnapshot,
+                       motor_base::kMaxMotorCommandSetpoints> latest_feedback_{};
+    mutable bool has_policy_feedback_{false};
 };
 
 }  // namespace inference

@@ -1,8 +1,8 @@
 #include "robot/robot_motor_session.hpp"
 
-#include "base/tool.hpp"
+#include "tool/tool.hpp"
 #include "driver/myact/motor_control.hpp"
-#include "ethercat_adapter_igh.hpp"
+#include "protocol/ethercat/ethercat_adapter_igh.hpp"
 #include "motor_base/motor_base.hpp"
 
 #include <algorithm>
@@ -53,6 +53,31 @@ std::int64_t motor_steady_now_ns() noexcept
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
                std::chrono::steady_clock::now().time_since_epoch())
         .count();
+}
+
+/* 把一段 MotorStatusSnapshot 填入 inference 层的电机状态快照 */
+template <typename Iterator>
+void fill_motor_snapshot_from_range(MotorStateSnapshot& snapshot,
+                                     Iterator begin,
+                                     Iterator end)
+{
+    const std::size_t count = static_cast<std::size_t>(end - begin);
+    snapshot.position_rad.reserve(count);
+    snapshot.velocity_rad_s.reserve(count);
+    snapshot.torque_percent.reserve(count);
+    snapshot.comm_ok.reserve(count);
+    snapshot.enabled.reserve(count);
+    snapshot.faulted.reserve(count);
+
+    for (auto it = begin; it != end; ++it) {
+        const auto& motor = *it;
+        snapshot.position_rad.push_back(motor.position_rad);
+        snapshot.velocity_rad_s.push_back(motor.velocity_rad_s);
+        snapshot.torque_percent.push_back(motor.torque_percent);
+        snapshot.comm_ok.push_back(motor.comm_ok ? 1U : 0U);
+        snapshot.enabled.push_back(motor.enabled ? 1U : 0U);
+        snapshot.faulted.push_back(motor.faulted ? 1U : 0U);
+    }
 }
 
 }  // namespace
@@ -318,14 +343,14 @@ bool RobotMotorSession::apply_impedance_setpoints_realtime(
     return false;
 }
 
-bool RobotMotorSession::try_consume_realtime_feedback(
+bool RobotMotorSession::try_consume_command_feedback(
     std::array<motor_base::MotorStatusSnapshot,
                motor_base::kMaxMotorCommandSetpoints>& feedback)
 {
     if (!initialized_.load() || !controller_) {
         return false;
     }
-    return controller_->try_consume_realtime_feedback(feedback);
+    return controller_->try_consume_command_feedback(feedback);
 }
 
 
@@ -360,22 +385,23 @@ MotorStateSnapshot RobotMotorSession::get_motor_snapshot() const
         return snapshot;
     }
 
-    const std::vector<motor_base::MotorStatusSnapshot> status = controller_->get_status();
-    snapshot.position_rad.reserve(status.size());
-    snapshot.velocity_rad_s.reserve(status.size());
-    snapshot.torque_percent.reserve(status.size());
-    snapshot.comm_ok.reserve(status.size());
-    snapshot.enabled.reserve(status.size());
-    snapshot.faulted.reserve(status.size());
-
-    for (const auto& motor : status) {
-        snapshot.position_rad.push_back(motor.position_rad);
-        snapshot.velocity_rad_s.push_back(motor.velocity_rad_s);
-        snapshot.torque_percent.push_back(motor.torque_percent);
-        snapshot.comm_ok.push_back(motor.comm_ok ? 1U : 0U);
-        snapshot.enabled.push_back(motor.enabled ? 1U : 0U);
-        snapshot.faulted.push_back(motor.faulted ? 1U : 0U);
+    // 优先读 policy 线程专属的 RT feedback 通道；无新帧时沿用缓存帧。
+    // 启动窗口内尚未收到任何反馈帧时退回公共状态通道，保持旧行为。
+    std::array<motor_base::MotorStatusSnapshot,
+               motor_base::kMaxMotorCommandSetpoints> latest_feedback;
+    if (controller_->try_consume_policy_feedback(latest_feedback)) {
+        latest_feedback_ = latest_feedback;
+        has_policy_feedback_ = true;
     }
+    if (!has_policy_feedback_) {
+        const std::vector<motor_base::MotorStatusSnapshot> status = controller_->get_status();
+        fill_motor_snapshot_from_range(snapshot, status.begin(), status.end());
+        return snapshot;
+    }
+
+    const std::size_t motor_count = static_cast<std::size_t>(config_.num_motors);
+    fill_motor_snapshot_from_range(snapshot, latest_feedback_.data(),
+                                    latest_feedback_.data() + motor_count);
 
     return snapshot;
 }

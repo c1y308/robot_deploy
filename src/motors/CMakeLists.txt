@@ -21,7 +21,6 @@ link_directories(
 # 编译静态/动态库
 add_library(myactua_ethercat
     src/motor_base/motor_base.cpp
-    src/motor_base/motor_status_monitor.cpp
     src/motor_base/rt_event_dispatcher.cpp
     src/drivers/myact/motor_control.cpp
     src/drivers/myact/myact_debug_printers.cpp
@@ -30,7 +29,6 @@ add_library(myactua_ethercat
 
 target_include_directories(myactua_ethercat PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/protocol/ethercat
     ${IGH_PATH}/include
     /opt/etherlab/include
 )
@@ -49,10 +47,6 @@ target_link_libraries(myactua_ethercat
 add_executable(id_test examples/id_test.cpp)
 add_executable(motor_response_latency_test examples/motor_response_latency_test.cpp)
 add_executable(motor_realtime_channel_test tests/motor_realtime_channel_test.cpp)
-add_executable(triple_buffer_test tests/triple_buffer_test.cpp)
-target_compile_definitions(triple_buffer_test PRIVATE
-    MOTOR_BASE_STATUS_CHANNEL_TESTING
-)
 target_include_directories(motor_response_latency_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../inference/include
 )
@@ -61,4 +55,3 @@ target_include_directories(motor_response_latency_test PRIVATE
 target_link_libraries(id_test myactua_ethercat)
 target_link_libraries(motor_response_latency_test myactua_ethercat)
 target_link_libraries(motor_realtime_channel_test myactua_ethercat)
-target_link_libraries(triple_buffer_test myactua_ethercat)

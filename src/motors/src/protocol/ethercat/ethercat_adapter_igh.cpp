@@ -1,4 +1,4 @@
-#include "ethercat_adapter_igh.hpp"
+#include "protocol/ethercat/ethercat_adapter_igh.hpp"
 
 #include "motor_base/rt_event_dispatcher.hpp"
 

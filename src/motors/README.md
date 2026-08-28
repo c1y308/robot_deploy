@@ -22,10 +22,14 @@ src/motors/
 │           ├── motor_units.hpp
 │           ├── myact_debug_printers.hpp
 │           └── realtime_queue.hpp
+│   └── protocol/
+│       └── ethercat/
+│           ├── ethercat_adapter.hpp
+│           ├── ethercat_adapter_igh.hpp
+│           └── ethercat_types.hpp
 ├── src/
 │   ├── motor_base/
 │   │   ├── motor_base.cpp
-│   │   ├── motor_status_monitor.cpp
 │   │   └── rt_event_dispatcher.cpp
 │   ├── drivers/
 │   │   └── myact/
@@ -33,10 +37,7 @@ src/motors/
 │   │       └── myact_debug_printers.cpp
 │   └── protocol/
 │       └── ethercat/
-│           ├── ethercat_adapter.hpp
-│           ├── ethercat_adapter_igh.hpp
-│           ├── ethercat_adapter_igh.cpp
-│           └── ethercat_types.hpp
+│           └── ethercat_adapter_igh.cpp
 ├── examples/
 │   ├── id_test.cpp
 │   └── motor_response_latency_test.cpp
@@ -112,7 +113,7 @@ MYACTUA 驱动内部会把公共模式映射到 CiA402/PDO 模式：
    - 由示例中的 `MYACTUA controller(adapter, N)` 决定。
    - 当前 `EthercatAdapterIGH` 默认按 12 个从站配置，逻辑索引 `0-11` 对应 EtherCAT 物理位置 `1-6, 8-13`。
 3. **PDO/对象字典一致性**
-   - `src/protocol/ethercat/ethercat_types.hpp` 中 PDO 偏移需与从站 ESI/固件一致。
+   - `include/protocol/ethercat/ethercat_types.hpp` 中 PDO 偏移需与从站 ESI/固件一致。
 4. **模式切换与使能流程**
    - 依赖状态字与控制字逻辑，建议先使用 `debug_tool` 验证单轴。
 

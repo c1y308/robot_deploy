@@ -5,6 +5,7 @@
 #include <iostream>
 #include <pthread.h>
 #include <sched.h>
+#include <stdexcept>
 #include <time.h>
 #include <utility>
 
@@ -138,14 +139,22 @@ MotorControllerBase::MotorControllerBase(
       status_channel_(),
       rt_event_dispatcher_(rt_options_.rt_event_queue_capacity)
 {
-    rt_options_.max_commands_per_cycle =
-        std::max<std::size_t>(1, rt_options_.max_commands_per_cycle);
-    rt_options_.rt_period_ns = std::max<long>(1, rt_options_.rt_period_ns);
-    rt_options_.status_publish_period_ms =
-        std::max(1, rt_options_.status_publish_period_ms);
+    if (rt_options_.max_commands_per_cycle == 0) {
+        throw std::invalid_argument(
+            "RealtimeOptions max_commands_per_cycle must be positive");
+    }
+    if (rt_options_.rt_period_ns <= 0) {
+        throw std::invalid_argument(
+            "RealtimeOptions rt_period_ns must be positive");
+    }
+    if (rt_options_.status_publish_period_ms <= 0) {
+        throw std::invalid_argument(
+            "RealtimeOptions status_publish_period_ms must be positive");
+    }
     status_channel_.configure(motor_count_, rt_options_.status_publish_period_ms);
-    realtime_setpoint_channel_.reset_empty();
-    realtime_feedback_channel_.reset_empty();
+    setpoint_channel_.reset_empty();
+    command_feedback_channel_.reset_empty();
+    policy_feedback_channel_.reset_empty();
 
     discrete_cmd_queues_.reserve(motor_count_);
     for (std::size_t i = 0; i < motor_count_; ++i) {
@@ -183,8 +192,9 @@ bool MotorControllerBase::start()
     }
 
     rt_scheduling_ready_.store(false, std::memory_order_release);
-    realtime_setpoint_channel_.reset_empty();
-    realtime_feedback_channel_.reset_empty();
+    setpoint_channel_.reset_empty();
+    command_feedback_channel_.reset_empty();
+    policy_feedback_channel_.reset_empty();
     status_channel_.start();
     rt_event_dispatcher_.start();
 
@@ -258,7 +268,7 @@ void MotorControllerBase::thread_func()
 
     while (running_.load(std::memory_order_acquire)) {
         // 进行离散命令和连续命令的分发：离散命令入各个电机的离散命令队列，
-        // 连续命令直接调用驱动 apply_setpoint_command_callback()
+        // 连续命令直接调用驱动 apply_setpoint_command_impl()
         process_queued_commands();
         // 处理各个电机的离散命令队列（状态机）
         service_discrete_commands();
@@ -384,7 +394,7 @@ CommandSubmitResult MotorControllerBase::send_realtime_setpoint_command(
         return driver_validation;
     }
 
-    realtime_setpoint_channel_.publish(cmd);
+    setpoint_channel_.publish(cmd);
     return CommandSubmitResult::ACCEPTED;
 }
 
@@ -400,10 +410,16 @@ std::vector<MotorStatusSnapshot> MotorControllerBase::get_status()
     return status_channel_.get_status();
 }
 
-bool MotorControllerBase::try_consume_realtime_feedback(
+bool MotorControllerBase::try_consume_command_feedback(
     std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback)
 {
-    return realtime_feedback_channel_.try_consume_latest(feedback);
+    return command_feedback_channel_.try_consume_latest(feedback);
+}
+
+bool MotorControllerBase::try_consume_policy_feedback(
+    std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback)
+{
+    return policy_feedback_channel_.try_consume_latest(feedback);
 }
 
 
@@ -430,10 +446,12 @@ void MotorControllerBase::publish_status(const StatusWriteToken& token)
     status_channel_.publish(token);
 }
 
-void MotorControllerBase::publish_realtime_feedback(
+void MotorControllerBase::publish_feedback(
     const std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback)
 {
-    realtime_feedback_channel_.publish(feedback);
+    // 同一帧 fan-out 到两条独立 SPSC 通道，各自保持 1 producer + 1 consumer 契约
+    command_feedback_channel_.publish(feedback);
+    policy_feedback_channel_.publish(feedback);
 }
 
 
@@ -462,7 +480,7 @@ void MotorControllerBase::process_queued_commands()
         if (cmd->kind == ControlCommandKind::DISCRETE) {
             enqueue_discrete_command(*cmd);
         } else if (cmd->kind == ControlCommandKind::SETPOINT) {
-            apply_setpoint_command_callback(*cmd);
+            apply_setpoint_command_impl(*cmd);
         }
         cmd_queue_.pop_front();
     }
@@ -471,8 +489,8 @@ void MotorControllerBase::process_queued_commands()
 void MotorControllerBase::process_realtime_setpoint_command()
 {
     ControlCommand cmd;
-    if (realtime_setpoint_channel_.try_consume_latest(cmd)) {
-        apply_setpoint_command_callback(cmd);
+    if (setpoint_channel_.try_consume_latest(cmd)) {
+        apply_setpoint_command_impl(cmd);
     }
 }
 
@@ -569,7 +587,7 @@ void MotorControllerBase::service_discrete_commands()
             }
             // 到达再次重试时间
             if (discrete_cmd_tick_ >= cmd.next_retry_tick) {
-                apply_discrete_command_callback(motor_index, cmd);
+                apply_discrete_command_impl(motor_index, cmd);
                 cmd.cur_retry += 1;
                 cmd.next_retry_tick  = discrete_cmd_tick_ + kDiscreteRetryTicks;
 
@@ -586,7 +604,7 @@ void MotorControllerBase::service_discrete_commands()
                 continue;
             }
 
-            const DiscreteCommandEvaluation evaluation = evaluate_discrete_command_callback(motor_index, cmd);
+            const DiscreteCommandEvaluation evaluation = evaluate_discrete_command_impl(motor_index, cmd);
             switch (evaluation) {
                 case DiscreteCommandEvaluation::FAILED:
                     cmd.phase = DiscretePhase::FAILED;
@@ -624,12 +642,6 @@ void MotorControllerBase::discrete_command_failed_callback(
     printf("[MotorControllerBase] Warning: discrete command failed\n");
 }
 
-double MotorControllerBase::rad_to_deg(double rad)
-{
-    constexpr double kPi = 3.14159265358979323846;
-    return rad * (180.0 / kPi);
-}
-
 bool MotorControllerBase::is_running() const
 {
     return running_.load(std::memory_order_acquire);
@@ -644,28 +656,6 @@ std::vector<double> MotorControllerBase::get_joint_q_rad()
         q[i] = status[i].position_rad;
     }
     return q;
-}
-
-
-std::vector<double> MotorControllerBase::get_joint_vel_rad_s()
-{
-    const auto status = get_status();
-    std::vector<double> dq(status.size(), 0.0);
-    for (std::size_t i = 0; i < status.size(); ++i) {
-        dq[i] = status[i].velocity_rad_s;
-    }
-    return dq;
-}
-
-
-std::vector<double> MotorControllerBase::get_joint_torque_percent()
-{
-    const auto status = get_status();
-    std::vector<double> torque(status.size(), 0.0);
-    for (std::size_t i = 0; i < status.size(); ++i) {
-        torque[i] = status[i].torque_percent;
-    }
-    return torque;
 }
 
 } // namespace motor_base
