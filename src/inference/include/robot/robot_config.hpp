@@ -1,5 +1,6 @@
 #pragma once
 
+#include "imu_base/imu_base.hpp"
 #include "motor_base/command_types.hpp"
 #include "recorder/inference_record.hpp"
 #include "robot/joint_mapping.hpp"
@@ -28,6 +29,7 @@ struct MotorConfig {
 };
 
 struct ImuConfig {
+    imu_base::ReaderType type = imu_base::ReaderType::A100_SERIAL;
     std::string device = "/dev/ttyUSB0";
     int baudrate       = 921600;
 

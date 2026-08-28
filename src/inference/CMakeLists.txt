@@ -49,18 +49,10 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../motors
                  ${CMAKE_CURRENT_BINARY_DIR}/motors_build)
 
-add_library(imu_a100_core STATIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/a100/src/drivers/serial_port.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/a100/src/protocol/frame/imu_parser.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/a100/src/drivers/imu_reader.cpp
-)
-target_include_directories(imu_a100_core PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/base/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/a100/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/a100/src/drivers
-    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/a100/src/protocol/frame
-)
-target_link_libraries(imu_a100_core PUBLIC m pthread)
+if(NOT TARGET imu_a100_core)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../imu
+                     ${CMAKE_CURRENT_BINARY_DIR}/imu_build)
+endif()
 
 add_library(inference_recorder STATIC
     src/recorder/inference_recorder.cpp
@@ -87,8 +79,7 @@ target_include_directories(robot_interface PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/src/protocol/ethercat
-    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/base/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/a100/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/include
 )
 target_compile_definitions(robot_interface PUBLIC
     ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=$<BOOL:${ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS}>
@@ -99,6 +90,7 @@ target_link_libraries(robot_interface
     robot_base
     myactua_ethercat
     imu_a100_core
+    imu_xsens_mti_core
     ${TORCH_LIBRARIES}
     pthread
 )
@@ -153,6 +145,7 @@ target_include_directories(ankle_inverse_kinematics_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/src/protocol/ethercat
+    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/include
 )
 target_link_libraries(ankle_inverse_kinematics_test PRIVATE
     myactua_ethercat

@@ -6,7 +6,13 @@
 
 namespace imu_base {
 
+enum class ReaderType {
+    A100_SERIAL,
+    XSENS_MTI_CAN,
+};
+
 struct ReaderConfig {
+    ReaderType type = ReaderType::A100_SERIAL;
     std::string device = "/dev/ttyUSB0";
     int baudrate = 921600;
     bool print_imu = false;

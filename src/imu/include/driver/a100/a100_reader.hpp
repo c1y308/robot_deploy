@@ -1,9 +1,9 @@
-#ifndef __IMU_READER_HPP__
-#define __IMU_READER_HPP__
+#ifndef IMU_DRIVER_A100_READER_HPP_
+#define IMU_DRIVER_A100_READER_HPP_
 
 #include "imu_base/imu_base.hpp"
-#include "serial_port.hpp"
-#include "imu_parser.hpp"
+#include "driver/serial_port.hpp"
+#include "protocol/a100/imu_parser.hpp"
 #include <atomic>
 #include <chrono>
 #include <memory>

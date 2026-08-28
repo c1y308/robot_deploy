@@ -1,7 +1,7 @@
 #ifndef __IMU_PARSER_HPP__
 #define __IMU_PARSER_HPP__
 
-#include "types.hpp"
+#include "protocol/a100/types.hpp"
 #include <functional>
 #include <vector>
 

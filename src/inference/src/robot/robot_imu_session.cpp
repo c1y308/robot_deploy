@@ -1,7 +1,8 @@
 #include "robot/robot_imu_session.hpp"
 
 #include "imu_base/imu_base.hpp"
-#include "imu_reader.hpp"
+#include "driver/a100/a100_reader.hpp"
+#include "driver/xsens_mti/xsens_reader.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -34,6 +35,7 @@ bool RobotImuSession::initialize_and_start()
     }
 
     imu_base::ReaderConfig imu_cfg;
+    imu_cfg.type        = config_.type;
     imu_cfg.device      = config_.device;
     imu_cfg.baudrate    = config_.baudrate;
     imu_cfg.print_imu   = config_.print_imu;
@@ -46,7 +48,14 @@ bool RobotImuSession::initialize_and_start()
         state_.projected_gravity_valid = false;
     }
 
-    reader_ = std::make_unique<imu::IMUReader>();
+    switch (config_.type) {
+        case imu_base::ReaderType::A100_SERIAL:
+            reader_ = std::make_unique<imu::IMUReader>();
+            break;
+        case imu_base::ReaderType::XSENS_MTI_CAN:
+            reader_ = std::make_unique<imu::XsensMtiCanReader>();
+            break;
+    }
     reader_->set_imu_callback([](const imu_base::IMUData& data) {
         (void)data;
     });

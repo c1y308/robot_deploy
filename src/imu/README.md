@@ -1,85 +1,92 @@
 # RK3588 IMU Reader
 
-RK3588平台惯导模块数据读取程序，通过串口获取WHEELTEC惯导模块的IMU/AHRS/INSGPS数据。
+RK3588平台惯导模块数据读取程序，当前支持 WHEELTEC A100 串口 IMU 和 Xsens MTi CAN IMU。
 
 ## 项目结构
 
 ```
-src/imu/a100/
+src/imu/
 ├── CMakeLists.txt          # CMake构建文件
 ├── README.md               # 说明文档
 ├── examples/               # 示例程序
-│   └── main.cpp            # 主程序入口
+│   ├── a100_test.cpp       # A100测试程序
+│   └── xsens_mti_can_test.cpp
 ├── include/                # 头文件目录
-│   ├── types.hpp
-│   ├── serial_port.hpp
-│   ├── imu_parser.hpp
-│   └── imu_reader.hpp
+│   ├── imu_base/
+│   │   └── imu_base.hpp
+│   ├── driver/
+│   │   ├── serial_port.hpp
+│   │   ├── socket_can_port.hpp
+│   │   ├── a100/
+│   │   │   └── a100_reader.hpp
+│   │   └── xsens_mti/
+│   │       └── xsens_reader.hpp
+│   └── protocol/
+│       ├── a100/
+│       │   ├── types.hpp
+│       │   └── imu_parser.hpp
+│       └── xsens_mti/
+│           └── can_parser.hpp
 └── src/                    # 源文件目录
     ├── drivers/
     │   ├── serial_port.cpp
-    │   └── imu_reader.cpp
+    │   ├── socket_can_port.cpp
+    │   ├── a100/
+    │   │   └── a100_reader.cpp
+    │   └── xsens_mti/
+    │       └── xsens_reader.cpp
     └── protocol/
-        └── frame/
-            └── imu_parser.cpp
+        ├── a100/
+        │   └── imu_parser.cpp
+        └── xsens_mti/
+            └── can_parser.cpp
 ```
 
 ## 编译方法
 
 ```bash
-cd src/imu/a100
+cd src/imu
 mkdir build && cd build
 cmake ..
 make -j$(nproc)
 ```
 
+## IMU类型
+
+- `imu_base::ReaderType::A100_SERIAL`：默认类型，`device` 为串口设备路径，`baudrate` 为串口波特率。
+- `imu_base::ReaderType::XSENS_MTI_CAN`：`device` 为 SocketCAN 接口名，例如 `can0`；CAN bitrate 和接口 up/down 由系统外部配置。
+
 ## 使用方法
 
 ```bash
-# 基本用法
-./imu_reader_cpp -d /dev/ttyUSB0 -b 921600
+# A100 串口 IMU
+./a100_test
 
-# 显示帮助
-./imu_reader_cpp -h
-
-# 只打印IMU数据
-./imu_reader_cpp -d /dev/ttyUSB0 -b 921600 -p
-
-# 打印所有数据并显示统计信息
-./imu_reader_cpp -d /dev/ttyUSB0 -b 921600 -p -s
+# Xsens MTi CAN IMU，默认读取 can0
+./xsens_mti_can_test
 ```
-
-### 命令行参数
-
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `-d, --device` | 串口设备路径 | `/dev/ttyUSB0` |
-| `-b, --baud` | 波特率 | `921600` |
-| `-p, --print-imu` | 打印IMU数据 | 关闭 |
-| `-s, --stats` | 打印统计信息 | 关闭 |
-| `-h, --help` | 显示帮助 | - |
 
 ## 数据格式
 
-### IMU数据 (TYPE_IMU, 0x01)
+### A100 IMU数据
 - 角速度 (gyroscope_x/y/z): rad/s
 - 加速度 (accelerometer_x/y/z): m/s²
 - 磁力计 (magnetometer_x/y/z): mG
 - 时间戳 (timestamp): us
 
-### AHRS数据 (TYPE_AHRS, 0x02)
+### A100 AHRS数据
 - 角速度 (roll_speed/pitch_speed/heading_speed): rad/s
 - 欧拉角 (roll/pitch/heading): rad
 - 四元数 (qw/qx/qy/qz)
 - 时间戳 (timestamp): us
 
-### INSGPS数据 (TYPE_INSGPS, 0x03)
-- 位置 (latitude/longitude/altitude): deg, deg, m
-- 速度 (north_velocity/east_velocity/ground_velocity): m/s
-- 姿态 (azimuth/pitch/roll): deg
-- 时间戳 (timestamp): us
+### Xsens MTi CAN AHRS数据
+- `0x005 XCDI_SampleTime`: big-endian uint32，10 kHz tick，保存为 us。
+- `0x021 XCDI_Quaternion`: big-endian int16[4]，缩放 `raw / 32767.0`。
+- `0x032 XCDI_RateOfTurn`: big-endian int16[3]，缩放 `raw * 2^-9`，单位 rad/s。
+- `projected_gravity` 由四元数计算。
 
-## 数据帧协议
+## A100 数据帧协议
 
 ```
 帧结构: [帧头][类型][长度][数据域][帧尾]
@@ -88,9 +95,8 @@ make -j$(nproc)
 
 | 数据类型 | 帧类型 | 数据长度 | 帧总长度 |
 |----------|--------|----------|----------|
-| IMU | 0x01 | 0x3C (60) | 64字节 |
-| AHRS | 0x02 | 0x38 (56) | 56字节 |
-| INSGPS | 0x03 | 0x50 (80) | 80字节 |
+| IMU | 0x40 | 56 | 64字节 |
+| AHRS | 0x41 | 48 | 56字节 |
 
 ---
 
