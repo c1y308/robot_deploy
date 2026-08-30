@@ -89,7 +89,6 @@ MYACTUA 驱动内部会把公共模式映射到 CiA402/PDO 模式：
 ### 控制命令（`ControlCommand`）
 - `ControlCommand::set_position_targets_rad(...)` 设置位置目标
 - `ControlCommand::set_velocity_targets_rad_s(...)` 设置速度目标
-- `ControlCommand::set_torque_targets(...)` 设置中性力矩/出力目标
 - `ControlCommand::set_impedance_targets(...)` 设置阻抗目标
 - `ControlCommand::stop(...)` 停止电机
 - `ControlCommand::restart(...)` 重新启动

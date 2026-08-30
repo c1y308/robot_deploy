@@ -13,7 +13,7 @@
 namespace inference {
 
 struct MotorConfig {
-    int num_motors = 12;
+    int num_motors = static_cast<int>(motor_base::kMaxMotors);
     std::string ethercat_ifname = "enp8s0";
 
     int wait_all_motors_timeout_ms = 20000;
@@ -64,6 +64,9 @@ struct PolicyConfig {
     double gait_phase_period = 0.74;
     double gait_phase_stand_threshold = 0.05;
     double gait_phase_move_threshold = 0.15;
+    double max_imu_sample_age_s = 0.050;
+    double max_motor_sample_age_s = 0.050;
+    double max_sensor_state_skew_s = 0.030;
 };
 
 struct AnkleMotorLimitConfig {

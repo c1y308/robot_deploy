@@ -63,7 +63,7 @@ target_include_directories(inference_recorder PUBLIC
 target_compile_definitions(inference_recorder PUBLIC
     ROBOT_INFERENCE_LOG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/log"
 )
-target_link_libraries(inference_recorder PUBLIC pthread)
+target_link_libraries(inference_recorder PUBLIC robot_base pthread)
 
 add_library(robot_interface STATIC
     src/robot/robot_interface.cpp
@@ -136,6 +136,15 @@ add_executable(target_interpolator_test
 target_include_directories(target_interpolator_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+add_executable(imu_timestamp_mapper_test
+    tests/imu_timestamp_mapper_test.cpp
+)
+target_include_directories(imu_timestamp_mapper_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/include
+)
+target_link_libraries(imu_timestamp_mapper_test PRIVATE robot_base)
 
 add_executable(ankle_inverse_kinematics_test
     tests/ankle_inverse_kinematics_test.cpp

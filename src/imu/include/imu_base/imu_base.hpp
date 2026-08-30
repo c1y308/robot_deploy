@@ -36,6 +36,9 @@ struct IMUData {
     float pressure = 0.0F;
     float pressure_temperature = 0.0F;
     std::uint32_t timestamp = 0;
+    bool timestamp_valid = false;
+    std::int64_t host_receive_timestamp_ns = 0;
+    std::int64_t host_publish_timestamp_ns = 0;
 };
 
 struct AHRSData {
@@ -54,6 +57,9 @@ struct AHRSData {
     float projected_gravity_z = 0.0F;
     bool projected_gravity_valid = false;
     std::uint64_t timestamp = 0;
+    bool timestamp_valid = false;
+    std::int64_t host_receive_timestamp_ns = 0;
+    std::int64_t host_publish_timestamp_ns = 0;
 };
 
 struct ParserInfo {

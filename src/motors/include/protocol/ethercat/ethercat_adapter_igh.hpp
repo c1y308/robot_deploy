@@ -1,5 +1,6 @@
 #pragma once
 #include "protocol/ethercat/ethercat_adapter.hpp"
+#include "motor_base/command_types.hpp"
 #include <ecrt.h>
 #include <array>
 #include <cstddef>
@@ -31,10 +32,9 @@ inline constexpr std::array<uint16_t, MYACTUA_NO_FORWARDERS_MOTORS_NUM> kSlavePo
 };
 
 #else
-inline constexpr std::array<uint16_t, 12> kSlavePositions = {
+inline constexpr std::array<uint16_t, motor_base::kMaxMotors> kSlavePositions = {
     1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13
 };
-#define MYACTUA_FORWARDERS_MOTORS_NUM 12
 #endif
 
 inline constexpr std::size_t kNumSlaves = kSlavePositions.size();

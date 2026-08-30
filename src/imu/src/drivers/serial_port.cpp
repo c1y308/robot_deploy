@@ -1,9 +1,11 @@
 #include "driver/serial_port.hpp"
+#include "tool/tool.hpp"
+
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
 #include <cstring>
-#include <sys/select.h>
+#include <poll.h>
 #include <iostream>
 
 namespace imu {
@@ -120,33 +122,47 @@ bool SerialPort::is_open() const {
 
 
 /* 读取数据 */
-int SerialPort::read(uint8_t* buffer, int max_len) {
-    if (fd_ < 0 || buffer == nullptr) {
+int SerialPort::wait_readable(int timeout_ms) {
+    if (fd_ < 0) {
         return -1;
     }
-    
-    fd_set read_fds;
-    struct timeval timeout;
-    
-    FD_ZERO(&read_fds);
-    FD_SET(fd_, &read_fds);
-    
-    timeout.tv_sec = 0;
-    timeout.tv_usec = 10000;
-    
-    int ret = select(fd_ + 1, &read_fds, nullptr, nullptr, &timeout);
+
+    pollfd pfd{};
+    pfd.fd = fd_;
+    pfd.events = POLLIN;
+
+    const int ret = poll(&pfd, 1, timeout_ms);
     if (ret < 0) {
         if (errno == EINTR) {
             return 0;
         }
-        std::cerr << "[HARDWARE ERROR] select failed: " << strerror(errno) << std::endl;
+        std::cerr << "[HARDWARE ERROR] poll failed: " << strerror(errno) << std::endl;
         return -1;
     }
-    
     if (ret == 0) {
         return 0;
     }
-    
+
+    if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+        std::cerr << "[HARDWARE ERROR] serial poll revents=0x"
+                  << std::hex << pfd.revents << std::dec << std::endl;
+        return -1;
+    }
+
+    return (pfd.revents & POLLIN) != 0 ? 1 : 0;
+}
+
+
+int SerialPort::read_nonblocking(uint8_t* buffer,
+                                 int max_len,
+                                 std::int64_t* host_receive_timestamp_ns) {
+    if (host_receive_timestamp_ns != nullptr) {
+        *host_receive_timestamp_ns = 0;
+    }
+    if (fd_ < 0 || buffer == nullptr) {
+        return -1;
+    }
+
     int bytes_read = ::read(fd_, buffer, max_len);
     if (bytes_read < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -155,8 +171,20 @@ int SerialPort::read(uint8_t* buffer, int max_len) {
         std::cerr << "[HARDWARE ERROR] read failed: " << strerror(errno) << std::endl;
         return -1;
     }
-    
+
+    if (bytes_read > 0 && host_receive_timestamp_ns != nullptr) {
+        *host_receive_timestamp_ns = robot_base::monotonic_now_ns();
+    }
     return bytes_read;
+}
+
+
+int SerialPort::read(uint8_t* buffer, int max_len) {
+    const int ready = wait_readable(10);
+    if (ready <= 0) {
+        return ready;
+    }
+    return read_nonblocking(buffer, max_len, nullptr);
 }
 
 

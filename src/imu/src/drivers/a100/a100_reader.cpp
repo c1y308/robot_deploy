@@ -1,7 +1,6 @@
 #include "driver/a100/a100_reader.hpp"
 #include <iostream>
 #include <iomanip>
-#include <unistd.h>
 
 namespace imu {
 
@@ -50,16 +49,36 @@ void IMUReader::read_loop() {
     std::cout << "[INFO] Starting IMU data acquisition..." << std::endl;
 
     while (running_.load()) {
-        int bytes_read = serial_port_->read(read_buffer, READ_BUFFER_SIZE);
+        const int ready = serial_port_->wait_readable(10);
+        if (ready < 0) {
+            running_.store(false);
+            break;
+        }
+        if (ready == 0) {
+            continue;
+        }
 
-        if (bytes_read > 0) {
-            parser_->feed(read_buffer, bytes_read);
+        while (running_.load()) {
+            std::int64_t host_receive_timestamp_ns = 0;
+            const int bytes_read = serial_port_->read_nonblocking(
+                read_buffer,
+                READ_BUFFER_SIZE,
+                &host_receive_timestamp_ns);
+            if (bytes_read < 0) {
+                running_.store(false);
+                break;
+            }
+            if (bytes_read == 0) {
+                break;
+            }
+
+            parser_->feed(read_buffer, bytes_read, host_receive_timestamp_ns);
 
             IMUData_t  imu_data;
             AHRSData_t ahrs_data;
             
             /* 获取 IMU 数据并判断是否打印 */
-            if(parser_->get_imu_data(imu_data)){
+            if (parser_->get_imu_data(imu_data)) {
                 if (config_.print_imu) {
                     IMUParser::print_imu_data(imu_data);
                 }
@@ -75,9 +94,6 @@ void IMUReader::read_loop() {
                 }
             }
         }
-        
-
-        usleep(1000);
     }
 
     std::cout << "[INFO] Final Statistics:" << std::endl;

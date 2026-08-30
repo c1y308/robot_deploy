@@ -289,12 +289,12 @@ void MotorControllerBase::thread_func()
 CommandSubmitResult MotorControllerBase::send_command(const ControlCommand& cmd)
 {
     if (!cmd.payload_valid) {
-        return CommandSubmitResult::INVALID_PAYLOAD;
+        return {CommandSubmitStatus::INVALID_PAYLOAD, std::nullopt};
     }
 
     if (cmd.motor_index < ControlCommand::kAllMotors ||
         cmd.motor_index >= static_cast<int>(motor_count_)) {
-        return CommandSubmitResult::INVALID_COMMAND;
+        return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
     }
 
     switch (cmd.kind) {
@@ -303,7 +303,7 @@ CommandSubmitResult MotorControllerBase::send_command(const ControlCommand& cmd)
 
         case ControlCommandKind::SETPOINT: {
             if (cmd.motor_index != ControlCommand::kAllMotors) {
-                return CommandSubmitResult::INVALID_COMMAND;
+                return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
             }
 
             std::size_t payload_size = 0;
@@ -315,17 +315,17 @@ CommandSubmitResult MotorControllerBase::send_command(const ControlCommand& cmd)
                     payload_size = cmd.payload_size;
                     break;
                 default:
-                    return CommandSubmitResult::INVALID_COMMAND;
+                    return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
             }
 
             if (payload_size != motor_count_) {
-                return CommandSubmitResult::INVALID_PAYLOAD;
+                return {CommandSubmitStatus::INVALID_PAYLOAD, std::nullopt};
             }
             break;
         }
 
         default:
-            return CommandSubmitResult::INVALID_COMMAND;
+            return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
     }
 
     const bool realtime_required = rt_options_.rt_priority > 0;
@@ -334,36 +334,51 @@ CommandSubmitResult MotorControllerBase::send_command(const ControlCommand& cmd)
         if (cmd.kind == ControlCommandKind::SETPOINT) {
             std::cerr << "[MotorControllerBase] Motion command rejected: "
                       << "realtime scheduling is not active." << std::endl;
-            return CommandSubmitResult::INVALID_COMMAND;
+            return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
         }
         if (cmd.kind == ControlCommandKind::DISCRETE &&
             cmd.discrete_type == DiscreteCommandType::RESTART) {
             std::cerr << "[MotorControllerBase] Motion enable rejected: "
                       << "realtime scheduling is not active." << std::endl;
-            return CommandSubmitResult::INVALID_COMMAND;
+            return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
         }
     }
 
-    const CommandSubmitResult driver_validation = validate_command(cmd);
-    if (driver_validation != CommandSubmitResult::ACCEPTED) {
-        return driver_validation;
+    const CommandSubmitStatus driver_validation = validate_command(cmd);
+    if (driver_validation != CommandSubmitStatus::ACCEPTED) {
+        return {driver_validation, std::nullopt};
     }
 
-    if (!cmd_queue_.try_push(cmd)) {
-        return CommandSubmitResult::QUEUE_FULL;
+    if (cmd.kind == ControlCommandKind::DISCRETE) {
+        std::lock_guard<std::mutex> lock(command_submission_mutex_);
+        const CommandId command_id =
+            next_discrete_command_id_.fetch_add(1, std::memory_order_relaxed);
+        discrete_command_results_.initialize(
+            command_id,
+            discrete_command_target_mask(cmd, motor_count_));
+
+        if (!cmd_queue_.try_push({cmd, command_id})) {
+            discrete_command_results_.clear(command_id);
+            return {CommandSubmitStatus::QUEUE_FULL, std::nullopt};
+        }
+        return {CommandSubmitStatus::ACCEPTED, command_id};
     }
-    return CommandSubmitResult::ACCEPTED;
+
+    if (!cmd_queue_.try_push({cmd, std::nullopt})) {
+        return {CommandSubmitStatus::QUEUE_FULL, std::nullopt};
+    }
+    return {CommandSubmitStatus::ACCEPTED, std::nullopt};
 }
 
 CommandSubmitResult MotorControllerBase::send_realtime_setpoint_command(
     const ControlCommand& cmd)
 {
     if (!cmd.payload_valid) {
-        return CommandSubmitResult::INVALID_PAYLOAD;
+        return {CommandSubmitStatus::INVALID_PAYLOAD, std::nullopt};
     }
     if (cmd.kind != ControlCommandKind::SETPOINT ||
         cmd.motor_index != ControlCommand::kAllMotors) {
-        return CommandSubmitResult::INVALID_COMMAND;
+        return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
     }
 
     switch (cmd.setpoint_type) {
@@ -373,11 +388,11 @@ CommandSubmitResult MotorControllerBase::send_realtime_setpoint_command(
         case SetpointCommandType::IMPEDANCE_TARGETS:
             break;
         default:
-            return CommandSubmitResult::INVALID_COMMAND;
+            return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
     }
 
     if (cmd.payload_size != motor_count_) {
-        return CommandSubmitResult::INVALID_PAYLOAD;
+        return {CommandSubmitStatus::INVALID_PAYLOAD, std::nullopt};
     }
 
     const bool realtime_required = rt_options_.rt_priority > 0;
@@ -386,28 +401,34 @@ CommandSubmitResult MotorControllerBase::send_realtime_setpoint_command(
     if (realtime_required && !realtime_ready) {
         std::cerr << "[MotorControllerBase] Motion command rejected: "
                   << "realtime scheduling is not active." << std::endl;
-        return CommandSubmitResult::INVALID_COMMAND;
+        return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
     }
 
-    const CommandSubmitResult driver_validation = validate_command(cmd);
-    if (driver_validation != CommandSubmitResult::ACCEPTED) {
-        return driver_validation;
+    const CommandSubmitStatus driver_validation = validate_command(cmd);
+    if (driver_validation != CommandSubmitStatus::ACCEPTED) {
+        return {driver_validation, std::nullopt};
     }
 
     setpoint_channel_.publish(cmd);
-    return CommandSubmitResult::ACCEPTED;
+    return {CommandSubmitStatus::ACCEPTED, std::nullopt};
 }
 
 
-CommandSubmitResult MotorControllerBase::validate_command(const ControlCommand&) const
+CommandSubmitStatus MotorControllerBase::validate_command(const ControlCommand&) const
 {
-    return CommandSubmitResult::ACCEPTED;
+    return CommandSubmitStatus::ACCEPTED;
 }
 
 
 std::vector<MotorStatusSnapshot> MotorControllerBase::get_status()
 {
     return status_channel_.get_status();
+}
+
+DiscreteCommandResult MotorControllerBase::get_discrete_command_result(
+    CommandId id) const
+{
+    return discrete_command_results_.get(id);
 }
 
 bool MotorControllerBase::try_consume_command_feedback(
@@ -472,15 +493,16 @@ void MotorControllerBase::process_queued_commands()
 {
     std::size_t processed = 0;
     while (processed < rt_options_.max_commands_per_cycle) {
-        const ControlCommand* cmd = cmd_queue_.front();
-        if (!cmd) {
+        const CommandQueue::Entry* entry = cmd_queue_.front();
+        if (!entry) {
             break;
         }
+        const ControlCommand& cmd = entry->command;
         ++processed;
-        if (cmd->kind == ControlCommandKind::DISCRETE) {
-            enqueue_discrete_command(*cmd);
-        } else if (cmd->kind == ControlCommandKind::SETPOINT) {
-            apply_setpoint_command_impl(*cmd);
+        if (cmd.kind == ControlCommandKind::DISCRETE) {
+            enqueue_discrete_command(cmd, *entry->command_id);
+        } else if (cmd.kind == ControlCommandKind::SETPOINT) {
+            apply_setpoint_command_impl(cmd);
         }
         cmd_queue_.pop_front();
     }
@@ -494,15 +516,16 @@ void MotorControllerBase::process_realtime_setpoint_command()
     }
 }
 
-/* 通过控制命令中的 离散命令类型 和 模式 构建离散命令；并将其入对应电机的离散命令队列 */
-void MotorControllerBase::enqueue_discrete_command(const ControlCommand& cmd)
+void MotorControllerBase::enqueue_discrete_command(
+    const ControlCommand& cmd,
+    CommandId command_id)
 {
-    auto enqueue_one = [this, &cmd](int idx) {
+    auto enqueue_one = [this, &cmd, command_id](int idx) {
         if (idx < 0 || idx >= static_cast<int>(motor_count_)) {
             return;
         }
 
-        DiscreteCommand pending(cmd.discrete_type, cmd.mode);
+        DiscreteCommand pending(cmd.discrete_type, cmd.mode, command_id);
         pending.phase = DiscretePhase::QUEUED;
         pending.from_all_motors =
             (cmd.motor_index == ControlCommand::kAllMotors);
@@ -519,6 +542,7 @@ void MotorControllerBase::enqueue_discrete_command(const ControlCommand& cmd)
         pending.fail_reason = DiscreteFailReason::NONE;
 
         if (!discrete_cmd_queues_[static_cast<std::size_t>(idx)].push_back(pending)) {
+            discrete_command_results_.mark_failed(command_id, idx);
             discrete_queue_full_callback(idx, cmd);
         }
     };
@@ -557,11 +581,13 @@ void MotorControllerBase::service_discrete_commands()
 
         /* 检查命令状态机 */
         if (cmd.phase == DiscretePhase::DONE) {
+            discrete_command_results_.mark_done(cmd.command_id, motor_index);
             queue.pop_front();
             continue;
         }
 
         if (cmd.phase == DiscretePhase::FAILED) {
+            discrete_command_results_.mark_failed(cmd.command_id, motor_index);
             discrete_command_failed_callback(motor_index, cmd, cmd.fail_reason);
             queue.pop_front();
             continue;
@@ -624,6 +650,9 @@ void MotorControllerBase::service_discrete_commands()
                     cmd.stable_success_cycles += 1;
                     if (cmd.stable_success_cycles >= kDiscreteSuccessStableTicks) {
                         cmd.phase = DiscretePhase::DONE;
+                        discrete_command_results_.mark_done(
+                            cmd.command_id,
+                            motor_index);
                         queue.pop_front();
                     } else {
                         cmd.next_verify_tick = discrete_cmd_tick_ + kDiscreteVerifyIntervalTicks;

@@ -1,4 +1,5 @@
 #include "protocol/xsens_mti/can_parser.hpp"
+#include "tool/tool.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -50,14 +51,18 @@ void XsensMtiCanParser::reset()
 {
     ahrs_data_ = imu_base::AHRSData();
     ahrs_ready_ = false;
-    has_quaternion_ = false;
-    has_rate_of_turn_ = false;
+    sample_time_fresh_ = false;
+    quaternion_fresh_ = false;
+    rate_of_turn_fresh_ = false;
+    sample_timestamp_us_ = 0;
+    sample_receive_timestamp_ns_ = 0;
     stats_ = imu_base::ParserInfo();
 }
 
 void XsensMtiCanParser::feed(std::uint32_t can_id,
                              const std::uint8_t* data,
-                             std::uint8_t len)
+                             std::uint8_t len,
+                             std::int64_t host_receive_timestamp_ns)
 {
     if (data == nullptr) {
         stats_.error_frames++;
@@ -72,7 +77,7 @@ void XsensMtiCanParser::feed(std::uint32_t can_id,
                 stats_.error_frames++;
                 return;
             }
-            parse_sample_time(data);
+            parse_sample_time(data, host_receive_timestamp_ns);
             stats_.total_frames++;
             return;
         case XCDI_QUATERNION_ID:
@@ -80,7 +85,7 @@ void XsensMtiCanParser::feed(std::uint32_t can_id,
                 stats_.error_frames++;
                 return;
             }
-            parse_quaternion(data);
+            parse_quaternion(data, host_receive_timestamp_ns);
             stats_.total_frames++;
             publish_ahrs_if_ready();
             return;
@@ -89,7 +94,7 @@ void XsensMtiCanParser::feed(std::uint32_t can_id,
                 stats_.error_frames++;
                 return;
             }
-            parse_rate_of_turn(data);
+            parse_rate_of_turn(data, host_receive_timestamp_ns);
             stats_.total_frames++;
             publish_ahrs_if_ready();
             return;
@@ -98,13 +103,19 @@ void XsensMtiCanParser::feed(std::uint32_t can_id,
     }
 }
 
-void XsensMtiCanParser::parse_sample_time(const std::uint8_t* data)
+void XsensMtiCanParser::parse_sample_time(
+    const std::uint8_t* data,
+    std::int64_t host_receive_timestamp_ns)
 {
-    ahrs_data_.timestamp =
+    sample_timestamp_us_ =
         static_cast<std::uint64_t>(read_u32_be(data)) * kSampleTimeTickUs;
+    sample_receive_timestamp_ns_ = host_receive_timestamp_ns;
+    sample_time_fresh_ = true;
 }
 
-void XsensMtiCanParser::parse_quaternion(const std::uint8_t* data)
+void XsensMtiCanParser::parse_quaternion(
+    const std::uint8_t* data,
+    std::int64_t)
 {
     ahrs_data_.qw =
         static_cast<float>(static_cast<double>(read_i16_be(data, 0)) * kQuaternionScale);
@@ -114,11 +125,13 @@ void XsensMtiCanParser::parse_quaternion(const std::uint8_t* data)
         static_cast<float>(static_cast<double>(read_i16_be(data, 4)) * kQuaternionScale);
     ahrs_data_.qz =
         static_cast<float>(static_cast<double>(read_i16_be(data, 6)) * kQuaternionScale);
-    has_quaternion_ = true;
+    quaternion_fresh_ = true;
     update_orientation_from_quaternion();
 }
 
-void XsensMtiCanParser::parse_rate_of_turn(const std::uint8_t* data)
+void XsensMtiCanParser::parse_rate_of_turn(
+    const std::uint8_t* data,
+    std::int64_t)
 {
     ahrs_data_.roll_speed =
         static_cast<float>(static_cast<double>(read_i16_be(data, 0)) * kRateOfTurnScale);
@@ -126,7 +139,7 @@ void XsensMtiCanParser::parse_rate_of_turn(const std::uint8_t* data)
         static_cast<float>(static_cast<double>(read_i16_be(data, 2)) * kRateOfTurnScale);
     ahrs_data_.heading_speed =
         static_cast<float>(static_cast<double>(read_i16_be(data, 4)) * kRateOfTurnScale);
-    has_rate_of_turn_ = true;
+    rate_of_turn_fresh_ = true;
 }
 
 void XsensMtiCanParser::update_orientation_from_quaternion()
@@ -161,15 +174,30 @@ void XsensMtiCanParser::update_orientation_from_quaternion()
 
 void XsensMtiCanParser::publish_ahrs_if_ready()
 {
-    if (!has_quaternion_ || !has_rate_of_turn_) {
+    if (!quaternion_fresh_ || !rate_of_turn_fresh_) {
         return;
     }
+
+    if (sample_time_fresh_) {
+        ahrs_data_.timestamp = sample_timestamp_us_;
+        ahrs_data_.timestamp_valid = true;
+        ahrs_data_.host_receive_timestamp_ns = sample_receive_timestamp_ns_;
+    } else {
+        ahrs_data_.timestamp = 0;
+        ahrs_data_.timestamp_valid = false;
+        ahrs_data_.host_receive_timestamp_ns = 0;
+    }
+    ahrs_data_.host_publish_timestamp_ns = robot_base::monotonic_now_ns();
 
     ahrs_ready_ = true;
     stats_.ahrs_frames++;
     if (ahrs_callback_) {
         ahrs_callback_(ahrs_data_);
     }
+
+    sample_time_fresh_ = false;
+    quaternion_fresh_ = false;
+    rate_of_turn_fresh_ = false;
 }
 
 bool XsensMtiCanParser::get_ahrs_data(imu_base::AHRSData& ahrs)

@@ -3,7 +3,6 @@
 #include <iomanip>
 #include <iostream>
 #include <linux/can.h>
-#include <unistd.h>
 
 namespace imu {
 
@@ -47,23 +46,40 @@ void XsensMtiCanReader::read_loop()
               << std::endl;
 
     while (running_.load()) {
-        can_frame frame = {};
-        const int read_result = can_port_->read(frame);
-        if (read_result < 0) {
+        const int ready = can_port_->wait_readable(10);
+        if (ready < 0) {
             running_.store(false);
             break;
         }
-        if (read_result > 0 &&
-            (frame.can_id & (CAN_EFF_FLAG | CAN_RTR_FLAG | CAN_ERR_FLAG)) == 0) {
-            parser_->feed(frame.can_id & CAN_SFF_MASK, frame.data, frame.len);
-
-            imu_base::AHRSData ahrs_data;
-            if (parser_->get_ahrs_data(ahrs_data) && config_.print_ahrs) {
-                XsensMtiCanParser::print_ahrs_data(ahrs_data);
-            }
+        if (ready == 0) {
+            continue;
         }
 
-        usleep(1000);
+        while (running_.load()) {
+            can_frame frame = {};
+            std::int64_t host_receive_timestamp_ns = 0;
+            const int read_result =
+                can_port_->read_nonblocking(frame, &host_receive_timestamp_ns);
+            if (read_result < 0) {
+                running_.store(false);
+                break;
+            }
+            if (read_result == 0) {
+                break;
+            }
+
+            if ((frame.can_id & (CAN_EFF_FLAG | CAN_RTR_FLAG | CAN_ERR_FLAG)) == 0) {
+                parser_->feed(frame.can_id & CAN_SFF_MASK,
+                              frame.data,
+                              frame.len,
+                              host_receive_timestamp_ns);
+
+                imu_base::AHRSData ahrs_data;
+                if (parser_->get_ahrs_data(ahrs_data) && config_.print_ahrs) {
+                    XsensMtiCanParser::print_ahrs_data(ahrs_data);
+                }
+            }
+        }
     }
 
     std::cout << "[INFO] Final Xsens MTi CAN statistics:" << std::endl;

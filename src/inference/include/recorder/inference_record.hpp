@@ -1,6 +1,7 @@
 #pragma once
 
 #include "policy/policy_observation_config.hpp"
+#include "tool/tool.hpp"
 
 #include <array>
 #include <chrono>
@@ -21,9 +22,7 @@ inline constexpr std::size_t kDefaultInferenceRecorderQueueDepth = 4096;
 
 inline std::int64_t steady_now_ns() noexcept
 {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(
-               std::chrono::steady_clock::now().time_since_epoch())
-        .count();
+    return robot_base::monotonic_now_ns();
 }
 
 /* 日志数据一帧定义 */
@@ -36,6 +35,15 @@ struct InferenceRecord {
     std::int64_t inference_end_ns{0};
     
     std::int64_t command_timestamp_ns{0};
+    std::int64_t imu_sample_timestamp_ns{0};
+    std::int64_t imu_rx_timestamp_ns{0};
+    std::int64_t imu_publish_timestamp_ns{0};
+    std::uint64_t imu_device_timestamp_us{0};
+    bool imu_device_timestamp_valid{false};
+    std::int64_t imu_rx_to_publish_us{0};
+    std::int64_t imu_motor_skew_us{0};
+    std::int64_t imu_age_us{0};
+    std::int64_t motor_age_us{0};
 
     std::array<float,  kInferenceDof> raw_action{};             // 模型输出的原始动作向量
     std::array<double, kInferenceDof> target_q_model_rad{};     // 处理之后的目标关节角度（弧度、模型顺序）

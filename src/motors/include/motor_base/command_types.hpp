@@ -4,12 +4,15 @@
 #include <cmath>
 #include <cstdint>
 #include <cstddef>
+#include <optional>
 #include <utility>
 #include <vector>
 
 namespace motor_base {
 
-constexpr std::size_t kMaxMotorCommandSetpoints = 12;
+/* 机器人最大电机数（单一事实来源），命令/快照数组容量随之派生 */
+constexpr std::size_t kMaxMotors = 12;
+constexpr std::size_t kMaxMotorCommandSetpoints = kMaxMotors;
 
 
 /* 单轴阻抗式目标值，位置/速度使用公共物理单位。effort_ff 由具体控制器解释。 */
@@ -52,11 +55,25 @@ enum class DiscreteCommandType {
     SET_MODE  // 设置电机模式
 };
 
-enum class CommandSubmitResult {
+using CommandId = std::uint64_t;
+
+enum class CommandSubmitStatus {
     ACCEPTED,
     QUEUE_FULL,
     INVALID_COMMAND,
     INVALID_PAYLOAD
+};
+
+struct CommandSubmitResult {
+    CommandSubmitStatus status;
+    std::optional<CommandId> command_id;
+};
+
+enum class DiscreteCommandResult {
+    UNKNOWN,
+    PENDING,
+    SUCCEEDED,
+    FAILED
 };
 
 /* 跨电机类型的公共控制模式语义。 */
@@ -97,30 +114,40 @@ struct ControlCommand {
           mode(MotorControlMode::NONE),
           payload_valid(true) {}
 
+
     static ControlCommand stop(int motor_index = kAllMotors) {
         ControlCommand cmd;
+
         cmd.kind = ControlCommandKind::DISCRETE;
         cmd.discrete_type = DiscreteCommandType::STOP;
-        cmd.motor_index = motor_index;
+        cmd.motor_index   = motor_index;
+
         return cmd;
     }
+
 
     static ControlCommand restart(int motor_index = kAllMotors) {
         ControlCommand cmd;
+
         cmd.kind = ControlCommandKind::DISCRETE;
         cmd.discrete_type = DiscreteCommandType::RESTART;
-        cmd.motor_index = motor_index;
+        cmd.motor_index   = motor_index;
+
         return cmd;
     }
 
+
     static ControlCommand set_mode(MotorControlMode mode, int motor_index = kAllMotors) {
         ControlCommand cmd;
+
         cmd.kind = ControlCommandKind::DISCRETE;
         cmd.discrete_type = DiscreteCommandType::SET_MODE;
-        cmd.motor_index = motor_index;
+        cmd.motor_index   = motor_index;
         cmd.mode = mode;
+
         return cmd;
     }
+
 
     static ControlCommand set_position_targets_rad(std::vector<double> values) {
         return set_position_targets_rad_fixed(values.data(), values.size());
@@ -128,11 +155,13 @@ struct ControlCommand {
 
     static ControlCommand set_position_targets_rad_fixed(
         const double* values,
-        std::size_t count) {
+        std::size_t   count)
+    {
         ControlCommand cmd;
         cmd.kind = ControlCommandKind::SETPOINT;
         cmd.setpoint_type = SetpointCommandType::POSITION_TARGETS;
-        cmd.motor_index = kAllMotors;
+        cmd.motor_index   = kAllMotors;
+
         if (count > kMaxMotorCommandSetpoints || (!values && count != 0)) {
             cmd.payload_valid = false;
             return cmd;
@@ -147,6 +176,25 @@ struct ControlCommand {
         }
         return cmd;
     }
+
+
+    static ControlCommand set_position_targets_rad(double value, int motor_index) {
+        ControlCommand cmd;
+
+        cmd.kind = ControlCommandKind::SETPOINT;
+        cmd.setpoint_type = SetpointCommandType::POSITION_TARGETS;
+        cmd.motor_index   = motor_index;
+
+        if (!std::isfinite(value)) {
+            cmd.payload_valid = false;
+            return cmd;
+        }
+        cmd.payload_size = 1;
+        cmd.setpoints[0] = value;
+
+        return cmd;
+    }
+
 
     static ControlCommand set_velocity_targets_rad_s(std::vector<double> values) {
         return set_velocity_targets_rad_s_fixed(values.data(), values.size());
@@ -154,16 +202,20 @@ struct ControlCommand {
 
     static ControlCommand set_velocity_targets_rad_s_fixed(
         const double* values,
-        std::size_t count) {
+        std::size_t count)
+    {
         ControlCommand cmd;
+
         cmd.kind = ControlCommandKind::SETPOINT;
         cmd.setpoint_type = SetpointCommandType::VELOCITY_TARGETS;
-        cmd.motor_index = kAllMotors;
+        cmd.motor_index   = kAllMotors;
+
         if (count > kMaxMotorCommandSetpoints || (!values && count != 0)) {
             cmd.payload_valid = false;
             return cmd;
         }
         cmd.payload_size = count;
+
         for (std::size_t i = 0; i < count; ++i) {
             if (!std::isfinite(values[i])) {
                 cmd.payload_valid = false;
@@ -171,34 +223,28 @@ struct ControlCommand {
             }
             cmd.setpoints[i] = values[i];
         }
+
         return cmd;
     }
 
-    static ControlCommand set_torque_targets(std::vector<double> torque) {
-        return set_torque_targets_fixed(torque.data(), torque.size());
-    }
 
-    static ControlCommand set_torque_targets_fixed(
-        const double* torque,
-        std::size_t count) {
+    static ControlCommand set_velocity_targets_rad_s(double value, int motor_index) {
         ControlCommand cmd;
+
         cmd.kind = ControlCommandKind::SETPOINT;
-        cmd.setpoint_type = SetpointCommandType::TORQUE_TARGETS;
-        cmd.motor_index = kAllMotors;
-        if (count > kMaxMotorCommandSetpoints || (!torque && count != 0)) {
+        cmd.setpoint_type = SetpointCommandType::VELOCITY_TARGETS;
+        cmd.motor_index   = motor_index;
+
+        if (!std::isfinite(value)) {
             cmd.payload_valid = false;
             return cmd;
         }
-        cmd.payload_size = count;
-        for (std::size_t i = 0; i < count; ++i) {
-            if (!std::isfinite(torque[i])) {
-                cmd.payload_valid = false;
-                return cmd;
-            }
-            cmd.setpoints[i] = torque[i];
-        }
+        cmd.payload_size = 1;
+        cmd.setpoints[0] = value;
+
         return cmd;
     }
+
 
     static ControlCommand set_impedance_targets(std::vector<ImpedanceSetpoint> values) {
         return set_impedance_targets_fixed(values.data(), values.size());
@@ -206,16 +252,21 @@ struct ControlCommand {
 
     static ControlCommand set_impedance_targets_fixed(
         const ImpedanceSetpoint* values,
-        std::size_t count) {
+        std::size_t count)
+    {
         ControlCommand cmd;
+
         cmd.kind = ControlCommandKind::SETPOINT;
         cmd.setpoint_type = SetpointCommandType::IMPEDANCE_TARGETS;
-        cmd.motor_index = kAllMotors;
+        cmd.motor_index   = kAllMotors;
+
         if (count > kMaxMotorCommandSetpoints || (!values && count != 0)) {
             cmd.payload_valid = false;
             return cmd;
         }
+
         cmd.payload_size = count;
+
         for (std::size_t i = 0; i < count; ++i) {
             const auto& value = values[i];
             if (!std::isfinite(value.position_rad) ||
@@ -228,6 +279,28 @@ struct ControlCommand {
             }
             cmd.impedance_setpoints[i] = values[i];
         }
+
+        return cmd;
+    }
+    static ControlCommand set_impedance_targets(ImpedanceSetpoint value, int motor_index) {
+        ControlCommand cmd;
+
+        cmd.kind = ControlCommandKind::SETPOINT;
+        cmd.setpoint_type = SetpointCommandType::IMPEDANCE_TARGETS;
+        cmd.motor_index   = motor_index;
+
+        if (!std::isfinite(value.position_rad) ||
+            !std::isfinite(value.velocity_rad_s) ||
+            !std::isfinite(value.effort_ff) ||
+            !std::isfinite(value.kp) ||
+            !std::isfinite(value.kd)) {
+            cmd.payload_valid = false;
+            return cmd;
+        }
+
+        cmd.payload_size = 1;
+        cmd.impedance_setpoints[0] = value;
+
         return cmd;
     }
 };
@@ -265,6 +338,7 @@ enum class SetpointRejectReason : int {
 struct DiscreteCommand {
     DiscreteCommandType type;  // 离散命令类型
     MotorControlMode    mode;  // 目标模式（切换模式命令使用）
+    CommandId           command_id;
 
     DiscretePhase phase;        // 当前状态机阶段
 
@@ -281,9 +355,10 @@ struct DiscreteCommand {
     bool from_all_motors;              // 是否来自 ControlCommand::kAllMotors
 
     DiscreteCommand(DiscreteCommandType t = DiscreteCommandType::STOP,
-                    MotorControlMode    m = MotorControlMode::NONE)
+                    MotorControlMode    m = MotorControlMode::NONE,
+                    CommandId           id = 0)
 
-        : type(t), mode(m), phase(DiscretePhase::QUEUED),
+        : type(t), mode(m), command_id(id), phase(DiscretePhase::QUEUED),
           enqueue_tick(0), next_retry_tick(0), next_verify_tick(0), deadline_tick(0),
           max_retries(0), cur_retry(0), stable_success_cycles(0),
           fail_reason(DiscreteFailReason::NONE), from_all_motors(false) {}

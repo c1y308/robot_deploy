@@ -33,12 +33,13 @@ struct MotorStatusSnapshot {
 
     MotorControlMode mode;
     MotorControlMode target_mode;
+    std::int64_t host_timestamp_ns;
 
     MotorStatusSnapshot()
         : motor_index(-1), position_rad(0.0), velocity_rad_s(0.0),
           torque_percent(0.0), comm_ok(false), enabled(false), faulted(false),
           control_ready(false), mode(MotorControlMode::NONE),
-          target_mode(MotorControlMode::NONE) {}
+          target_mode(MotorControlMode::NONE), host_timestamp_ns(0) {}
 };
 
 
@@ -83,24 +84,10 @@ public:
     std::vector<Snapshot> get_status() const;
     void set_callback(StatusCallback cb);
 
-    // ──────────────────── 统计 ────────────────────
-
-    /// @brief Producer 累计 publish 次数（包括被覆盖的帧）
-    uint64_t get_publish_count() const;
-    /// @brief 被覆盖的帧数（Producer 发布新帧时，旧 dirty Middle 未被 Consumer 读取）
-    uint64_t get_overwritten_count() const;
-
     // ──────────────────── 生命周期 ────────────────────
 
     void start();
     void stop();
-
-#ifdef MOTOR_BASE_STATUS_CHANNEL_TESTING
-    bool copy_latest_status_for_test(std::vector<Snapshot>& out)
-    {
-        return copy_latest_status(out);
-    }
-#endif
 
 private:
     struct StatusFrame {
@@ -115,10 +102,6 @@ private:
     int publish_period_ms_{1};   // 读取频率
 
     robot_base::SpscLatestValue<StatusFrame> latest_frame_;
-
-    // ── 统计 ──
-    std::atomic<std::uint64_t> publish_count_{0};
-    std::atomic<std::uint64_t> overwritten_count_{0};
 
     std::vector<Snapshot> status_cache_;
     mutable std::mutex    status_cache_mutex_;
@@ -173,9 +156,6 @@ void LatestStatusChannel<Snapshot>::configure(std::size_t motor_count,
     status_cache_.assign(motor_count_, Snapshot());
 
     latest_frame_.reset_empty();
-
-    publish_count_.store(0, std::memory_order_relaxed);
-    overwritten_count_.store(0, std::memory_order_relaxed);
 }
 
 
@@ -210,11 +190,7 @@ void LatestStatusChannel<Snapshot>::publish(const WriteToken& token)
         return;
     }
 
-    const bool overwritten = latest_frame_.publish_written();
-    if (overwritten) {
-        overwritten_count_.fetch_add(1, std::memory_order_relaxed);
-    }
-    publish_count_.fetch_add(1, std::memory_order_relaxed);
+    latest_frame_.publish_written();
 }
 
 
@@ -242,21 +218,6 @@ void LatestStatusChannel<Snapshot>::set_callback(StatusCallback cb)
 }
 
 
-// ---------------------------------------------------------------------------
-// 统计 getter
-// ---------------------------------------------------------------------------
-
-template <typename Snapshot>
-uint64_t LatestStatusChannel<Snapshot>::get_publish_count() const
-{
-    return publish_count_.load(std::memory_order_relaxed);
-}
-
-template <typename Snapshot>
-uint64_t LatestStatusChannel<Snapshot>::get_overwritten_count() const
-{
-    return overwritten_count_.load(std::memory_order_relaxed);
-}
 
 
 // ---------------------------------------------------------------------------

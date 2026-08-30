@@ -1,12 +1,11 @@
 #include "driver/myact/motor_control.hpp"
 #include "driver/myact/myact_debug_printers.hpp"
 #include "driver/myact/motor_units.hpp"
+#include "tool/tool.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cmath>
 #include <iostream>
-#include <limits>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -15,33 +14,13 @@ namespace myactua{
 
 namespace mb = motor_base;
 
+using robot_base::double_to_i16;
+using robot_base::double_to_i32;
+using robot_base::fits_i16;
+using robot_base::fits_i32;
+
 namespace {
-constexpr double kRawTorqueToPercent = 0.1;
 constexpr const char* kDefaultEthercatIfName = "enp8s0";
-
-int32_t double_to_i32(double value)
-{
-    return static_cast<int32_t>(std::llround(value));
-}
-
-int16_t double_to_i16(double value)
-{
-    return static_cast<int16_t>(std::llround(value));
-}
-
-bool fits_i32(double value)
-{
-    const double lo = static_cast<double>(std::numeric_limits<int32_t>::min());
-    const double hi = static_cast<double>(std::numeric_limits<int32_t>::max());
-    return std::isfinite(value) && value >= lo && value <= hi;
-}
-
-bool fits_i16(double value)
-{
-    const double lo = static_cast<double>(std::numeric_limits<int16_t>::min());
-    const double hi = static_cast<double>(std::numeric_limits<int16_t>::max());
-    return std::isfinite(value) && value >= lo && value <= hi;
-}
 
 bool is_ankle_motor_index(int motor_index)
 {
@@ -295,6 +274,7 @@ bool MYACTUA::realtime_start_callback()
 void MYACTUA::realtime_cycle_callback()
 {
     _adapter->receive_physical();
+    current_cycle_host_timestamp_ns_ = robot_base::monotonic_now_ns();
     update();
     _adapter->send_physical();
 
@@ -663,54 +643,70 @@ void MYACTUA::handle_mode_switching(MotorState& motor)
 }
 
 
-mb::CommandSubmitResult MYACTUA::validate_command(
+mb::CommandSubmitStatus MYACTUA::validate_command(
     const mb::ControlCommand& cmd) const
 {
     if (whole_body_fault_latched_.load(std::memory_order_acquire)) {
         if (cmd.kind == mb::ControlCommandKind::SETPOINT) {
-            return mb::CommandSubmitResult::INVALID_COMMAND;
+            return mb::CommandSubmitStatus::INVALID_COMMAND;
         }
         if (cmd.kind == mb::ControlCommandKind::DISCRETE &&
             cmd.discrete_type == mb::DiscreteCommandType::SET_MODE) {
-            return mb::CommandSubmitResult::INVALID_COMMAND;
+            return mb::CommandSubmitStatus::INVALID_COMMAND;
         }
     }
 
     if (cmd.kind == mb::ControlCommandKind::SETPOINT) {
-        for (std::size_t i = 0; i < _motors.size(); ++i) {
-            const int motor_index = _motors[i].motor_index;
+
+        /* 是否为单电机控制 */
+        const bool single_motor = (cmd.motor_index != mb::ControlCommand::kAllMotors);
+        if (single_motor &&
+            (cmd.motor_index < 0 || cmd.motor_index >= static_cast<int>(_motors.size()))) {
+            return mb::CommandSubmitStatus::INVALID_COMMAND;
+        }
+        
+        // 单电机命令只校验目标电机，目标值位于 setpoints[0]；
+        // 全体命令按数组位置逐电机校验。
+        const std::size_t begin = single_motor
+                                      ? static_cast<std::size_t>(cmd.motor_index)
+                                      : 0;
+        const std::size_t end = single_motor ? begin + 1 : _motors.size();
+
+        for (std::size_t i = begin; i < end; ++i) {
+            const std::size_t slot = single_motor ? 0 : i;
+            const int motor_id = _motors[i].motor_index;
             switch (cmd.setpoint_type) {
                 case mb::SetpointCommandType::POSITION_TARGETS:
-                    if (!fits_i32(cmd.setpoints[i] *
-                                  pos_rad_to_raw_for_motor(motor_index))) {
-                        return mb::CommandSubmitResult::INVALID_PAYLOAD;
+                    if (!fits_i32(cmd.setpoints[slot] *
+                                  pos_rad_to_raw_for_motor(motor_id))) {
+                        return mb::CommandSubmitStatus::INVALID_PAYLOAD;
                     }
                     break;
 
                 case mb::SetpointCommandType::VELOCITY_TARGETS:
-                    if (!fits_i32(cmd.setpoints[i] *
-                                  vel_rad_s_to_raw_for_motor(motor_index))) {
-                        return mb::CommandSubmitResult::INVALID_PAYLOAD;
+                    if (!fits_i32(cmd.setpoints[slot] *
+                                  vel_rad_s_to_raw_for_motor(motor_id))) {
+                        return mb::CommandSubmitStatus::INVALID_PAYLOAD;
                     }
                     break;
 
                 case mb::SetpointCommandType::TORQUE_TARGETS:
-                    if (!fits_i16(cmd.setpoints[i])) {
-                        return mb::CommandSubmitResult::INVALID_PAYLOAD;
+                    if (!fits_i16(cmd.setpoints[slot])) {
+                        return mb::CommandSubmitStatus::INVALID_PAYLOAD;
                     }
                     break;
 
                 case mb::SetpointCommandType::IMPEDANCE_TARGETS: {
                     const mb::ImpedanceSetpoint& setpoint =
-                        cmd.impedance_setpoints[i];
+                        cmd.impedance_setpoints[slot];
                     if (!fits_i32(setpoint.position_rad *
-                                  pos_rad_to_raw_for_motor(motor_index)) ||
+                                  pos_rad_to_raw_for_motor(motor_id)) ||
                         !fits_i32(setpoint.velocity_rad_s *
-                                  vel_rad_s_to_raw_for_motor(motor_index)) ||
+                                  vel_rad_s_to_raw_for_motor(motor_id)) ||
                         !fits_i16(setpoint.effort_ff) ||
                         !fits_i32(setpoint.kp * 1000.0) ||
                         !fits_i32(setpoint.kd * 1000.0)) {
-                        return mb::CommandSubmitResult::INVALID_PAYLOAD;
+                        return mb::CommandSubmitStatus::INVALID_PAYLOAD;
                     }
                     break;
                 }
@@ -718,7 +714,7 @@ mb::CommandSubmitResult MYACTUA::validate_command(
         }
     }
 
-    return mb::CommandSubmitResult::ACCEPTED;
+    return mb::CommandSubmitStatus::ACCEPTED;
 }
 
 /// @brief 执行连续目标值命令
@@ -730,8 +726,15 @@ void MYACTUA::apply_setpoint_command_impl(const mb::ControlCommand& cmd)
         return;
     }
 
+    const bool single_motor =
+        (cmd.motor_index != mb::ControlCommand::kAllMotors);
+    const std::size_t begin = single_motor
+                                  ? static_cast<std::size_t>(cmd.motor_index)
+                                  : 0;
+    const std::size_t end = single_motor ? begin + 1 : _motors.size();
+
     const MyactControlMode expected_mode = expected_mode_for_setpoint(cmd.setpoint_type);
-    for (std::size_t i = 0; i < _motors.size(); ++i) {
+    for (std::size_t i = begin; i < end; ++i) {
         if (!control_ready_for_mode(_motors[i], expected_mode, whole_body_fault)) {
             mb::RtEvent event;
             event.type = mb::RtEventType::SETPOINT_COMMAND_REJECTED;
@@ -747,26 +750,30 @@ void MYACTUA::apply_setpoint_command_impl(const mb::ControlCommand& cmd)
 
     switch (cmd.setpoint_type) {
         case mb::SetpointCommandType::POSITION_TARGETS:
-            for (size_t i = 0; i < _motors.size(); i++) {
-                _motors[i].desired.position_rad = cmd.setpoints[i];
+            for (size_t i = begin; i < end; i++) {
+                _motors[i].desired.position_rad =
+                    cmd.setpoints[single_motor ? 0 : i];
             }
             break;
 
         case mb::SetpointCommandType::VELOCITY_TARGETS:
-            for (size_t i = 0; i < _motors.size(); i++) {
-                _motors[i].desired.velocity_rad_s = cmd.setpoints[i];
+            for (size_t i = begin; i < end; i++) {
+                _motors[i].desired.velocity_rad_s =
+                    cmd.setpoints[single_motor ? 0 : i];
             }
             break;
 
         case mb::SetpointCommandType::TORQUE_TARGETS:
-            for (size_t i = 0; i < _motors.size(); i++) {
-                _motors[i].desired.torque = cmd.setpoints[i];
+            for (size_t i = begin; i < end; i++) {
+                _motors[i].desired.torque =
+                    cmd.setpoints[single_motor ? 0 : i];
             }
             break;
 
         case mb::SetpointCommandType::IMPEDANCE_TARGETS:
-            for (size_t i = 0; i < _motors.size(); i++) {
-                _motors[i].desired.impedance_setpoint = cmd.impedance_setpoints[i];
+            for (size_t i = begin; i < end; i++) {
+                _motors[i].desired.impedance_setpoint =
+                    cmd.impedance_setpoints[single_motor ? 0 : i];
             }
             break;
     }
@@ -783,6 +790,7 @@ void MYACTUA::apply_discrete_command_impl(
     }
 
     MotorState& motor = _motors[motor_index];
+    
     if (whole_body_fault_latched_.load(std::memory_order_acquire)) {
         switch (cmd.type) {
             case mb::DiscreteCommandType::STOP:
@@ -835,7 +843,9 @@ mb::DiscreteCommandEvaluation MYACTUA::evaluate_discrete_command_impl(
     }
 
     const MotorState& motor = _motors[static_cast<std::size_t>(motor_index)];
-    if (whole_body_fault_latched_.load(std::memory_order_acquire)) {
+    const bool whole_body_fault =
+        whole_body_fault_latched_.load(std::memory_order_acquire);
+    if (whole_body_fault) {
         switch (cmd.type) {
             case mb::DiscreteCommandType::STOP:
                 return mb::DiscreteCommandEvaluation::SATISFIED;
@@ -862,7 +872,7 @@ mb::DiscreteCommandEvaluation MYACTUA::evaluate_discrete_command_impl(
             satisfied = !motor.observed.operation_enabled;
             break;
         case mb::DiscreteCommandType::RESTART:
-            satisfied = motor.observed.operation_enabled;
+            satisfied = control_ready_for_current_target(motor, whole_body_fault);
             break;
         case mb::DiscreteCommandType::SET_MODE:
             satisfied = motor.observed.observed_mode == to_myact_mode(cmd.mode);
@@ -917,6 +927,7 @@ void MYACTUA::update_realtime_feedback()
     for (std::size_t i = 0; i < _motors.size(); ++i) {
         const auto& motor = _motors[i];
         feedback[i].motor_index = motor.motor_index;
+        feedback[i].host_timestamp_ns = current_cycle_host_timestamp_ns_;
         feedback[i].position_rad = motor.observed.position_rad;
         feedback[i].velocity_rad_s = motor.observed.velocity_rad_s;
         feedback[i].torque_percent = motor.observed.torque_percent;
@@ -954,6 +965,7 @@ void MYACTUA::update_status_snapshot()
         const auto& m = _motors[i];
         auto& s = status_slot[i];
         s.motor_index = m.motor_index;
+        s.host_timestamp_ns = current_cycle_host_timestamp_ns_;
         s.position_rad = m.observed.position_rad;
         s.velocity_rad_s = m.observed.velocity_rad_s;
         s.torque_percent = m.observed.torque_percent;

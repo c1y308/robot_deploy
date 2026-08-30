@@ -1,4 +1,5 @@
 #include "driver/socket_can_port.hpp"
+#include "tool/tool.hpp"
 
 #include <cerrno>
 #include <cstring>
@@ -6,8 +7,8 @@
 #include <iostream>
 #include <linux/can/raw.h>
 #include <net/if.h>
+#include <poll.h>
 #include <sys/ioctl.h>
-#include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -93,30 +94,47 @@ bool SocketCanPort::is_open() const
     return fd_ >= 0;
 }
 
-int SocketCanPort::read(can_frame& frame)
+int SocketCanPort::wait_readable(int timeout_ms)
 {
     if (fd_ < 0) {
         return -1;
     }
 
-    fd_set read_fds;
-    FD_ZERO(&read_fds);
-    FD_SET(fd_, &read_fds);
+    pollfd pfd{};
+    pfd.fd = fd_;
+    pfd.events = POLLIN;
 
-    timeval timeout = {};
-    timeout.tv_usec = 10000;
-
-    const int ready = select(fd_ + 1, &read_fds, nullptr, nullptr, &timeout);
+    const int ready = poll(&pfd, 1, timeout_ms);
     if (ready < 0) {
         if (errno == EINTR) {
             return 0;
         }
-        std::cerr << "[HARDWARE ERROR] CAN select failed: "
+        std::cerr << "[HARDWARE ERROR] CAN poll failed: "
                   << std::strerror(errno) << std::endl;
         return -1;
     }
     if (ready == 0) {
         return 0;
+    }
+
+    if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+        std::cerr << "[HARDWARE ERROR] CAN poll revents=0x"
+                  << std::hex << pfd.revents << std::dec << std::endl;
+        return -1;
+    }
+
+    return (pfd.revents & POLLIN) != 0 ? 1 : 0;
+}
+
+int SocketCanPort::read_nonblocking(
+    can_frame& frame,
+    std::int64_t* host_receive_timestamp_ns)
+{
+    if (host_receive_timestamp_ns != nullptr) {
+        *host_receive_timestamp_ns = 0;
+    }
+    if (fd_ < 0) {
+        return -1;
     }
 
     const ssize_t bytes_read = ::read(fd_, &frame, sizeof(frame));
@@ -134,7 +152,19 @@ int SocketCanPort::read(can_frame& frame)
         return -1;
     }
 
+    if (host_receive_timestamp_ns != nullptr) {
+        *host_receive_timestamp_ns = robot_base::monotonic_now_ns();
+    }
     return 1;
+}
+
+int SocketCanPort::read(can_frame& frame)
+{
+    const int ready = wait_readable(10);
+    if (ready <= 0) {
+        return ready;
+    }
+    return read_nonblocking(frame, nullptr);
 }
 
 }  // namespace imu

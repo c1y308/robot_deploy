@@ -2,6 +2,7 @@
 
 #include <linux/can.h>
 
+#include <cstdint>
 #include <string>
 
 namespace imu {
@@ -18,6 +19,9 @@ public:
     void close();
     bool is_open() const;
 
+    int wait_readable(int timeout_ms);
+    int read_nonblocking(can_frame& frame,
+                         std::int64_t* host_receive_timestamp_ns = nullptr);
     int read(can_frame& frame);
 
     const std::string& get_interface_name() const { return interface_name_; }

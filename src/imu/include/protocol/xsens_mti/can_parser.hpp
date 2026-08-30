@@ -18,7 +18,10 @@ public:
 
     XsensMtiCanParser();
 
-    void feed(std::uint32_t can_id, const std::uint8_t* data, std::uint8_t len);
+    void feed(std::uint32_t can_id,
+              const std::uint8_t* data,
+              std::uint8_t len,
+              std::int64_t host_receive_timestamp_ns = 0);
     void reset();
 
     void set_imu_callback(IMUCallback_t callback) { imu_callback_ = callback; }
@@ -32,16 +35,22 @@ public:
     static void print_ahrs_data(const imu_base::AHRSData& ahrs);
 
 private:
-    void parse_sample_time(const std::uint8_t* data);
-    void parse_quaternion(const std::uint8_t* data);
-    void parse_rate_of_turn(const std::uint8_t* data);
+    void parse_sample_time(const std::uint8_t* data,
+                           std::int64_t host_receive_timestamp_ns);
+    void parse_quaternion(const std::uint8_t* data,
+                          std::int64_t host_receive_timestamp_ns);
+    void parse_rate_of_turn(const std::uint8_t* data,
+                            std::int64_t host_receive_timestamp_ns);
     void update_orientation_from_quaternion();
     void publish_ahrs_if_ready();
 
     imu_base::AHRSData ahrs_data_;
     bool ahrs_ready_;
-    bool has_quaternion_;
-    bool has_rate_of_turn_;
+    bool sample_time_fresh_;
+    bool quaternion_fresh_;
+    bool rate_of_turn_fresh_;
+    std::uint64_t sample_timestamp_us_;
+    std::int64_t sample_receive_timestamp_ns_;
 
     imu_base::ParserInfo stats_;
     IMUCallback_t imu_callback_;

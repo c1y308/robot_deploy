@@ -8,6 +8,7 @@ add_library(robot_base INTERFACE)
 target_include_directories(robot_base INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+target_link_libraries(robot_base INTERFACE rt)
 
 add_executable(spsc_latest_value_test
     tests/spsc_latest_value_test.cpp

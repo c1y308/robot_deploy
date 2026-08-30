@@ -90,8 +90,8 @@ int main() {
 
     /********************************************************************************** */
     std::cout << "[阶段2] 重新启动电机，等待 POSITION 模式就绪..." << std::endl;
-    if (controller.send_command(motor_base::ControlCommand::restart()) !=
-        motor_base::CommandSubmitResult::ACCEPTED) {
+    if (controller.send_command(motor_base::ControlCommand::restart()).status !=
+        motor_base::CommandSubmitStatus::ACCEPTED) {
         std::cerr << "[错误] 电机重新启动命令提交失败。" << std::endl;
         return -1;
     }
@@ -114,8 +114,8 @@ int main() {
     if (controller.send_command(
             motor_base::ControlCommand::set_position_targets_rad_fixed(
                 zero_positions_rad.data(),
-                zero_positions_rad.size())) !=
-        motor_base::CommandSubmitResult::ACCEPTED) {
+                zero_positions_rad.size())).status !=
+        motor_base::CommandSubmitStatus::ACCEPTED) {
         std::cerr << "[错误] 零位目标提交失败。" << std::endl;
         return -1;
     }
@@ -125,8 +125,8 @@ int main() {
     if (controller.send_command(
             motor_base::ControlCommand::set_position_targets_rad_fixed(
                 target_positions_rad.data(),
-                target_positions_rad.size())) !=
-        motor_base::CommandSubmitResult::ACCEPTED) {
+                target_positions_rad.size())).status !=
+        motor_base::CommandSubmitStatus::ACCEPTED) {
         std::cerr << "[错误] 目标位置数组提交失败。" << std::endl;
         return -1;
     }

@@ -49,7 +49,7 @@ bool file_readable(const std::string& path)
 inference::RobotInterfaceConfig make_robot_config()
 {
     inference::RobotInterfaceConfig cfg;
-    cfg.motor.num_motors = 12;
+    cfg.motor.num_motors = static_cast<int>(motor_base::kMaxMotors);
     cfg.motor.ethercat_ifname = kEthercatIfname;
     cfg.imu.device      = kImuDevice;
     cfg.imu.baudrate    = kImuBaudrate;

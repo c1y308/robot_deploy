@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "spsc_latest_value/spsc_latest_value.hpp"
-#include "motor_base/command_queue.hpp"
+#include "motor_base/command_channel.hpp"
 #include "motor_base/command_types.hpp"
 #include "motor_base/rt_event_dispatcher.hpp"
 #include "motor_base/status_channel.hpp"
@@ -87,11 +87,14 @@ public:
 
     /// @brief 异步发送控制命令（stop / restart / set_mode / setpoints）
     /// @param cmd 控制命令，详见 ControlCommand
-    /// @return 命令提交结果；ACCEPTED 仅表示命令已提交，不保证已执行
+    /// @return 命令提交结果；ACCEPTED 仅表示命令已提交，不保证已执行。
+    ///         离散命令提交成功时携带可查询的 command_id。
     CommandSubmitResult send_command(const ControlCommand& cmd);
 
     /// @brief 专供单 producer 控制线程使用的 latest-value setpoint 提交通道。
     CommandSubmitResult send_realtime_setpoint_command(const ControlCommand& cmd);
+
+    DiscreteCommandResult get_discrete_command_result(CommandId id) const;
 
 
     // ──────────────────── 状态反馈（物理量） ────────────────────
@@ -169,7 +172,7 @@ protected:
     // 派生类按需实现
     // ============================================================
 
-    virtual CommandSubmitResult validate_command(const ControlCommand& cmd) const;
+    virtual CommandSubmitStatus validate_command(const ControlCommand& cmd) const;
     
     virtual void discrete_queue_full_callback(
         int motor_index,
@@ -189,7 +192,7 @@ private:
     void process_realtime_setpoint_command();
 
     // 直接在process_queued_commands()中调用，将离散命令入各个电机的命令队列
-    void enqueue_discrete_command(const ControlCommand& cmd);
+    void enqueue_discrete_command(const ControlCommand& cmd, CommandId command_id);
     // thread_func()中调用，处理各个电机的离散命令队列（状态机）
     void service_discrete_commands();
 
@@ -200,6 +203,9 @@ private:
 
     // 电机控制命令队列（stop / restart / set_mode / setpoints）
     CommandQueue cmd_queue_;
+    std::atomic<CommandId> next_discrete_command_id_{1};
+    DiscreteCommandResultTracker discrete_command_results_;
+    std::mutex command_submission_mutex_;
 
     // 每个电机的离散命令队列（stop / restart / set_mode）
     std::vector<DiscreteCommandQueue> discrete_cmd_queues_;

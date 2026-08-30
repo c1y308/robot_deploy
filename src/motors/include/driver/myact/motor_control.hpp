@@ -54,10 +54,11 @@ private:
     std::atomic<bool> whole_body_fault_latched_{false};
     uint32_t process_data_fail_count_{0};
     MyactCommunicationFaultReason fault_reason_{MyactCommunicationFaultReason::None};
+    std::int64_t current_cycle_host_timestamp_ns_{0};
 
     bool connect_impl(const char* ifname) override;
 
-    motor_base::CommandSubmitResult validate_command(
+    motor_base::CommandSubmitStatus validate_command(
         const motor_base::ControlCommand& cmd) const override;
 
     void apply_setpoint_command_impl(

@@ -247,36 +247,81 @@ int main()
     myactua::MYACTUA controller(adapter, 1, options);
 
     std::vector<double> too_many(motor_base::kMaxMotorCommandSetpoints + 1, 0.0);
+    const motor_base::CommandSubmitResult invalid_setpoint_result =
+        controller.send_command(
+            motor_base::ControlCommand::set_position_targets_rad(too_many));
     if (!expect(
-            controller.send_command(motor_base::ControlCommand::set_position_targets_rad(too_many)) ==
-                motor_base::CommandSubmitResult::INVALID_PAYLOAD,
+            invalid_setpoint_result.status ==
+                motor_base::CommandSubmitStatus::INVALID_PAYLOAD,
             "oversized setpoint payload should be rejected")) {
         return 1;
     }
+    if (!expect(!invalid_setpoint_result.command_id.has_value(),
+                "rejected setpoint should not carry command_id")) {
+        return 1;
+    }
 
+    const motor_base::CommandSubmitResult setpoint_result =
+        controller.send_command(
+            motor_base::ControlCommand::set_velocity_targets_rad_s({0.0}));
     if (!expect(
-            controller.send_command(motor_base::ControlCommand::set_velocity_targets_rad_s({0.0})) ==
-                motor_base::CommandSubmitResult::ACCEPTED,
+            setpoint_result.status == motor_base::CommandSubmitStatus::ACCEPTED,
             "mode-dependent setpoint validation should be deferred to RT execution")) {
         return 1;
     }
+    if (!expect(!setpoint_result.command_id.has_value(),
+                "accepted setpoint should not carry command_id")) {
+        return 1;
+    }
 
+    const motor_base::CommandSubmitResult stop_result =
+        controller.send_command(motor_base::ControlCommand::stop());
     if (!expect(
-            controller.send_command(motor_base::ControlCommand::stop()) ==
-                motor_base::CommandSubmitResult::ACCEPTED,
+            stop_result.status == motor_base::CommandSubmitStatus::ACCEPTED,
             "first command should be accepted")) {
         return 1;
     }
+    if (!expect(stop_result.command_id.has_value(),
+                "accepted STOP should carry command_id")) {
+        return 1;
+    }
+
+    const motor_base::CommandSubmitResult restart_result =
+        controller.send_command(motor_base::ControlCommand::restart());
     if (!expect(
-            controller.send_command(motor_base::ControlCommand::restart()) ==
-                motor_base::CommandSubmitResult::ACCEPTED,
+            restart_result.status == motor_base::CommandSubmitStatus::ACCEPTED,
             "second command should be accepted")) {
         return 1;
     }
+    if (!expect(restart_result.command_id.has_value(),
+                "accepted RESTART should carry command_id")) {
+        return 1;
+    }
     if (!expect(
-            controller.send_command(motor_base::ControlCommand::set_mode(motor_base::MotorControlMode::POSITION)) ==
-                motor_base::CommandSubmitResult::QUEUE_FULL,
+            controller.get_discrete_command_result(*restart_result.command_id) ==
+                motor_base::DiscreteCommandResult::PENDING,
+            "accepted RESTART should be pending before RT consumes it")) {
+        return 1;
+    }
+    if (!expect(
+            controller.get_discrete_command_result(999999) ==
+                motor_base::DiscreteCommandResult::UNKNOWN,
+            "unknown command_id should query as UNKNOWN")) {
+        return 1;
+    }
+
+    const motor_base::CommandSubmitResult queue_full_result =
+        controller.send_command(
+            motor_base::ControlCommand::set_mode(
+                motor_base::MotorControlMode::POSITION));
+    if (!expect(
+            queue_full_result.status ==
+                motor_base::CommandSubmitStatus::QUEUE_FULL,
             "bounded command queue should report full")) {
+        return 1;
+    }
+    if (!expect(!queue_full_result.command_id.has_value(),
+                "queue-full command should not expose command_id")) {
         return 1;
     }
 
@@ -338,8 +383,34 @@ int main()
         controller.shutdown();
         return 1;
     }
+    std::array<motor_base::MotorStatusSnapshot,
+               motor_base::kMaxMotorCommandSetpoints> policy_feedback;
+    if (!expect(controller.try_consume_policy_feedback(policy_feedback),
+                "policy feedback should be available")) {
+        controller.shutdown();
+        return 1;
+    }
+    if (!expect(policy_feedback[0].host_timestamp_ns != 0,
+                "policy feedback timestamp must be populated by RT cycle")) {
+        controller.shutdown();
+        return 1;
+    }
+    const std::vector<motor_base::MotorStatusSnapshot> status =
+        controller.get_status();
+    if (!expect(!status.empty() && status[0].host_timestamp_ns != 0,
+                "status snapshot timestamp must be populated by RT cycle")) {
+        controller.shutdown();
+        return 1;
+    }
     if (!expect(discrete_queue_full_events.load(std::memory_order_relaxed) > 0,
                 "discrete queue overflow should emit an RT event")) {
+        controller.shutdown();
+        return 1;
+    }
+    if (!expect(
+            controller.get_discrete_command_result(*restart_result.command_id) ==
+                motor_base::DiscreteCommandResult::FAILED,
+            "per-motor discrete queue overflow should mark command_id failed")) {
         controller.shutdown();
         return 1;
     }
@@ -363,6 +434,40 @@ int main()
 
     controller.shutdown();
     controller.shutdown();
+
+    {
+        myactua::MYACTUA::Options wrap_options = test_options();
+        wrap_options.command_queue_capacity = 70;
+        auto wrap_adapter = std::make_shared<FakeAdapter>(1);
+        myactua::MYACTUA wrap_controller(wrap_adapter, 1, wrap_options);
+
+        const motor_base::CommandSubmitResult first_result =
+            wrap_controller.send_command(motor_base::ControlCommand::stop());
+        if (!expect(
+                first_result.status == motor_base::CommandSubmitStatus::ACCEPTED &&
+                    first_result.command_id.has_value(),
+                "first tracked command should submit before result-table wrap")) {
+            return 1;
+        }
+
+        for (int i = 0; i < 64; ++i) {
+            const motor_base::CommandSubmitResult result =
+                wrap_controller.send_command(motor_base::ControlCommand::stop());
+            if (!expect(
+                    result.status == motor_base::CommandSubmitStatus::ACCEPTED &&
+                        result.command_id.has_value(),
+                    "tracked command should submit during result-table wrap")) {
+                return 1;
+            }
+        }
+
+        if (!expect(
+                wrap_controller.get_discrete_command_result(*first_result.command_id) ==
+                    motor_base::DiscreteCommandResult::UNKNOWN,
+                "overwritten command_id should query as UNKNOWN")) {
+            return 1;
+        }
+    }
 
     {
         myactua::MYACTUA::Options failing_options = test_options();
@@ -392,23 +497,24 @@ int main()
         }
         if (!expect(
                 failing_controller.send_command(
-                    motor_base::ControlCommand::restart()) ==
-                    motor_base::CommandSubmitResult::INVALID_COMMAND,
+                    motor_base::ControlCommand::restart()).status ==
+                    motor_base::CommandSubmitStatus::INVALID_COMMAND,
                 "RESTART should be rejected when required RT scheduling is inactive")) {
             failing_controller.shutdown();
             return 1;
         }
         if (!expect(
                 failing_controller.send_command(
-                    motor_base::ControlCommand::set_position_targets_rad({0.0})) ==
-                    motor_base::CommandSubmitResult::INVALID_COMMAND,
+                    motor_base::ControlCommand::set_position_targets_rad({0.0})).status ==
+                    motor_base::CommandSubmitStatus::INVALID_COMMAND,
                 "setpoint should be rejected when required RT scheduling is inactive")) {
             failing_controller.shutdown();
             return 1;
         }
         if (!expect(
-                failing_controller.send_command(motor_base::ControlCommand::stop()) ==
-                    motor_base::CommandSubmitResult::ACCEPTED,
+                failing_controller.send_command(
+                    motor_base::ControlCommand::stop()).status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED,
                 "STOP should remain accepted when RT scheduling is inactive")) {
             failing_controller.shutdown();
             return 1;
@@ -416,8 +522,8 @@ int main()
         if (!expect(
                 failing_controller.send_command(
                     motor_base::ControlCommand::set_mode(
-                        motor_base::MotorControlMode::POSITION)) ==
-                    motor_base::CommandSubmitResult::ACCEPTED,
+                        motor_base::MotorControlMode::POSITION)).status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED,
                 "SET_MODE should remain accepted when RT scheduling is inactive")) {
             failing_controller.shutdown();
             return 1;
@@ -454,8 +560,8 @@ int main()
         if (!expect(
                 mode_controller.send_command(
                     motor_base::ControlCommand::set_mode(
-                        motor_base::MotorControlMode::IMPEDANCE)) ==
-                    motor_base::CommandSubmitResult::ACCEPTED,
+                        motor_base::MotorControlMode::IMPEDANCE)).status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED,
                 "SET_MODE should be accepted before confirmed-mode test")) {
             mode_controller.shutdown();
             return 1;
@@ -476,8 +582,8 @@ int main()
             1.0);
         if (!expect(
                 mode_controller.send_command(
-                    motor_base::ControlCommand::set_impedance_targets(setpoints)) ==
-                    motor_base::CommandSubmitResult::ACCEPTED,
+                    motor_base::ControlCommand::set_impedance_targets(setpoints)).status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED,
                 "setpoint should enqueue for RT confirmed-mode validation")) {
             mode_controller.shutdown();
             return 1;
@@ -539,8 +645,8 @@ int main()
         if (!expect(
                 stopped_controller.send_command(
                     motor_base::ControlCommand::set_position_targets_rad(
-                        {static_cast<double>(target_raw) * myactua::kRawPosToRad})) ==
-                    motor_base::CommandSubmitResult::ACCEPTED,
+                        {static_cast<double>(target_raw) * myactua::kRawPosToRad})).status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED,
                 "setpoint should enqueue when observed mode matches but motor is not running")) {
             stopped_controller.shutdown();
             return 1;
@@ -581,9 +687,31 @@ int main()
                           "confirmed-running setpoint controller should start")) {
             return 1;
         }
-        running_controller.send_command(motor_base::ControlCommand::restart());
-        if (!expect(adapter->wait_for_cycles(6, std::chrono::seconds(1)),
+        const motor_base::CommandSubmitResult restart_submit =
+            running_controller.send_command(motor_base::ControlCommand::restart());
+        if (!expect(
+                restart_submit.status == motor_base::CommandSubmitStatus::ACCEPTED &&
+                    restart_submit.command_id.has_value(),
+                "RESTART should be accepted with command_id")) {
+            running_controller.shutdown();
+            return 1;
+        }
+        if (!expect(
+                running_controller.get_discrete_command_result(*restart_submit.command_id) ==
+                    motor_base::DiscreteCommandResult::PENDING,
+                "RESTART command_id should start pending")) {
+            running_controller.shutdown();
+            return 1;
+        }
+        if (!expect(adapter->wait_for_cycles(60, std::chrono::seconds(1)),
                     "confirmed-running controller should reach RUNNING")) {
+            running_controller.shutdown();
+            return 1;
+        }
+        if (!expect(
+                running_controller.get_discrete_command_result(*restart_submit.command_id) ==
+                    motor_base::DiscreteCommandResult::SUCCEEDED,
+                "RESTART command_id should succeed after control_ready")) {
             running_controller.shutdown();
             return 1;
         }
@@ -592,13 +720,14 @@ int main()
         if (!expect(
                 running_controller.send_command(
                     motor_base::ControlCommand::set_position_targets_rad(
-                        {static_cast<double>(target_raw) * myactua::kRawPosToRad})) ==
-                    motor_base::CommandSubmitResult::ACCEPTED,
+                        {static_cast<double>(target_raw) * myactua::kRawPosToRad})).status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED,
                 "setpoint should enqueue when all motors are confirmed running")) {
             running_controller.shutdown();
             return 1;
         }
-        if (!expect(adapter->wait_for_cycles(12, std::chrono::seconds(1)),
+        if (!expect(adapter->wait_for_cycles(adapter->cycles() + 12,
+                                             std::chrono::seconds(1)),
                     "confirmed-running setpoint scenario should run")) {
             running_controller.shutdown();
             return 1;
@@ -613,6 +742,43 @@ int main()
                     "confirmed running setpoint should update target position")) {
             return 1;
         }
+    }
+
+    {
+        auto adapter = std::make_shared<FakeAdapter>(2);
+        adapter->set_rx_status_word(0, operation_enabled_status_word());
+        adapter->set_rx_status_word(1, operation_enabled_status_word());
+        adapter->set_rx_mode(0, myactua::MyactControlMode::CSP);
+        adapter->set_rx_mode(1, myactua::MyactControlMode::CSP);
+
+        myactua::MYACTUA all_ready_controller(adapter, 2, test_options());
+        if (!expect_start(all_ready_controller,
+                          "all-ready restart controller should start")) {
+            return 1;
+        }
+        const motor_base::CommandSubmitResult restart_submit =
+            all_ready_controller.send_command(motor_base::ControlCommand::restart());
+        if (!expect(
+                restart_submit.status == motor_base::CommandSubmitStatus::ACCEPTED &&
+                    restart_submit.command_id.has_value(),
+                "all-motors RESTART should be accepted with command_id")) {
+            all_ready_controller.shutdown();
+            return 1;
+        }
+        if (!expect(adapter->wait_for_cycles(60, std::chrono::seconds(1)),
+                    "all-ready restart controller should run")) {
+            all_ready_controller.shutdown();
+            return 1;
+        }
+        if (!expect(
+                all_ready_controller.get_discrete_command_result(
+                    *restart_submit.command_id) ==
+                    motor_base::DiscreteCommandResult::SUCCEEDED,
+                "all-motors RESTART should succeed after every motor is ready")) {
+            all_ready_controller.shutdown();
+            return 1;
+        }
+        all_ready_controller.shutdown();
     }
 
     {
@@ -638,9 +804,26 @@ int main()
                           "partial-frame setpoint controller should start")) {
             return 1;
         }
-        partial_controller.send_command(motor_base::ControlCommand::restart());
+        const motor_base::CommandSubmitResult partial_restart_submit =
+            partial_controller.send_command(motor_base::ControlCommand::restart());
+        if (!expect(
+                partial_restart_submit.status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED &&
+                    partial_restart_submit.command_id.has_value(),
+                "partial-frame RESTART should be accepted with command_id")) {
+            partial_controller.shutdown();
+            return 1;
+        }
         if (!expect(adapter->wait_for_cycles(6, std::chrono::seconds(1)),
                     "partial-frame controller should process restart")) {
+            partial_controller.shutdown();
+            return 1;
+        }
+        if (!expect(
+                partial_controller.get_discrete_command_result(
+                    *partial_restart_submit.command_id) ==
+                    motor_base::DiscreteCommandResult::PENDING,
+                "all-motors RESTART should stay pending until every target motor is ready")) {
             partial_controller.shutdown();
             return 1;
         }
@@ -651,8 +834,8 @@ int main()
                 partial_controller.send_command(
                     motor_base::ControlCommand::set_position_targets_rad(
                         {static_cast<double>(target0_raw) * myactua::kRawPosToRad,
-                         static_cast<double>(target1_raw) * myactua::kRawPosToRad})) ==
-                    motor_base::CommandSubmitResult::ACCEPTED,
+                         static_cast<double>(target1_raw) * myactua::kRawPosToRad})).status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED,
                 "partial-frame setpoint should enqueue for RT validation")) {
             partial_controller.shutdown();
             return 1;
@@ -766,8 +949,8 @@ int main()
           }
           if (!expect(
                   watchdog_controller.send_command(
-                      motor_base::ControlCommand::set_position_targets_rad({0.0})) ==
-                      motor_base::CommandSubmitResult::INVALID_COMMAND,
+                      motor_base::ControlCommand::set_position_targets_rad({0.0})).status ==
+                      motor_base::CommandSubmitStatus::INVALID_COMMAND,
                   "setpoint commands should be rejected while communication fault is latched")) {
               watchdog_controller.shutdown();
               return 1;
@@ -775,8 +958,8 @@ int main()
           if (!expect(
                   watchdog_controller.send_command(
                       motor_base::ControlCommand::set_mode(
-                          motor_base::MotorControlMode::POSITION)) ==
-                      motor_base::CommandSubmitResult::INVALID_COMMAND,
+                          motor_base::MotorControlMode::POSITION)).status ==
+                      motor_base::CommandSubmitStatus::INVALID_COMMAND,
                   "SET_MODE should be rejected while communication fault is latched")) {
               watchdog_controller.shutdown();
               return 1;
@@ -850,9 +1033,26 @@ int main()
               watchdog_controller.shutdown();
               return 1;
           }
-          watchdog_controller.send_command(motor_base::ControlCommand::restart(0));
-          if (!expect(adapter->wait_for_cycles(32, std::chrono::seconds(1)),
+          const motor_base::CommandSubmitResult restart_submit =
+              watchdog_controller.send_command(motor_base::ControlCommand::restart(0));
+          if (!expect(
+                  restart_submit.status == motor_base::CommandSubmitStatus::ACCEPTED &&
+                      restart_submit.command_id.has_value(),
+                  "single-motor RESTART under fault should submit with command_id")) {
+              watchdog_controller.shutdown();
+              return 1;
+          }
+          if (!expect(adapter->wait_for_cycles(adapter->cycles() + 32,
+                                               std::chrono::seconds(1)),
                       "single-motor restart scenario should continue running")) {
+              watchdog_controller.shutdown();
+              return 1;
+          }
+          if (!expect(
+                  watchdog_controller.get_discrete_command_result(
+                      *restart_submit.command_id) ==
+                      motor_base::DiscreteCommandResult::FAILED,
+                  "single-motor RESTART under latched fault should fail")) {
               watchdog_controller.shutdown();
               return 1;
           }

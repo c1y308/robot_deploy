@@ -37,22 +37,15 @@ bool is_mit_mode(motor_base::MotorControlMode mode)
     return mode == motor_base::MotorControlMode::IMPEDANCE;
 }
 
-const char* command_submit_result_name(motor_base::CommandSubmitResult result)
+const char* command_submit_status_name(motor_base::CommandSubmitStatus status)
 {
-    switch (result) {
-        case motor_base::CommandSubmitResult::ACCEPTED: return "ACCEPTED";
-        case motor_base::CommandSubmitResult::QUEUE_FULL: return "QUEUE_FULL";
-        case motor_base::CommandSubmitResult::INVALID_COMMAND: return "INVALID_COMMAND";
-        case motor_base::CommandSubmitResult::INVALID_PAYLOAD: return "INVALID_PAYLOAD";
+    switch (status) {
+        case motor_base::CommandSubmitStatus::ACCEPTED: return "ACCEPTED";
+        case motor_base::CommandSubmitStatus::QUEUE_FULL: return "QUEUE_FULL";
+        case motor_base::CommandSubmitStatus::INVALID_COMMAND: return "INVALID_COMMAND";
+        case motor_base::CommandSubmitStatus::INVALID_PAYLOAD: return "INVALID_PAYLOAD";
     }
     return "UNKNOWN";
-}
-
-std::int64_t motor_steady_now_ns() noexcept
-{
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(
-               std::chrono::steady_clock::now().time_since_epoch())
-        .count();
 }
 
 /* 把一段 MotorStatusSnapshot 填入 inference 层的电机状态快照 */
@@ -62,6 +55,7 @@ void fill_motor_snapshot_from_range(MotorStateSnapshot& snapshot,
                                      Iterator end)
 {
     const std::size_t count = static_cast<std::size_t>(end - begin);
+    snapshot.timestamp_ns = count > 0 ? begin->host_timestamp_ns : 0;
     snapshot.position_rad.reserve(count);
     snapshot.velocity_rad_s.reserve(count);
     snapshot.torque_percent.reserve(count);
@@ -241,13 +235,58 @@ bool RobotMotorSession::restart(int motor_index)
         return false;
     }
 
-    if (!submit_command(motor_base::ControlCommand::restart(motor_index), "restart")) {
+    const motor_base::CommandSubmitResult submit_result =
+        controller_->send_command(motor_base::ControlCommand::restart(motor_index));
+    if (submit_result.status != motor_base::CommandSubmitStatus::ACCEPTED) {
+        std::cerr << "[RobotMotorSession] restart command rejected: "
+                  << command_submit_status_name(submit_result.status) << "\n";
+        motion_enabled_.store(false);
         return false;
     }
-    if (motor_index < 0 || config_.num_motors == 1) {
-        motion_enabled_.store(true);
+
+    if (!submit_result.command_id.has_value()) {
+        std::cerr << "[RobotMotorSession] restart command missing command_id\n";
+        motion_enabled_.store(false);
+        return false;
     }
-    return true;
+
+    const motor_base::CommandId command_id = *submit_result.command_id;
+    const auto deadline =
+        std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(config_.control_ready_timeout_ms);
+
+    while (true) {
+        const motor_base::DiscreteCommandResult command_result =
+            controller_->get_discrete_command_result(command_id);
+        switch (command_result) {
+            case motor_base::DiscreteCommandResult::SUCCEEDED:
+                if (motor_index < 0 || config_.num_motors == 1) {
+                    motion_enabled_.store(true);
+                }
+                return true;
+
+            case motor_base::DiscreteCommandResult::FAILED:
+                std::cerr << "[RobotMotorSession] restart command failed\n";
+                motion_enabled_.store(false);
+                return false;
+
+            case motor_base::DiscreteCommandResult::UNKNOWN:
+                std::cerr << "[RobotMotorSession] restart command result unknown\n";
+                motion_enabled_.store(false);
+                return false;
+
+            case motor_base::DiscreteCommandResult::PENDING:
+                break;
+        }
+
+        if (std::chrono::steady_clock::now() >= deadline) {
+            std::cerr << "[RobotMotorSession] restart timed out waiting for control_ready\n";
+            motion_enabled_.store(false);
+            return false;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
 }
 
 
@@ -334,12 +373,12 @@ bool RobotMotorSession::apply_impedance_setpoints_realtime(
             count);
     const motor_base::CommandSubmitResult result =
         controller_->send_realtime_setpoint_command(command);
-    if (result == motor_base::CommandSubmitResult::ACCEPTED) {
+    if (result.status == motor_base::CommandSubmitStatus::ACCEPTED) {
         return true;
     }
 
     std::cerr << "[RobotMotorSession] apply_impedance_setpoints command rejected: "
-              << command_submit_result_name(result) << "\n";
+              << command_submit_status_name(result.status) << "\n";
     return false;
 }
 
@@ -358,13 +397,13 @@ bool RobotMotorSession::submit_command(const motor_base::ControlCommand& command
                                        const char* context)
 {
     const motor_base::CommandSubmitResult result = controller_->send_command(command);
-    if (result == motor_base::CommandSubmitResult::ACCEPTED) {
+    if (result.status == motor_base::CommandSubmitStatus::ACCEPTED) {
         return true;
     }
 
     std::cerr << "[RobotMotorSession] " << context
               << " command rejected: "
-              << command_submit_result_name(result) << "\n";
+              << command_submit_status_name(result.status) << "\n";
     return false;
 }
 
@@ -380,7 +419,6 @@ std::vector<double> RobotMotorSession::get_joint_q() const
 MotorStateSnapshot RobotMotorSession::get_motor_snapshot() const
 {
     MotorStateSnapshot snapshot;
-    snapshot.timestamp_ns = motor_steady_now_ns();
     if (!controller_) {
         return snapshot;
     }

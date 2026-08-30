@@ -1,5 +1,6 @@
 #include "policy/policy_runtime.hpp"
 #include "policy/torch_policy_runner.hpp"
+#include "tool/tool.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -11,9 +12,7 @@ namespace {
 
 std::int64_t policy_runtime_now_ns() noexcept
 {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(
-               std::chrono::steady_clock::now().time_since_epoch())
-        .count();
+    return robot_base::monotonic_now_ns();
 }
 
 std::array<float, 2> gait_phase_observation(std::uint64_t episode_length,
