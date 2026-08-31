@@ -19,12 +19,12 @@ constexpr int kRightUpperMotor = 10;
 constexpr int kRightLowerMotor = 11;
 constexpr int kNonAnkleMotorCount = kDof - 4;
 
-constexpr double kTargetPitchDeg = 20;
-constexpr double kTargetRollDeg  = 0;
+constexpr double kTargetPitchDeg = 0;
+constexpr double kTargetRollDeg  = 15;
 
 constexpr double kTransitionSeconds = 2.0;
 constexpr double kZeroSettleSeconds = 2.0;
-constexpr double kHoldSeconds = 5.0;
+constexpr double kHoldSeconds = 10.0;
 constexpr int kControlHz = 50;
 constexpr int kTransitionSteps =
     static_cast<int>(kTransitionSeconds * static_cast<double>(kControlHz));
@@ -35,7 +35,7 @@ constexpr int kHoldSteps =
 constexpr std::chrono::milliseconds kControlPeriod{1000 / kControlHz};
 
 const std::array<int, kDof> kMotorToModelDirection = {
-     1, -1, 1,  1, -1, -1,
+    -1, -1, 1,  1, -1, -1,
     -1,  1, 1, -1, -1, -1
 };
 

@@ -106,7 +106,7 @@ int main() {
     const std::array<double, motors_nums> zero_positions_rad = {};
 
     const std::array<double, motors_nums> target_positions_rad = {
-        0.0, 0.0, 0.0, 0.0, 0.0, -3.14,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     };
 

@@ -29,7 +29,7 @@ inline std::int64_t steady_now_ns() noexcept
 struct InferenceRecord {
     std::uint64_t frame_index{0};
 
-    std::int64_t state_timestamp_ns{0};
+    std::int64_t motor_sample_timestamp_ns{0};
 
     std::int64_t inference_start_ns{0};
     std::int64_t inference_end_ns{0};
@@ -45,6 +45,7 @@ struct InferenceRecord {
     std::int64_t imu_age_us{0};
     std::int64_t motor_age_us{0};
 
+    PolicyObservation policy_observation{};                     // 真正送入 TorchScript 的 flatten policy 输入
     std::array<float,  kInferenceDof> raw_action{};             // 模型输出的原始动作向量
     std::array<double, kInferenceDof> target_q_model_rad{};     // 处理之后的目标关节角度（弧度、模型顺序）
 

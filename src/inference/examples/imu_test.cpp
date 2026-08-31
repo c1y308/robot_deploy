@@ -1,49 +1,320 @@
 #include "robot/robot_imu_session.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
+#include <exception>
 #include <iomanip>
 #include <iostream>
+#include <limits>
+#include <string>
 #include <thread>
 
 namespace {
+
+constexpr auto kPollInterval = std::chrono::milliseconds(1);
+
 std::atomic<bool> g_running{true};
 
-void signal_handler(int) {
+void signal_handler(int)
+{
     g_running.store(false);
 }
+
+struct IntervalStats {
+    std::uint64_t count = 0;
+    std::int64_t sum_ns = 0;
+    std::int64_t min_ns = std::numeric_limits<std::int64_t>::max();
+    std::int64_t max_ns = 0;
+
+    void observe(std::int64_t interval_ns)
+    {
+        if (interval_ns <= 0) {
+            return;
+        }
+        ++count;
+        sum_ns += interval_ns;
+        min_ns = std::min(min_ns, interval_ns);
+        max_ns = std::max(max_ns, interval_ns);
+    }
+
+    void reset()
+    {
+        count = 0;
+        sum_ns = 0;
+        min_ns = std::numeric_limits<std::int64_t>::max();
+        max_ns = 0;
+    }
+};
+
+struct AhrsChannelStats {
+    std::uint64_t total_frames = 0;
+    std::uint64_t window_frames = 0;
+
+    bool has_last_snapshot_timestamp = false;
+    bool has_last_host_timestamp = false;
+    bool has_last_device_timestamp = false;
+
+    std::int64_t last_snapshot_timestamp_ns = 0;
+    std::int64_t last_host_timestamp_ns = 0;
+    std::uint64_t last_device_timestamp_us = 0;
+
+    bool has_latest = false;
+    inference::AhrsStateSnapshot latest;
+
+    IntervalStats host_interval;
+    IntervalStats device_interval;
+
+    bool observe_if_new(const inference::AhrsStateSnapshot& snapshot)
+    {
+        const std::int64_t snapshot_timestamp_ns =
+            snapshot.host_sample_timestamp_ns != 0
+                ? snapshot.host_sample_timestamp_ns
+                : snapshot.timestamp_ns;
+        if (snapshot_timestamp_ns <= 0) {
+            return false;
+        }
+        if (has_last_snapshot_timestamp &&
+            snapshot_timestamp_ns == last_snapshot_timestamp_ns) {
+            return false;
+        }
+
+        ++total_frames;
+        ++window_frames;
+        has_latest = true;
+        latest = snapshot;
+
+        has_last_snapshot_timestamp = true;
+        last_snapshot_timestamp_ns = snapshot_timestamp_ns;
+
+        if (snapshot.host_receive_timestamp_ns > 0) {
+            if (has_last_host_timestamp &&
+                snapshot.host_receive_timestamp_ns > last_host_timestamp_ns) {
+                host_interval.observe(snapshot.host_receive_timestamp_ns -
+                                      last_host_timestamp_ns);
+            }
+            has_last_host_timestamp = true;
+            last_host_timestamp_ns = snapshot.host_receive_timestamp_ns;
+        }
+
+        if (snapshot.device_timestamp_valid) {
+            if (has_last_device_timestamp &&
+                snapshot.device_timestamp_us > last_device_timestamp_us) {
+                const std::uint64_t interval_us =
+                    snapshot.device_timestamp_us - last_device_timestamp_us;
+                if (interval_us <=
+                    static_cast<std::uint64_t>(
+                        std::numeric_limits<std::int64_t>::max() / 1000)) {
+                    device_interval.observe(
+                        static_cast<std::int64_t>(interval_us * 1000ULL));
+                }
+            }
+            has_last_device_timestamp = true;
+            last_device_timestamp_us = snapshot.device_timestamp_us;
+        }
+
+        return true;
+    }
+
+    void reset_window()
+    {
+        window_frames = 0;
+        host_interval.reset();
+        device_interval.reset();
+    }
+};
+
+enum class ParseResult {
+    Ok,
+    Help,
+    Error,
+};
+
+const char* reader_type_name(imu_base::ReaderType type)
+{
+    switch (type) {
+        case imu_base::ReaderType::A100_SERIAL:
+            return "a100";
+        case imu_base::ReaderType::XSENS_MTI_CAN:
+            return "xsens";
+    }
+    return "unknown";
+}
+
+void print_usage(const char* program)
+{
+    std::cout
+        << "Usage: " << program
+        << " [--type a100|xsens] [--device PATH] [--baudrate N]"
+        << " [--report-ms N]\n";
+}
+
+ParseResult parse_args(int argc,
+                       char** argv,
+                       inference::ImuConfig& config,
+                       std::chrono::milliseconds& report_interval)
+{
+    bool device_overridden = false;
+
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--help" || arg == "-h") {
+            print_usage(argv[0]);
+            return ParseResult::Help;
+        }
+        if (arg == "--type" && i + 1 < argc) {
+            const std::string value = argv[++i];
+            if (value == "a100") {
+                config.type = imu_base::ReaderType::A100_SERIAL;
+            } else if (value == "xsens") {
+                config.type = imu_base::ReaderType::XSENS_MTI_CAN;
+            } else {
+                std::cerr << "[IMU_TEST] Unknown IMU type: " << value << "\n";
+                return ParseResult::Error;
+            }
+        } else if (arg == "--a100") {
+            config.type = imu_base::ReaderType::A100_SERIAL;
+        } else if (arg == "--xsens") {
+            config.type = imu_base::ReaderType::XSENS_MTI_CAN;
+        } else if (arg == "--device" && i + 1 < argc) {
+            config.device = argv[++i];
+            device_overridden = true;
+        } else if (arg == "--baudrate" && i + 1 < argc) {
+            config.baudrate = std::stoi(argv[++i]);
+        } else if (arg == "--report-ms" && i + 1 < argc) {
+            report_interval = std::chrono::milliseconds(std::stoi(argv[++i]));
+            if (report_interval.count() <= 0) {
+                std::cerr << "[IMU_TEST] --report-ms must be positive\n";
+                return ParseResult::Error;
+            }
+        } else {
+            std::cerr << "[IMU_TEST] Unknown or incomplete argument: "
+                      << arg << "\n";
+            print_usage(argv[0]);
+            return ParseResult::Error;
+        }
+    }
+
+    if (!device_overridden &&
+        config.type == imu_base::ReaderType::XSENS_MTI_CAN) {
+        config.device = "can0";
+    }
+    return ParseResult::Ok;
+}
+
+double interval_ms(std::int64_t interval_ns)
+{
+    return static_cast<double>(interval_ns) / 1'000'000.0;
+}
+
+void print_interval_stats(const char* label, const IntervalStats& stats)
+{
+    if (stats.count == 0) {
+        std::cout << ' ' << label << "_dt_ms=n/a";
+        return;
+    }
+
+    const double avg_ms =
+        static_cast<double>(stats.sum_ns) /
+        static_cast<double>(stats.count) / 1'000'000.0;
+    std::cout << ' ' << label << "_dt_ms(avg/min/max)="
+              << avg_ms << '/'
+              << interval_ms(stats.min_ns) << '/'
+              << interval_ms(stats.max_ns);
+}
+
+void print_ahrs_report(const AhrsChannelStats& stats, double elapsed_s)
+{
+    const double hz =
+        elapsed_s > 0.0
+            ? static_cast<double>(stats.window_frames) / elapsed_s
+            : 0.0;
+    std::cout << " ahrs_hz=" << hz
+              << " ahrs_frames=" << stats.window_frames
+              << " ahrs_total=" << stats.total_frames;
+    print_interval_stats("ahrs_device", stats.device_interval);
+    print_interval_stats("ahrs_host", stats.host_interval);
+    if (stats.has_latest) {
+        std::cout << std::setprecision(6)
+                  << " euler_rad=["
+                  << stats.latest.euler[0] << ','
+                  << stats.latest.euler[1] << ','
+                  << stats.latest.euler[2] << ']';
+    } else {
+        std::cout << " euler_rad=n/a";
+    }
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv)
+{
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
     inference::ImuConfig cfg;
+    std::chrono::milliseconds report_interval(1000);
+    try {
+        const ParseResult parse_result =
+            parse_args(argc, argv, cfg, report_interval);
+        if (parse_result == ParseResult::Help) {
+            return 0;
+        }
+        if (parse_result == ParseResult::Error) {
+            return 1;
+        }
+    } catch (const std::exception& error) {
+        std::cerr << "[IMU_TEST] Argument parse failed: "
+                  << error.what() << "\n";
+        return 1;
+    }
+
     inference::RobotImuSession imu(cfg);
 
-    std::cout << "[IMU_TEST] Starting IMU only..." << std::endl;
+    std::cout << "[IMU_TEST] Starting IMU channel test: type="
+              << reader_type_name(cfg.type)
+              << " device=" << cfg.device
+              << " baudrate=" << cfg.baudrate << "\n";
     if (!imu.initialize_and_start()) {
         std::cerr << "[IMU_TEST] Failed to start IMU." << std::endl;
         return -1;
     }
 
-    std::cout << "[IMU_TEST] Running. Press Ctrl+C to stop." << std::endl;
-    while (g_running.load()) {
-        const auto state = imu.get_state();
-        std::cout << std::fixed << std::setprecision(6)
-                  << "[IMU_TEST] euler[roll,pitch,heading]=["
-                  << state.euler[0] << ", "
-                  << state.euler[1] << ", "
-                  << state.euler[2] << "] rad, body_ang_vel[roll,pitch,heading]=["
-                  << state.body_ang_vel[0] << ", "
-                  << state.body_ang_vel[1] << ", "
-                  << state.body_ang_vel[2] << "] rad/s, projected_gravity=["
-                  << state.projected_gravity[0] << ", "
-                  << state.projected_gravity[1] << ", "
-                  << state.projected_gravity[2] << "] m/s^2\n";
+    std::cout << "[IMU_TEST] Polling AHRS channel every "
+              << kPollInterval.count()
+              << " ms and reporting every "
+              << report_interval.count()
+              << " ms. Press Ctrl+C to stop." << std::endl;
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    using Clock = std::chrono::steady_clock;
+    auto last_report = Clock::now();
+    AhrsChannelStats stats;
+
+    while (g_running.load()) {
+        inference::AhrsStateSnapshot snapshot;
+        if (imu.get_ahrs_snapshot(snapshot)) {
+            stats.observe_if_new(snapshot);
+        }
+
+        std::this_thread::sleep_for(kPollInterval);
+
+        const auto now = Clock::now();
+        if (now - last_report < report_interval) {
+            continue;
+        }
+
+        const double elapsed_s =
+            std::chrono::duration<double>(now - last_report).count();
+        last_report = now;
+
+        std::cout << std::fixed << std::setprecision(3)
+                  << "[IMU_TEST] window_s=" << elapsed_s;
+        print_ahrs_report(stats, elapsed_s);
+        std::cout << '\n';
+
+        stats.reset_window();
     }
 
     imu.deinitialize();

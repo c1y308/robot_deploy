@@ -29,7 +29,7 @@ public:
 
 
     bool build(const MotorStateSnapshot& motor_state,
-               const ImuStateSnapshot& imu_state,
+               const AhrsStateSnapshot& ahrs_state,
                const std::array<double, 3>& target_velocity,
                const PolicyAction& last_action,
                PolicyObservationTerms& terms,

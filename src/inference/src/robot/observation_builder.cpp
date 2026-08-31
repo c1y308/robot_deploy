@@ -62,7 +62,7 @@ void ObservationBuilder::AnkleFkState::reset(double roll, double pitch)
 
 bool ObservationBuilder::build(
     const MotorStateSnapshot&    motor_state,       // 电机快照
-    const ImuStateSnapshot&      imu_state,         // IMU快照
+    const AhrsStateSnapshot&     ahrs_state,        // AHRS快照
     const std::array<double, 3>& target_velocity,   // 目标速度
     const PolicyAction&          last_action,       // 上一次的策略动作(array<float, kDof>)
     PolicyObservationTerms&      terms,             // 当前观测帧的引用(array构成的结构体)
@@ -72,11 +72,11 @@ bool ObservationBuilder::build(
         error = "motor state position/velocity size mismatch";
         return false;
     }
-    if (!imu_state.ahrs_ready) {
+    if (!ahrs_state.ahrs_ready) {
         error = "AHRS data is not ready";
         return false;
     }
-    if (!imu_state.projected_gravity_valid) {
+    if (!ahrs_state.projected_gravity_valid) {
         error = "projected gravity is invalid";
         return false;
     }
@@ -85,7 +85,7 @@ bool ObservationBuilder::build(
         return false;
     }
     if (!finite_vector(motor_state.position_rad) || !finite_vector(motor_state.velocity_rad_s) ||
-        !finite_array(imu_state.body_ang_vel)   || !finite_array(imu_state.projected_gravity)) {
+        !finite_array(ahrs_state.body_ang_vel)   || !finite_array(ahrs_state.projected_gravity)) {
         error = "observation source value is not finite";
         return false;
     }
@@ -99,10 +99,11 @@ bool ObservationBuilder::build(
     };
     for (int i = 0; i < 3; ++i) {
         current_terms.base_ang_vel[i] = static_cast<float>(
-            imu_state.body_ang_vel[i] * policy_config_.body_ang_vel_scale[i]);
+            ahrs_state.body_ang_vel[i] * policy_config_.body_ang_vel_scale[i]);
         current_terms.projected_gravity[i] =
-            static_cast<float>(imu_state.projected_gravity[i]);
+            static_cast<float>(ahrs_state.projected_gravity[i]);
     }
+    
     current_terms.last_action = last_action;
 
 

@@ -8,6 +8,10 @@
 #include <utility>
 
 namespace inference {
+
+static_assert(policy_observation::kObservationSize == 705,
+              "P1 real2sim policy input CSV requires 705 observation elements");
+
 namespace {
 
 std::int64_t policy_runtime_now_ns() noexcept
@@ -133,11 +137,10 @@ bool PolicyRuntime::infer(const PolicyObservationTerms& terms,
         return false;
     }
 
-    ObservationArray observation = {};
-    build_observation(terms, observation);
+    build_observation(terms, result.policy_observation);
 
     result.inference_start_ns = policy_runtime_now_ns();
-    if (!runner_->infer(observation, result.raw_action)) {
+    if (!runner_->infer(result.policy_observation, result.raw_action)) {
         result.inference_end_ns = policy_runtime_now_ns();
         set_error(runner_->last_error());
         return false;

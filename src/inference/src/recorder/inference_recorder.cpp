@@ -8,6 +8,10 @@
 #include <utility>
 
 namespace inference {
+
+static_assert(policy_observation::kObservationSize == 705,
+              "P1 real2sim policy input CSV requires policy_obs_0..policy_obs_704");
+
 namespace {
 
 /* 返回本地时间戳，用于文件名，例如：0813_1425 */
@@ -57,9 +61,10 @@ void append_motor_columns(std::ostream& stream,
 
 void write_header(std::ostream& stream)
 {
-    stream << "frame_index, elapsed_us, state_timestamp_ns, inference_start_ns, "
-           << "inference_end_ns, inference_duration_us, command_timestamp_ns, "
+    stream << "frame_index,elapsed_us,motor_sample_timestamp_ns,inference_start_ns,"
+           << "inference_end_ns,inference_duration_us,command_timestamp_ns,"
            << "command_applied";
+    append_indexed_columns(stream, "policy_obs", policy_observation::kObservationSize);
     append_indexed_columns(stream, "raw_action", kInferenceDof);
     append_indexed_columns(stream, "target_q_model_rad", kInferenceDof);
     append_motor_columns(stream, "target_pos_rad", kInferenceMotorCount);
@@ -121,13 +126,14 @@ void write_record(std::ostream&          stream,
     stream << std::setprecision(17)
            << record.frame_index << ','
            << elapsed_us_for_record(record, session_start_timestamp_ns) << ','
-           << record.state_timestamp_ns << ','
+           << record.motor_sample_timestamp_ns << ','
            << record.inference_start_ns << ','
            << record.inference_end_ns << ','
            << inference_duration_us_for_record(record) << ','
            << record.command_timestamp_ns << ','
            << (record.command_applied ? 1 : 0);
 
+    append_values(stream, record.policy_observation);
     append_values(stream, record.raw_action);
     append_values(stream, record.target_q_model_rad);
     append_values(stream, record.target_pos_rad);

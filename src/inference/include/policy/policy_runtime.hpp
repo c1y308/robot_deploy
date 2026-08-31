@@ -24,6 +24,7 @@ struct PolicyObservationTerms {
 };
 
 struct PolicyRuntimeStepResult {
+    PolicyObservation policy_observation{};
     PolicyAction raw_action{};
     std::int64_t inference_start_ns{0};
     std::int64_t inference_end_ns{0};
@@ -62,7 +63,7 @@ private:
 #ifdef ROBOT_POLICY_RUNTIME_TESTING
 public:
 #endif
-    using ObservationArray = std::array<float, kObservationSize>;
+    using ObservationArray = PolicyObservation;
 
     void build_observation(const PolicyObservationTerms& terms,
                            ObservationArray& observation);

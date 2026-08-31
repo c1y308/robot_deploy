@@ -2,12 +2,13 @@
 
 #include "robot/imu_timestamp_mapper.hpp"
 #include "robot/robot_config.hpp"
+#include "spsc_latest_value/spsc_latest_value.hpp"
 
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <memory>
-#include <mutex>
+#include <type_traits>
 
 namespace imu_base {
 class IMUReaderBase;
@@ -15,7 +16,7 @@ class IMUReaderBase;
 
 namespace inference {
 
-struct ImuStateSnapshot {
+struct AhrsStateSnapshot {
     std::int64_t timestamp_ns{0};
     std::uint64_t device_timestamp_us{0};
     bool device_timestamp_valid{false};
@@ -32,6 +33,9 @@ struct ImuStateSnapshot {
     bool projected_gravity_valid{false};
 };
 
+static_assert(std::is_trivially_copyable<AhrsStateSnapshot>::value,
+              "AhrsStateSnapshot must be trivially copyable for SpscLatestValue");
+
 class RobotImuSession {
 public:
     explicit RobotImuSession(ImuConfig config = {});
@@ -46,7 +50,7 @@ public:
     bool is_initialized() const noexcept { return initialized_.load(); }
     bool ahrs_ready() const noexcept { return ahrs_ready_.load(); }
 
-    ImuStateSnapshot get_state() const;
+    bool get_ahrs_snapshot(AhrsStateSnapshot& out);
 
 private:
     ImuConfig config_;
@@ -56,8 +60,9 @@ private:
     std::atomic<bool> initialized_{false};
     std::atomic<bool> ahrs_ready_{false};
 
-    mutable std::mutex mutex_;
-    ImuStateSnapshot state_;
+    robot_base::SpscLatestValue<AhrsStateSnapshot> ahrs_state_channel_;
+    AhrsStateSnapshot latest_ahrs_state_cache_;
+    bool has_ahrs_state_cache_{false};
 };
 
 }  // namespace inference

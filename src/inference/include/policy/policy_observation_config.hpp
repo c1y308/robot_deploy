@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 
 #ifndef ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS
@@ -38,3 +39,9 @@ static_assert(kObservationSize == (kEnableGaitPhase ? 705 : 675),
               "policy observation size must match the selected model version");
 
 }  // namespace inference::policy_observation
+
+namespace inference {
+
+using PolicyObservation = std::array<float, policy_observation::kObservationSize>;
+
+}  // namespace inference

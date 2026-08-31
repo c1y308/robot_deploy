@@ -19,7 +19,7 @@ namespace {
 constexpr const char* kPolicyModelFile = "policy.pt";
 
 constexpr const char* kEthercatIfname = "enp8s0";
-constexpr const char* kImuDevice = "/dev/ttyUSB0";
+constexpr const char* kImuDevice = "can0";
 constexpr int kImuBaudrate = 921600;
 
 constexpr double kPolicyHz = 50.0;
@@ -51,6 +51,7 @@ inference::RobotInterfaceConfig make_robot_config()
     inference::RobotInterfaceConfig cfg;
     cfg.motor.num_motors = static_cast<int>(motor_base::kMaxMotors);
     cfg.motor.ethercat_ifname = kEthercatIfname;
+    cfg.imu.type        = imu_base::ReaderType::XSENS_MTI_CAN;
     cfg.imu.device      = kImuDevice;
     cfg.imu.baudrate    = kImuBaudrate;
     cfg.imu.print_imu   = false;
@@ -60,8 +61,8 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.motor.print_motors_info = true;
 
     cfg.recorder.enabled = true;
-    cfg.ankle_torque.virtual_kp = {150.0, 40.0};
-    cfg.ankle_torque.virtual_kd = {4.0, 2.0};
+    cfg.ankle_torque.virtual_kp = {187.0, 187.0};
+    cfg.ankle_torque.virtual_kd = {9.07,  9.07};
     cfg.ankle_torque.target_torque_limit_permille = 2000.0;
 
     // 对齐训练 joint_ids_map:
@@ -117,8 +118,13 @@ inference::RobotInterfaceConfig make_robot_config()
     cfg.ankle_motor_limits.max_rad = { 1.1,  1.1,  1.1,  1.1};
 
     //  按照 物理电机 顺序配置电机方向，1 表示方向一致，-1 表示方向相反；为空时全部按 1
+    // cfg.joint_mapping.motor_to_model_direction = {
+    //     -1, -1, 1,  1, -1, -1,
+    //     -1,  1, 1, -1, -1, -1
+    // };
+
     cfg.joint_mapping.motor_to_model_direction = {
-         1, -1, 1,  1, -1, -1,
+        -1, -1, 1,  1, -1, -1,
         -1,  1, 1, -1, -1, -1
     };
 
@@ -204,13 +210,6 @@ int main()
         std::cerr << "[ERROR] robot.initialize() failed.\n";
         safe_shutdown(robot, false);
         return 1;
-    }
-
-    std::cout << "[INFO] Waiting 3 seconds before entering policy loop...\n";
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
-    if (g_stop_requested.load()) {
-        safe_shutdown(robot, false);
-        return 0;
     }
 
     std::cout << "[INFO] Starting Xbox polling thread...\n";

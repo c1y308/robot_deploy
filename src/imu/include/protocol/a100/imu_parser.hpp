@@ -39,6 +39,8 @@ private:
     uint8_t  crc8_table(const std::vector<uint8_t>& data);
     uint16_t crc16_table(const std::vector<uint8_t>& data);
 
+    void reset_frame_state();
+
     bool parse_imu_frame(const uint8_t* data,
                          std::int64_t host_receive_timestamp_ns);
     bool parse_ahrs_frame(const uint8_t* data,

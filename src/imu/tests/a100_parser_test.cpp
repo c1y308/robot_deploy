@@ -143,6 +143,19 @@ int main()
         expect(latest_ahrs.timestamp_valid,
                "A100 AHRS readable data must retain timestamp validity");
 
+        std::vector<std::uint8_t> marker_like_payload_frame =
+            make_ahrs_frame(kAhrsTimestampUs + 1ULL);
+        marker_like_payload_frame[20] = imu::FRAME_END;
+        marker_like_payload_frame[21] = imu::FRAME_HEAD;
+        finalize_frame(marker_like_payload_frame, imu::AHRS_LEN);
+        feed_frame(parser,
+                   marker_like_payload_frame,
+                   kAhrsReceiveTimestampNs + 1000);
+        expect(ahrs_callbacks == 2,
+               "A100 parser must not resync on FD FC inside a valid payload");
+        expect(callback_ahrs.timestamp == kAhrsTimestampUs + 1ULL,
+               "A100 AHRS frame with marker-like payload bytes must parse");
+
         constexpr std::uint32_t kImuTimestampUs = 424242U;
         constexpr std::int64_t kImuReceiveTimestampNs = 9876549999LL;
         feed_frame(parser,

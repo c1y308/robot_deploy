@@ -61,6 +61,7 @@ target_include_directories(inference_recorder PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_compile_definitions(inference_recorder PUBLIC
+    ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=$<BOOL:${ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS}>
     ROBOT_INFERENCE_LOG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/log"
 )
 target_link_libraries(inference_recorder PUBLIC robot_base pthread)
@@ -145,6 +146,11 @@ target_include_directories(imu_timestamp_mapper_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../imu/include
 )
 target_link_libraries(imu_timestamp_mapper_test PRIVATE robot_base)
+
+add_executable(inference_recorder_csv_test
+    tests/inference_recorder_csv_test.cpp
+)
+target_link_libraries(inference_recorder_csv_test PRIVATE inference_recorder)
 
 add_executable(ankle_inverse_kinematics_test
     tests/ankle_inverse_kinematics_test.cpp

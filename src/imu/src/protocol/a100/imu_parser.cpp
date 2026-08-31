@@ -27,6 +27,7 @@ IMUParser::IMUParser()
     : rx_index_(0),
       rx_buffer_(MAX_BUFFER_SIZE, 0),
       frame_length_(0),
+      payload_length_(0),
       last_byte_(0),
       parsing_state_(false),
       frame_buffer_(MAX_BUFFER_SIZE, 0),
@@ -41,10 +42,8 @@ void IMUParser::reset_info() {
 
 
 void IMUParser::reset() {
-    rx_index_ = 0;
-    frame_length_ = 0;
+    reset_frame_state();
     last_byte_ = 0;
-    parsing_state_ = false;
 
     imu_ready_  = false;
     ahrs_ready_ = false;
@@ -55,6 +54,13 @@ void IMUParser::reset() {
 
     std::fill(rx_buffer_.begin(), rx_buffer_.end(), 0);
     std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0);
+}
+
+void IMUParser::reset_frame_state() {
+    rx_index_ = 0;
+    frame_length_ = 0;
+    payload_length_ = 0;
+    parsing_state_ = false;
 }
 
 
@@ -73,7 +79,7 @@ void IMUParser::feed(const uint8_t* data,
         uint8_t cur_byte = data[i];
         
         /* 上一字节是帧尾当前字节是帧头，标记并开始接受一帧数据 */
-        if (last_byte_ == FRAME_END && cur_byte == FRAME_HEAD) {
+        if (!parsing_state_ && last_byte_ == FRAME_END && cur_byte == FRAME_HEAD) {
             rx_index_ = 0;
             rx_buffer_[rx_index_++] = cur_byte;  // 接受数据到缓冲区
             parsing_state_ = true;
@@ -95,12 +101,10 @@ void IMUParser::feed(const uint8_t* data,
                         payload_length_ = AHRS_LEN;
                         break;
                     case TYPE_UNKNOWN:  // 未知帧
-                        parsing_state_ = false;
-                        rx_index_ = 0;
+                        reset_frame_state();
                         break;
                     default:  // 错误的类型
-                        parsing_state_ = false;
-                        rx_index_ = 0;
+                        reset_frame_state();
                         stats_.error_frames++;
                         std::cerr << "[PROTOCOL WARNING] Unknown frame type: 0x" 
                                   << std::hex << (int)frame_type << std::dec << std::endl;
@@ -115,8 +119,7 @@ void IMUParser::feed(const uint8_t* data,
                 uint8_t received_crc8 = rx_buffer_[4];
 
                 if (calculated_crc8 != received_crc8) {
-                    parsing_state_ = false;
-                    rx_index_ = 0;
+                    reset_frame_state();
                     stats_.error_frames++;
                     std::cerr << "[PROTOCOL ERROR] CRC8 mismatch: calculated=0x" 
                               << std::hex << (int)calculated_crc8 
@@ -132,8 +135,7 @@ void IMUParser::feed(const uint8_t* data,
                 uint16_t received_crc16 = rx_buffer_[5] << 8 | rx_buffer_[6];
 
                 if (calculated_crc16 != received_crc16) {
-                    parsing_state_ = false;
-                    rx_index_ = 0;
+                    reset_frame_state();
                     stats_.error_frames++;
                     std::cerr << "[PROTOCOL ERROR] CRC16 mismatch: calculated=0x" 
                               << std::hex << (int)calculated_crc16 
@@ -165,9 +167,7 @@ void IMUParser::feed(const uint8_t* data,
                     std::cerr << "[PROTOCOL ERROR] Frame end marker mismatch" << std::endl;
                 }
                 
-                parsing_state_ = false;
-                rx_index_ = 0;
-                frame_length_ = 0;
+                reset_frame_state();
             }
         }
         last_byte_ = cur_byte;

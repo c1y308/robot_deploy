@@ -54,7 +54,7 @@ void fill_record_motor_state(const MotorStateSnapshot& motor_state,
                              std::size_t motor_count,
                              InferenceRecord& record)
 {
-    record.state_timestamp_ns = motor_state.timestamp_ns;
+    record.motor_sample_timestamp_ns = motor_state.timestamp_ns;
     for (std::size_t i = 0; i < motor_count; ++i) {
         record.rx_pos_rad[i] = motor_state.position_rad[i];
         record.rx_vel_rad_s[i] = motor_state.velocity_rad_s[i];
@@ -671,29 +671,31 @@ bool RobotInterface::policy_step() {
 
     const MotorStateSnapshot motor_state = motor_session_.get_motor_snapshot();
     const std::size_t motor_count = static_cast<std::size_t>(config_.motor.num_motors);
-    const ImuStateSnapshot imu_state = imu_session_.get_state();
+    AhrsStateSnapshot ahrs_state;
+    if (!imu_session_.get_ahrs_snapshot(ahrs_state)) {
+        return handle_policy_step_failure("AHRS data is not ready");
+    }
     const std::int64_t timing_now_ns = robot_base::monotonic_now_ns();
     const std::int64_t imu_sample_timestamp_ns =
-        imu_state.host_sample_timestamp_ns != 0
-            ? imu_state.host_sample_timestamp_ns
-            : imu_state.timestamp_ns;
+        ahrs_state.host_sample_timestamp_ns != 0
+            ? ahrs_state.host_sample_timestamp_ns
+            : ahrs_state.timestamp_ns;
 
     if (motor_state.timestamp_ns == 0) {
         return handle_policy_step_failure(
             "motor timestamp missing: host_timestamp_ns invariant violated");
     }
-    if (!imu_state.ahrs_ready) {
+    if (!ahrs_state.ahrs_ready) {
         return handle_policy_step_failure("AHRS data is not ready");
     }
-    if (imu_sample_timestamp_ns == 0) {
-        return handle_policy_step_failure(
-            "IMU timestamp missing: host_sample_timestamp_ns is zero");
-    }
-
-    const std::int64_t imu_age_ns = timing_now_ns - imu_sample_timestamp_ns;
+    const bool has_imu_sample_timestamp = imu_sample_timestamp_ns != 0;
+    const std::int64_t imu_age_ns =
+        has_imu_sample_timestamp ? timing_now_ns - imu_sample_timestamp_ns : 0;
     const std::int64_t motor_age_ns = timing_now_ns - motor_state.timestamp_ns;
     const std::int64_t imu_motor_skew_ns =
-        imu_sample_timestamp_ns - motor_state.timestamp_ns;
+        has_imu_sample_timestamp ? imu_sample_timestamp_ns - motor_state.timestamp_ns
+                                 : 0;
+    const bool compare_imu_timing = imu_age_ns != 0;
     const std::int64_t max_imu_age_ns =
         seconds_to_ns(config_.policy.max_imu_sample_age_s);
     const std::int64_t max_motor_age_ns =
@@ -701,14 +703,14 @@ bool RobotInterface::policy_step() {
     const std::int64_t max_skew_ns =
         seconds_to_ns(config_.policy.max_sensor_state_skew_s);
 
-    if (imu_age_ns < 0 || motor_age_ns < 0) {
+    if ((compare_imu_timing && imu_age_ns < 0) || motor_age_ns < 0) {
         return handle_policy_step_failure(
             "negative sensor age: imu_age_us=" + std::to_string(ns_to_us(imu_age_ns)) +
             ", motor_age_us=" + std::to_string(ns_to_us(motor_age_ns)));
     }
-    if (imu_age_ns > max_imu_age_ns ||
+    if ((compare_imu_timing && imu_age_ns > max_imu_age_ns) ||
         motor_age_ns > max_motor_age_ns ||
-        abs_ns(imu_motor_skew_ns) > max_skew_ns) {
+        (compare_imu_timing && abs_ns(imu_motor_skew_ns) > max_skew_ns)) {
         return handle_policy_step_failure(
             "sensor timing guard failed: imu_age_us=" +
             std::to_string(ns_to_us(imu_age_ns)) +
@@ -724,15 +726,15 @@ bool RobotInterface::policy_step() {
     record.frame_index = policy_runtime_.frame_index();
     fill_record_motor_state(motor_state, motor_count, record);
     record.imu_sample_timestamp_ns = imu_sample_timestamp_ns;
-    record.imu_rx_timestamp_ns = imu_state.host_receive_timestamp_ns;
-    record.imu_publish_timestamp_ns = imu_state.host_publish_timestamp_ns;
-    record.imu_device_timestamp_us = imu_state.device_timestamp_us;
-    record.imu_device_timestamp_valid = imu_state.device_timestamp_valid;
+    record.imu_rx_timestamp_ns = ahrs_state.host_receive_timestamp_ns;
+    record.imu_publish_timestamp_ns = ahrs_state.host_publish_timestamp_ns;
+    record.imu_device_timestamp_us = ahrs_state.device_timestamp_us;
+    record.imu_device_timestamp_valid = ahrs_state.device_timestamp_valid;
     record.imu_rx_to_publish_us =
-        (imu_state.host_receive_timestamp_ns != 0 &&
-         imu_state.host_publish_timestamp_ns != 0)
-            ? ns_to_us(imu_state.host_publish_timestamp_ns -
-                       imu_state.host_receive_timestamp_ns)
+        (ahrs_state.host_receive_timestamp_ns != 0 &&
+         ahrs_state.host_publish_timestamp_ns != 0)
+            ? ns_to_us(ahrs_state.host_publish_timestamp_ns -
+                       ahrs_state.host_receive_timestamp_ns)
             : 0;
     record.imu_motor_skew_us = ns_to_us(imu_motor_skew_ns);
     record.imu_age_us = ns_to_us(imu_age_ns);
@@ -742,7 +744,7 @@ bool RobotInterface::policy_step() {
     PolicyObservationTerms observation_terms;
     std::string observation_error;
     if (!observation_builder_->build(motor_state,
-                                     imu_state,
+                                     ahrs_state,
                                      target_velocity,
                                      last_action,
                                      observation_terms,
@@ -759,6 +761,7 @@ bool RobotInterface::policy_step() {
     // 记录日志的策略推理时间和原始动作输出
     record.inference_start_ns = policy_result.inference_start_ns;
     record.inference_end_ns   = policy_result.inference_end_ns;
+    record.policy_observation = policy_result.policy_observation;
     record.raw_action         = policy_result.raw_action;
 
     std::vector<double> target_q_model_rad(PolicyRuntime::kDof, 0.0);
