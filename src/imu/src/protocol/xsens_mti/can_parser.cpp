@@ -1,5 +1,4 @@
 #include "protocol/xsens_mti/can_parser.hpp"
-#include "tool/tool.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -12,7 +11,7 @@ namespace {
 
 constexpr double kQuaternionScale = 1.0 / 32767.0;
 constexpr double kRateOfTurnScale = 1.0 / 512.0;
-constexpr std::uint64_t kSampleTimeTickUs = 100;
+constexpr std::uint64_t kSampleTimeTickNs = 100000;
 
 std::int16_t read_i16_be(const std::uint8_t* data, std::size_t offset)
 {
@@ -51,18 +50,16 @@ void XsensMtiCanParser::reset()
 {
     ahrs_data_ = imu_base::AHRSData();
     ahrs_ready_ = false;
-    sample_time_fresh_ = false;
     quaternion_fresh_ = false;
     rate_of_turn_fresh_ = false;
-    sample_timestamp_us_ = 0;
-    sample_receive_timestamp_ns_ = 0;
+    sample_timestamp_ns_ = 0;
     stats_ = imu_base::ParserInfo();
 }
 
 void XsensMtiCanParser::feed(std::uint32_t can_id,
                              const std::uint8_t* data,
                              std::uint8_t len,
-                             std::int64_t host_receive_timestamp_ns)
+                             std::int64_t receive_timestamp_ns)
 {
     if (data == nullptr) {
         stats_.error_frames++;
@@ -77,7 +74,7 @@ void XsensMtiCanParser::feed(std::uint32_t can_id,
                 stats_.error_frames++;
                 return;
             }
-            parse_sample_time(data, host_receive_timestamp_ns);
+            parse_sample_time(data);
             stats_.total_frames++;
             return;
         case XCDI_QUATERNION_ID:
@@ -85,7 +82,7 @@ void XsensMtiCanParser::feed(std::uint32_t can_id,
                 stats_.error_frames++;
                 return;
             }
-            parse_quaternion(data, host_receive_timestamp_ns);
+            parse_quaternion(data, receive_timestamp_ns);
             stats_.total_frames++;
             publish_ahrs_if_ready();
             return;
@@ -94,7 +91,7 @@ void XsensMtiCanParser::feed(std::uint32_t can_id,
                 stats_.error_frames++;
                 return;
             }
-            parse_rate_of_turn(data, host_receive_timestamp_ns);
+            parse_rate_of_turn(data, receive_timestamp_ns);
             stats_.total_frames++;
             publish_ahrs_if_ready();
             return;
@@ -103,19 +100,15 @@ void XsensMtiCanParser::feed(std::uint32_t can_id,
     }
 }
 
-void XsensMtiCanParser::parse_sample_time(
-    const std::uint8_t* data,
-    std::int64_t host_receive_timestamp_ns)
+void XsensMtiCanParser::parse_sample_time(const std::uint8_t* data)
 {
-    sample_timestamp_us_ =
-        static_cast<std::uint64_t>(read_u32_be(data)) * kSampleTimeTickUs;
-    sample_receive_timestamp_ns_ = host_receive_timestamp_ns;
-    sample_time_fresh_ = true;
+    sample_timestamp_ns_ =
+        static_cast<std::uint64_t>(read_u32_be(data)) * kSampleTimeTickNs;
 }
 
 void XsensMtiCanParser::parse_quaternion(
     const std::uint8_t* data,
-    std::int64_t)
+    std::int64_t receive_timestamp_ns)
 {
     ahrs_data_.qw =
         static_cast<float>(static_cast<double>(read_i16_be(data, 0)) * kQuaternionScale);
@@ -125,13 +118,14 @@ void XsensMtiCanParser::parse_quaternion(
         static_cast<float>(static_cast<double>(read_i16_be(data, 4)) * kQuaternionScale);
     ahrs_data_.qz =
         static_cast<float>(static_cast<double>(read_i16_be(data, 6)) * kQuaternionScale);
+    ahrs_data_.receive_timestamp_ns = receive_timestamp_ns;
     quaternion_fresh_ = true;
     update_orientation_from_quaternion();
 }
 
 void XsensMtiCanParser::parse_rate_of_turn(
     const std::uint8_t* data,
-    std::int64_t)
+    std::int64_t receive_timestamp_ns)
 {
     ahrs_data_.roll_speed =
         static_cast<float>(static_cast<double>(read_i16_be(data, 0)) * kRateOfTurnScale);
@@ -139,6 +133,7 @@ void XsensMtiCanParser::parse_rate_of_turn(
         static_cast<float>(static_cast<double>(read_i16_be(data, 2)) * kRateOfTurnScale);
     ahrs_data_.heading_speed =
         static_cast<float>(static_cast<double>(read_i16_be(data, 4)) * kRateOfTurnScale);
+    ahrs_data_.receive_timestamp_ns = receive_timestamp_ns;
     rate_of_turn_fresh_ = true;
 }
 
@@ -178,16 +173,7 @@ void XsensMtiCanParser::publish_ahrs_if_ready()
         return;
     }
 
-    if (sample_time_fresh_) {
-        ahrs_data_.timestamp = sample_timestamp_us_;
-        ahrs_data_.timestamp_valid = true;
-        ahrs_data_.host_receive_timestamp_ns = sample_receive_timestamp_ns_;
-    } else {
-        ahrs_data_.timestamp = 0;
-        ahrs_data_.timestamp_valid = false;
-        ahrs_data_.host_receive_timestamp_ns = 0;
-    }
-    ahrs_data_.host_publish_timestamp_ns = robot_base::monotonic_now_ns();
+    ahrs_data_.sample_timestamp_ns = sample_timestamp_ns_;
 
     ahrs_ready_ = true;
     stats_.ahrs_frames++;
@@ -195,7 +181,6 @@ void XsensMtiCanParser::publish_ahrs_if_ready()
         ahrs_callback_(ahrs_data_);
     }
 
-    sample_time_fresh_ = false;
     quaternion_fresh_ = false;
     rate_of_turn_fresh_ = false;
 }
@@ -233,7 +218,8 @@ void XsensMtiCanParser::print_ahrs_data(const imu_base::AHRSData& ahrs)
               << ahrs.projected_gravity_z << "]"
               << " valid=" << (ahrs.projected_gravity_valid ? "true" : "false")
               << std::endl;
-    std::cout << "Sample timestamp: " << ahrs.timestamp << " us" << std::endl;
+    std::cout << "Receive timestamp: " << ahrs.receive_timestamp_ns << " ns" << std::endl;
+    std::cout << "Sample timestamp: " << ahrs.sample_timestamp_ns << " ns" << std::endl;
     std::cout << "=======================================" << std::endl << std::endl;
 }
 

@@ -3,34 +3,14 @@
 #include "imu_base/imu_base.hpp"
 #include "driver/a100/a100_reader.hpp"
 #include "driver/xsens_mti/xsens_reader.hpp"
-#include "tool/tool.hpp"
 
 #include <iostream>
 #include <utility>
 
 namespace inference {
-namespace {
-
-std::int64_t ahrs_publish_timestamp_ns(const imu_base::AHRSData& data) noexcept
-{
-    return data.host_publish_timestamp_ns != 0
-               ? data.host_publish_timestamp_ns
-               : robot_base::monotonic_now_ns();
-}
-
-std::int64_t fallback_imu_sample_timestamp_ns(
-    std::int64_t host_receive_timestamp_ns,
-    std::int64_t host_publish_timestamp_ns) noexcept
-{
-    return host_receive_timestamp_ns != 0 ? host_receive_timestamp_ns
-                                          : host_publish_timestamp_ns;
-}
-
-}  // namespace
 
 RobotImuSession::RobotImuSession(ImuConfig config)
-    : config_(std::move(config)),
-      timestamp_mapper_(config_.type)
+    : config_(std::move(config))
 {
 }
 
@@ -53,7 +33,6 @@ bool RobotImuSession::initialize_and_start()
     imu_cfg.print_ahrs  = config_.print_ahrs;
 
     ahrs_ready_.store(false);
-    timestamp_mapper_.reset(config_.type);
     ahrs_state_channel_.reset_empty();
     latest_ahrs_state_cache_ = AhrsStateSnapshot();
     has_ahrs_state_cache_ = false;
@@ -70,31 +49,9 @@ bool RobotImuSession::initialize_and_start()
         (void)data;
     });
     reader_->set_ahrs_callback([this](const imu_base::AHRSData& data) {
-        const std::int64_t host_publish_timestamp_ns =
-            ahrs_publish_timestamp_ns(data);
-        const std::int64_t host_receive_timestamp_ns =
-            data.host_receive_timestamp_ns;
-
-        std::int64_t host_sample_timestamp_ns = 0;
-        const bool mapped_device_timestamp =
-            data.timestamp_valid &&
-            timestamp_mapper_.map_device_timestamp_us(
-                data.timestamp,
-                host_receive_timestamp_ns,
-                host_sample_timestamp_ns);
-        if (!mapped_device_timestamp) {
-            host_sample_timestamp_ns = fallback_imu_sample_timestamp_ns(
-                host_receive_timestamp_ns,
-                host_publish_timestamp_ns);
-        }
-
         AhrsStateSnapshot state;
-        state.device_timestamp_us = data.timestamp;
-        state.device_timestamp_valid = mapped_device_timestamp;
-        state.host_receive_timestamp_ns = host_receive_timestamp_ns;
-        state.host_publish_timestamp_ns = host_publish_timestamp_ns;
-        state.host_sample_timestamp_ns = host_sample_timestamp_ns;
-        state.timestamp_ns = host_sample_timestamp_ns;
+        state.receive_timestamp_ns = data.receive_timestamp_ns;
+        state.sample_timestamp_ns = data.sample_timestamp_ns;
 
         state.body_ang_vel[0] = static_cast<double>(data.roll_speed);
         state.body_ang_vel[1] = static_cast<double>(data.pitch_speed);
@@ -137,7 +94,6 @@ void RobotImuSession::deinitialize()
     reader_.reset();
     initialized_.store(false);
     ahrs_ready_.store(false);
-    timestamp_mapper_.reset(config_.type);
     ahrs_state_channel_.reset_empty();
     latest_ahrs_state_cache_ = AhrsStateSnapshot();
     has_ahrs_state_cache_ = false;

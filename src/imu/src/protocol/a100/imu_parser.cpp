@@ -1,6 +1,4 @@
 #include "protocol/a100/imu_parser.hpp"
-#include "tool/tool.hpp"
-
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -68,7 +66,7 @@ void IMUParser::reset_frame_state() {
 /* 数据入口 */
 void IMUParser::feed(const uint8_t* data,
                      int len,
-                     std::int64_t host_receive_timestamp_ns) {
+                     std::int64_t receive_timestamp_ns) {
     if (data == nullptr || len <= 0) {
         return;
     }
@@ -153,11 +151,11 @@ void IMUParser::feed(const uint8_t* data,
                     switch (frame_buffer_[1]) {
                         case TYPE_IMU:
                             parse_imu_frame(frame_buffer_.data(),
-                                            host_receive_timestamp_ns);
+                                            receive_timestamp_ns);
                             break;
                         case TYPE_AHRS:
                             parse_ahrs_frame(frame_buffer_.data(),
-                                             host_receive_timestamp_ns);
+                                             receive_timestamp_ns);
                             break;
                     }
                     
@@ -177,7 +175,7 @@ void IMUParser::feed(const uint8_t* data,
 
 /* 解读一帧的数据 */
 bool IMUParser::parse_imu_frame(const uint8_t *data,
-                                std::int64_t host_receive_timestamp_ns) {
+                                std::int64_t receive_timestamp_ns) {
     if (data[1] != TYPE_IMU) {
         return false;
     }
@@ -198,10 +196,10 @@ bool IMUParser::parse_imu_frame(const uint8_t *data,
     imu_data_.pressure = data_to_float(data[47], data[48], data[49], data[50]);
     imu_data_.pressure_temperature = data_to_float(data[51], data[52], data[53], data[54]);
     
-    imu_data_.timestamp = data_to_u32(data[55], data[56], data[57], data[58]);
-    imu_data_.timestamp_valid = true;
-    imu_data_.host_receive_timestamp_ns = host_receive_timestamp_ns;
-    imu_data_.host_publish_timestamp_ns = robot_base::monotonic_now_ns();
+    imu_data_.sample_timestamp_ns =
+        static_cast<std::uint64_t>(
+            data_to_u32(data[55], data[56], data[57], data[58])) * 1000ULL;
+    imu_data_.receive_timestamp_ns = receive_timestamp_ns;
     
     imu_ready_ = true;
     stats_.imu_frames++;
@@ -251,7 +249,7 @@ bool compute_projected_gravity(float roll,
 
 
 bool IMUParser::parse_ahrs_frame(const uint8_t* data,
-                                 std::int64_t host_receive_timestamp_ns) {
+                                 std::int64_t receive_timestamp_ns) {
     if (data[1] != TYPE_AHRS) {
         return false;
     }
@@ -281,12 +279,10 @@ bool IMUParser::parse_ahrs_frame(const uint8_t* data,
                                   ahrs_data_.projected_gravity_y,
                                   ahrs_data_.projected_gravity_z);
 
-    ahrs_data_.timestamp =
+    ahrs_data_.sample_timestamp_ns =
         data_to_u64(data[47], data[48], data[49], data[50],
-                    data[51], data[52], data[53], data[54]);
-    ahrs_data_.timestamp_valid = true;
-    ahrs_data_.host_receive_timestamp_ns = host_receive_timestamp_ns;
-    ahrs_data_.host_publish_timestamp_ns = robot_base::monotonic_now_ns();
+                    data[51], data[52], data[53], data[54]) * 1000ULL;
+    ahrs_data_.receive_timestamp_ns = receive_timestamp_ns;
 
     ahrs_ready_ = true;
     stats_.ahrs_frames++;
@@ -335,7 +331,8 @@ void IMUParser::print_imu_data(const IMUData_t& imu) {
     std::cout << "IMU Temperature (°C): " << imu.imu_temperature << std::endl;
     std::cout << "Pressure (Pa): " << imu.pressure << std::endl;
     std::cout << "Pressure Temperature (°C): " << imu.pressure_temperature << std::endl;
-    std::cout << "Timestamp: " << imu.timestamp << " us" << std::endl;
+    std::cout << "Receive timestamp: " << imu.receive_timestamp_ns << " ns" << std::endl;
+    std::cout << "Sample timestamp: " << imu.sample_timestamp_ns << " ns" << std::endl;
     std::cout << "==============================" << std::endl << std::endl;
 }
 
@@ -362,7 +359,8 @@ void IMUParser::print_ahrs_data(const AHRSData_t& ahrs) {
               << ahrs.projected_gravity_z << "]"
               << " valid=" << (ahrs.projected_gravity_valid ? "true" : "false")
               << std::endl;
-    std::cout << "Timestamp: " << ahrs.timestamp << " us" << std::endl;
+    std::cout << "Receive timestamp: " << ahrs.receive_timestamp_ns << " ns" << std::endl;
+    std::cout << "Sample timestamp: " << ahrs.sample_timestamp_ns << " ns" << std::endl;
     std::cout << "=============================" << std::endl << std::endl;
 }
 

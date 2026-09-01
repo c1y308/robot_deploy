@@ -155,9 +155,9 @@ int SerialPort::wait_readable(int timeout_ms) {
 
 int SerialPort::read_nonblocking(uint8_t* buffer,
                                  int max_len,
-                                 std::int64_t* host_receive_timestamp_ns) {
-    if (host_receive_timestamp_ns != nullptr) {
-        *host_receive_timestamp_ns = 0;
+                                 std::int64_t* receive_timestamp_ns) {
+    if (receive_timestamp_ns != nullptr) {
+        *receive_timestamp_ns = 0;
     }
     if (fd_ < 0 || buffer == nullptr) {
         return -1;
@@ -172,8 +172,8 @@ int SerialPort::read_nonblocking(uint8_t* buffer,
         return -1;
     }
 
-    if (bytes_read > 0 && host_receive_timestamp_ns != nullptr) {
-        *host_receive_timestamp_ns = robot_base::monotonic_now_ns();
+    if (bytes_read > 0 && receive_timestamp_ns != nullptr) {
+        *receive_timestamp_ns = robot_base::monotonic_now_ns();
     }
     return bytes_read;
 }

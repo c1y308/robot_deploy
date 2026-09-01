@@ -59,11 +59,11 @@ void IMUReader::read_loop() {
         }
 
         while (running_.load()) {
-            std::int64_t host_receive_timestamp_ns = 0;
+            std::int64_t receive_timestamp_ns = 0;
             const int bytes_read = serial_port_->read_nonblocking(
                 read_buffer,
                 READ_BUFFER_SIZE,
-                &host_receive_timestamp_ns);
+                &receive_timestamp_ns);
             if (bytes_read < 0) {
                 running_.store(false);
                 break;
@@ -72,7 +72,7 @@ void IMUReader::read_loop() {
                 break;
             }
 
-            parser_->feed(read_buffer, bytes_read, host_receive_timestamp_ns);
+            parser_->feed(read_buffer, bytes_read, receive_timestamp_ns);
 
             IMUData_t  imu_data;
             AHRSData_t ahrs_data;

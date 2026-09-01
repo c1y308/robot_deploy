@@ -290,18 +290,23 @@ private:
             ankle_map.model_roll_dof,
             target_q_model_rad[static_cast<std::size_t>(ankle_map.model_roll_dof)]);
 
-        const ankle_motor_ik::MotorAngles result = solver.solve(roll, pitch);
+        ankle_motor_ik::Solver candidate_solver = solver;
+        const ankle_motor_ik::MotorAngles result =
+            candidate_solver.solve(roll, pitch);
         double upper_motor = 0.0;
         double lower_motor = 0.0;
         if (result.reachable()) {
             upper_motor = result.motor1;
             lower_motor = result.motor2;
+            solver = candidate_solver;
             last_upper_motor = upper_motor;
             last_lower_motor = lower_motor;
             solved = true;
         } else if (solved) {
             upper_motor = last_upper_motor;
             lower_motor = last_lower_motor;
+        } else {
+            return false;
         }
 
         target_motor_rad[static_cast<std::size_t>(ankle_map.upper_motor_index)] =

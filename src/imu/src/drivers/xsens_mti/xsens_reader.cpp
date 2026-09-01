@@ -57,9 +57,9 @@ void XsensMtiCanReader::read_loop()
 
         while (running_.load()) {
             can_frame frame = {};
-            std::int64_t host_receive_timestamp_ns = 0;
+            std::int64_t receive_timestamp_ns = 0;
             const int read_result =
-                can_port_->read_nonblocking(frame, &host_receive_timestamp_ns);
+                can_port_->read_nonblocking(frame, &receive_timestamp_ns);
             if (read_result < 0) {
                 running_.store(false);
                 break;
@@ -72,7 +72,7 @@ void XsensMtiCanReader::read_loop()
                 parser_->feed(frame.can_id & CAN_SFF_MASK,
                               frame.data,
                               frame.len,
-                              host_receive_timestamp_ns);
+                              receive_timestamp_ns);
 
                 imu_base::AHRSData ahrs_data;
                 if (parser_->get_ahrs_data(ahrs_data) && config_.print_ahrs) {

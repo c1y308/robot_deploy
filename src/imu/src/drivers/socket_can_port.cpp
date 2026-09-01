@@ -128,10 +128,10 @@ int SocketCanPort::wait_readable(int timeout_ms)
 
 int SocketCanPort::read_nonblocking(
     can_frame& frame,
-    std::int64_t* host_receive_timestamp_ns)
+    std::int64_t* receive_timestamp_ns)
 {
-    if (host_receive_timestamp_ns != nullptr) {
-        *host_receive_timestamp_ns = 0;
+    if (receive_timestamp_ns != nullptr) {
+        *receive_timestamp_ns = 0;
     }
     if (fd_ < 0) {
         return -1;
@@ -152,8 +152,8 @@ int SocketCanPort::read_nonblocking(
         return -1;
     }
 
-    if (host_receive_timestamp_ns != nullptr) {
-        *host_receive_timestamp_ns = robot_base::monotonic_now_ns();
+    if (receive_timestamp_ns != nullptr) {
+        *receive_timestamp_ns = robot_base::monotonic_now_ns();
     }
     return 1;
 }

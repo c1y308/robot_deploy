@@ -34,11 +34,10 @@ int main()
         });
 
         const std::uint8_t sample_time[] = {0x00, 0x00, 0x00, 0x0A};
-        constexpr std::int64_t kSampleReceiveTimestampNs = 123000;
         parser.feed(imu::XCDI_SAMPLE_TIME_ID,
                     sample_time,
                     sizeof(sample_time),
-                    kSampleReceiveTimestampNs);
+                    123000);
 
         const std::uint8_t identity_quaternion[] = {
             0x7F, 0xFF,
@@ -67,12 +66,10 @@ int main()
 
         expect(callback_count == 1, "quaternion + rate must publish AHRS");
         expect(parser.get_ahrs_data(ahrs), "quaternion + rate must be ready");
-        expect(callback_data.timestamp == 1000, "sample time must be ticks * 100 us");
-        expect(callback_data.timestamp_valid, "fresh sample time must mark timestamp valid");
-        expect(callback_data.host_receive_timestamp_ns == kSampleReceiveTimestampNs,
-               "AHRS receive timestamp must come from SampleTime frame");
-        expect(callback_data.host_publish_timestamp_ns != 0,
-               "AHRS publish timestamp must be populated");
+        expect(callback_data.sample_timestamp_ns == 1000000,
+               "sample time must be ticks * 100000 ns");
+        expect(callback_data.receive_timestamp_ns == 125000,
+               "AHRS receive timestamp must come from publishing frame");
         expect(near(ahrs.roll_speed, 1.0), "0x0200 rate must be 1 rad/s");
         expect(near(ahrs.pitch_speed, 0.0), "pitch rate must be zero");
         expect(near(ahrs.heading_speed, 0.0), "heading rate must be zero");
@@ -100,12 +97,26 @@ int main()
                "fresh quaternion + rate without SampleTime must still publish AHRS");
         expect(parser.get_ahrs_data(ahrs),
                "AHRS without fresh SampleTime must be readable");
-        expect(!ahrs.timestamp_valid,
-               "old SampleTime must not be reused for the next AHRS group");
-        expect(ahrs.host_receive_timestamp_ns == 0,
-               "invalid device timestamp must not expose timestamp-associated RX time");
-        expect(ahrs.host_publish_timestamp_ns != 0,
-               "AHRS without SampleTime must still expose publish timestamp");
+        expect(ahrs.sample_timestamp_ns == 1000000,
+               "latest SampleTime must be reused for the next AHRS group");
+        expect(ahrs.receive_timestamp_ns == 127000,
+               "AHRS receive timestamp must come from the latest publishing frame");
+
+        imu::XsensMtiCanParser missing_sample_parser;
+        missing_sample_parser.feed(imu::XCDI_QUATERNION_ID,
+                                   identity_quaternion,
+                                   sizeof(identity_quaternion),
+                                   224000);
+        missing_sample_parser.feed(imu::XCDI_RATE_OF_TURN_ID,
+                                   rate_of_turn,
+                                   sizeof(rate_of_turn),
+                                   225000);
+        expect(missing_sample_parser.get_ahrs_data(ahrs),
+               "AHRS without any SampleTime must still be readable");
+        expect(ahrs.sample_timestamp_ns == 0,
+               "AHRS without any SampleTime must expose zero sample timestamp");
+        expect(ahrs.receive_timestamp_ns == 225000,
+               "AHRS without SampleTime must still expose receive timestamp");
 
         return 0;
     } catch (const std::exception& ex) {

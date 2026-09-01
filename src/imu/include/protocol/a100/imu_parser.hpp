@@ -19,7 +19,7 @@ public:
     
     void feed(const uint8_t* data,
               int len,
-              std::int64_t host_receive_timestamp_ns = 0);
+              std::int64_t receive_timestamp_ns = 0);
     void reset();
     
     /* 设置回调函数 */
@@ -42,9 +42,9 @@ private:
     void reset_frame_state();
 
     bool parse_imu_frame(const uint8_t* data,
-                         std::int64_t host_receive_timestamp_ns);
+                         std::int64_t receive_timestamp_ns);
     bool parse_ahrs_frame(const uint8_t* data,
-                          std::int64_t host_receive_timestamp_ns);
+                          std::int64_t receive_timestamp_ns);
 
     float  data_to_float(uint8_t d1, uint8_t d2, uint8_t d3, uint8_t d4);
     double data_to_double(uint8_t d1, uint8_t d2, uint8_t d3, uint8_t d4,

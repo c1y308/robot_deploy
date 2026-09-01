@@ -676,10 +676,7 @@ bool RobotInterface::policy_step() {
         return handle_policy_step_failure("AHRS data is not ready");
     }
     const std::int64_t timing_now_ns = robot_base::monotonic_now_ns();
-    const std::int64_t imu_sample_timestamp_ns =
-        ahrs_state.host_sample_timestamp_ns != 0
-            ? ahrs_state.host_sample_timestamp_ns
-            : ahrs_state.timestamp_ns;
+    const std::int64_t imu_receive_timestamp_ns = ahrs_state.receive_timestamp_ns;
 
     if (motor_state.timestamp_ns == 0) {
         return handle_policy_step_failure(
@@ -688,13 +685,13 @@ bool RobotInterface::policy_step() {
     if (!ahrs_state.ahrs_ready) {
         return handle_policy_step_failure("AHRS data is not ready");
     }
-    const bool has_imu_sample_timestamp = imu_sample_timestamp_ns != 0;
+    const bool has_imu_receive_timestamp = imu_receive_timestamp_ns != 0;
     const std::int64_t imu_age_ns =
-        has_imu_sample_timestamp ? timing_now_ns - imu_sample_timestamp_ns : 0;
+        has_imu_receive_timestamp ? timing_now_ns - imu_receive_timestamp_ns : 0;
     const std::int64_t motor_age_ns = timing_now_ns - motor_state.timestamp_ns;
     const std::int64_t imu_motor_skew_ns =
-        has_imu_sample_timestamp ? imu_sample_timestamp_ns - motor_state.timestamp_ns
-                                 : 0;
+        has_imu_receive_timestamp ? imu_receive_timestamp_ns - motor_state.timestamp_ns
+                                  : 0;
     const bool compare_imu_timing = imu_age_ns != 0;
     const std::int64_t max_imu_age_ns =
         seconds_to_ns(config_.policy.max_imu_sample_age_s);
@@ -725,19 +722,8 @@ bool RobotInterface::policy_step() {
     InferenceRecord record;
     record.frame_index = policy_runtime_.frame_index();
     fill_record_motor_state(motor_state, motor_count, record);
-    record.imu_sample_timestamp_ns = imu_sample_timestamp_ns;
-    record.imu_rx_timestamp_ns = ahrs_state.host_receive_timestamp_ns;
-    record.imu_publish_timestamp_ns = ahrs_state.host_publish_timestamp_ns;
-    record.imu_device_timestamp_us = ahrs_state.device_timestamp_us;
-    record.imu_device_timestamp_valid = ahrs_state.device_timestamp_valid;
-    record.imu_rx_to_publish_us =
-        (ahrs_state.host_receive_timestamp_ns != 0 &&
-         ahrs_state.host_publish_timestamp_ns != 0)
-            ? ns_to_us(ahrs_state.host_publish_timestamp_ns -
-                       ahrs_state.host_receive_timestamp_ns)
-            : 0;
-    record.imu_motor_skew_us = ns_to_us(imu_motor_skew_ns);
-    record.imu_age_us = ns_to_us(imu_age_ns);
+    record.imu_receive_timestamp_ns = imu_receive_timestamp_ns;
+    record.imu_sample_timestamp_ns = ahrs_state.sample_timestamp_ns;
     record.motor_age_us = ns_to_us(motor_age_ns);
 
     // 单次策略闭环：同一份状态快照 -> 帧观测 -> 模型推理 -> 目标关节角 -> 电机下发。

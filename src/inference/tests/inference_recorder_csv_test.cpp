@@ -45,6 +45,17 @@ std::size_t require_column(const std::vector<std::string>& columns,
     return 0;
 }
 
+bool has_column(const std::vector<std::string>& columns,
+                const std::string& name)
+{
+    for (const auto& column : columns) {
+        if (column == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::filesystem::path unique_test_dir()
 {
     const auto now = std::chrono::steady_clock::now()
@@ -83,6 +94,8 @@ void test_policy_observation_csv_columns()
     record.inference_end_ns = record.inference_start_ns + 123000;
     record.motor_sample_timestamp_ns = record.inference_start_ns - 10000;
     record.command_timestamp_ns = record.inference_end_ns + 1000;
+    record.imu_receive_timestamp_ns = record.inference_start_ns - 8000;
+    record.imu_sample_timestamp_ns = 123456789000ULL;
     record.command_applied = true;
 
     for (std::size_t i = 0; i < record.policy_observation.size(); ++i) {
@@ -118,6 +131,30 @@ void test_policy_observation_csv_columns()
     require_column(columns, "target_q_model_rad_0");
     require_column(columns, "rx_pos_rad_M0");
     require_column(columns, "rx_vel_rad_s_M0");
+    const std::size_t imu_receive_index =
+        require_column(columns, "imu_receive_timestamp_ns");
+    const std::size_t imu_sample_index =
+        require_column(columns, "imu_sample_timestamp_ns");
+    expect(!has_column(columns, "imu_rx_timestamp_ns"),
+           "old IMU rx timestamp column must be removed");
+    expect(!has_column(columns, "imu_publish_timestamp_ns"),
+           "old IMU publish timestamp column must be removed");
+    expect(!has_column(columns, "imu_device_timestamp_us"),
+           "old IMU device timestamp column must be removed");
+    expect(!has_column(columns, "imu_device_timestamp_valid"),
+           "old IMU timestamp validity column must be removed");
+    expect(!has_column(columns, "imu_rx_to_publish_us"),
+           "old IMU rx-to-publish column must be removed");
+    expect(!has_column(columns, "imu_motor_skew_us"),
+           "old IMU motor skew column must be removed");
+    expect(!has_column(columns, "imu_age_us"),
+           "old IMU age column must be removed");
+    expect(std::stoll(values[imu_receive_index]) ==
+               record.imu_receive_timestamp_ns,
+           "IMU receive timestamp value mismatch");
+    expect(std::stoull(values[imu_sample_index]) ==
+               record.imu_sample_timestamp_ns,
+           "IMU sample timestamp value mismatch");
 
     const std::size_t policy_obs_0 = require_column(columns, "policy_obs_0");
     expect(policy_obs_0 + inference::policy_observation::kObservationSize <= columns.size(),

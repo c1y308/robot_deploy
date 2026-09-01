@@ -53,31 +53,25 @@ struct AhrsChannelStats {
     std::uint64_t total_frames = 0;
     std::uint64_t window_frames = 0;
 
-    bool has_last_snapshot_timestamp = false;
-    bool has_last_host_timestamp = false;
-    bool has_last_device_timestamp = false;
+    bool has_last_receive_timestamp = false;
+    bool has_last_sample_timestamp = false;
 
-    std::int64_t last_snapshot_timestamp_ns = 0;
-    std::int64_t last_host_timestamp_ns = 0;
-    std::uint64_t last_device_timestamp_us = 0;
+    std::int64_t last_receive_timestamp_ns = 0;
+    std::uint64_t last_sample_timestamp_ns = 0;
 
     bool has_latest = false;
     inference::AhrsStateSnapshot latest;
 
-    IntervalStats host_interval;
-    IntervalStats device_interval;
+    IntervalStats receive_interval;
+    IntervalStats sample_interval;
 
     bool observe_if_new(const inference::AhrsStateSnapshot& snapshot)
     {
-        const std::int64_t snapshot_timestamp_ns =
-            snapshot.host_sample_timestamp_ns != 0
-                ? snapshot.host_sample_timestamp_ns
-                : snapshot.timestamp_ns;
-        if (snapshot_timestamp_ns <= 0) {
+        if (snapshot.receive_timestamp_ns <= 0) {
             return false;
         }
-        if (has_last_snapshot_timestamp &&
-            snapshot_timestamp_ns == last_snapshot_timestamp_ns) {
+        if (has_last_receive_timestamp &&
+            snapshot.receive_timestamp_ns == last_receive_timestamp_ns) {
             return false;
         }
 
@@ -86,33 +80,27 @@ struct AhrsChannelStats {
         has_latest = true;
         latest = snapshot;
 
-        has_last_snapshot_timestamp = true;
-        last_snapshot_timestamp_ns = snapshot_timestamp_ns;
-
-        if (snapshot.host_receive_timestamp_ns > 0) {
-            if (has_last_host_timestamp &&
-                snapshot.host_receive_timestamp_ns > last_host_timestamp_ns) {
-                host_interval.observe(snapshot.host_receive_timestamp_ns -
-                                      last_host_timestamp_ns);
-            }
-            has_last_host_timestamp = true;
-            last_host_timestamp_ns = snapshot.host_receive_timestamp_ns;
+        if (has_last_receive_timestamp &&
+            snapshot.receive_timestamp_ns > last_receive_timestamp_ns) {
+            receive_interval.observe(snapshot.receive_timestamp_ns -
+                                     last_receive_timestamp_ns);
         }
+        has_last_receive_timestamp = true;
+        last_receive_timestamp_ns = snapshot.receive_timestamp_ns;
 
-        if (snapshot.device_timestamp_valid) {
-            if (has_last_device_timestamp &&
-                snapshot.device_timestamp_us > last_device_timestamp_us) {
-                const std::uint64_t interval_us =
-                    snapshot.device_timestamp_us - last_device_timestamp_us;
-                if (interval_us <=
+        if (snapshot.sample_timestamp_ns > 0) {
+            if (has_last_sample_timestamp &&
+                snapshot.sample_timestamp_ns > last_sample_timestamp_ns) {
+                const std::uint64_t interval_ns =
+                    snapshot.sample_timestamp_ns - last_sample_timestamp_ns;
+                if (interval_ns <=
                     static_cast<std::uint64_t>(
-                        std::numeric_limits<std::int64_t>::max() / 1000)) {
-                    device_interval.observe(
-                        static_cast<std::int64_t>(interval_us * 1000ULL));
+                        std::numeric_limits<std::int64_t>::max())) {
+                    sample_interval.observe(static_cast<std::int64_t>(interval_ns));
                 }
             }
-            has_last_device_timestamp = true;
-            last_device_timestamp_us = snapshot.device_timestamp_us;
+            has_last_sample_timestamp = true;
+            last_sample_timestamp_ns = snapshot.sample_timestamp_ns;
         }
 
         return true;
@@ -121,8 +109,8 @@ struct AhrsChannelStats {
     void reset_window()
     {
         window_frames = 0;
-        host_interval.reset();
-        device_interval.reset();
+        receive_interval.reset();
+        sample_interval.reset();
     }
 };
 
@@ -234,8 +222,8 @@ void print_ahrs_report(const AhrsChannelStats& stats, double elapsed_s)
     std::cout << " ahrs_hz=" << hz
               << " ahrs_frames=" << stats.window_frames
               << " ahrs_total=" << stats.total_frames;
-    print_interval_stats("ahrs_device", stats.device_interval);
-    print_interval_stats("ahrs_host", stats.host_interval);
+    print_interval_stats("ahrs_sample", stats.sample_interval);
+    print_interval_stats("ahrs_receive", stats.receive_interval);
     if (stats.has_latest) {
         std::cout << std::setprecision(6)
                   << " euler_rad=["

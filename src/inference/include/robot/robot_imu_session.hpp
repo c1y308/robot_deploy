@@ -1,6 +1,5 @@
 #pragma once
 
-#include "robot/imu_timestamp_mapper.hpp"
 #include "robot/robot_config.hpp"
 #include "spsc_latest_value/spsc_latest_value.hpp"
 
@@ -17,12 +16,8 @@ class IMUReaderBase;
 namespace inference {
 
 struct AhrsStateSnapshot {
-    std::int64_t timestamp_ns{0};
-    std::uint64_t device_timestamp_us{0};
-    bool device_timestamp_valid{false};
-    std::int64_t host_receive_timestamp_ns{0};
-    std::int64_t host_publish_timestamp_ns{0};
-    std::int64_t host_sample_timestamp_ns{0};
+    std::int64_t receive_timestamp_ns{0};
+    std::uint64_t sample_timestamp_ns{0};
 
     std::array<double, 4> quat{1.0, 0.0, 0.0, 0.0};
     std::array<double, 3> body_ang_vel{0.0, 0.0, 0.0};
@@ -54,7 +49,6 @@ public:
 
 private:
     ImuConfig config_;
-    ImuTimestampMapper timestamp_mapper_;
     std::unique_ptr<imu_base::IMUReaderBase> reader_;
 
     std::atomic<bool> initialized_{false};

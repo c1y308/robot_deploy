@@ -61,11 +61,13 @@ struct PolicyConfig {
     double raw_action_clip = 1.0;
     double step_dt = 0.02;
     double target_interpolation_duration_s = 0.00;
+    
     double gait_phase_period = 0.74;
     double gait_phase_stand_threshold = 0.05;
-    double gait_phase_move_threshold = 0.15;
-    double max_imu_sample_age_s = 0.050;
-    double max_motor_sample_age_s = 0.050;
+    double gait_phase_move_threshold  = 0.15;
+
+    double max_imu_sample_age_s    = 0.050;
+    double max_motor_sample_age_s  = 0.050;
     double max_sensor_state_skew_s = 0.030;
 };
 

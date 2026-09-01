@@ -74,14 +74,8 @@ void write_header(std::ostream& stream)
     append_motor_columns(stream, "torque_pct", kInferenceMotorCount);
     append_motor_columns(stream, "comm_ok", kInferenceMotorCount);
     append_motor_columns(stream, "enabled", kInferenceMotorCount);
-    stream << ",imu_sample_timestamp_ns"
-           << ",imu_rx_timestamp_ns"
-           << ",imu_publish_timestamp_ns"
-           << ",imu_device_timestamp_us"
-           << ",imu_device_timestamp_valid"
-           << ",imu_rx_to_publish_us"
-           << ",imu_motor_skew_us"
-           << ",imu_age_us"
+    stream << ",imu_receive_timestamp_ns"
+           << ",imu_sample_timestamp_ns"
            << ",motor_age_us"
            << '\n';
 }
@@ -143,14 +137,8 @@ void write_record(std::ostream&          stream,
     append_values(stream, record.torque_percent);
     append_u8_values(stream, record.comm_ok);
     append_u8_values(stream, record.enabled);
-    stream << ',' << record.imu_sample_timestamp_ns
-           << ',' << record.imu_rx_timestamp_ns
-           << ',' << record.imu_publish_timestamp_ns
-           << ',' << record.imu_device_timestamp_us
-           << ',' << (record.imu_device_timestamp_valid ? 1 : 0)
-           << ',' << record.imu_rx_to_publish_us
-           << ',' << record.imu_motor_skew_us
-           << ',' << record.imu_age_us
+    stream << ',' << record.imu_receive_timestamp_ns
+           << ',' << record.imu_sample_timestamp_ns
            << ',' << record.motor_age_us;
     stream << '\n';
 }

@@ -92,13 +92,13 @@ std::vector<std::uint8_t> make_imu_frame(std::uint32_t timestamp_us)
 
 void feed_frame(imu::IMUParser& parser,
                 const std::vector<std::uint8_t>& frame,
-                std::int64_t host_receive_timestamp_ns)
+                std::int64_t receive_timestamp_ns)
 {
     const std::uint8_t previous_end = imu::FRAME_END;
-    parser.feed(&previous_end, 1, host_receive_timestamp_ns - 1);
+    parser.feed(&previous_end, 1, receive_timestamp_ns - 1);
     parser.feed(frame.data(),
                 static_cast<int>(frame.size()),
-                host_receive_timestamp_ns);
+                receive_timestamp_ns);
 }
 
 }  // namespace
@@ -127,21 +127,17 @@ int main()
                    kAhrsReceiveTimestampNs);
 
         expect(ahrs_callbacks == 1, "A100 AHRS callback must fire once");
-        expect(callback_ahrs.timestamp == kAhrsTimestampUs,
-               "A100 AHRS timestamp must be parsed");
-        expect(callback_ahrs.timestamp_valid,
-               "A100 AHRS timestamp must be marked valid");
-        expect(callback_ahrs.host_receive_timestamp_ns ==
+        expect(callback_ahrs.sample_timestamp_ns == kAhrsTimestampUs * 1000ULL,
+               "A100 AHRS sample timestamp must be converted to ns");
+        expect(callback_ahrs.receive_timestamp_ns ==
                    kAhrsReceiveTimestampNs,
                "A100 AHRS receive timestamp must use completing chunk");
-        expect(callback_ahrs.host_publish_timestamp_ns != 0,
-               "A100 AHRS publish timestamp must be populated");
 
         imu::AHRSData_t latest_ahrs;
         expect(parser.get_ahrs_data(latest_ahrs),
                "A100 AHRS data must be readable after parse");
-        expect(latest_ahrs.timestamp_valid,
-               "A100 AHRS readable data must retain timestamp validity");
+        expect(latest_ahrs.sample_timestamp_ns == kAhrsTimestampUs * 1000ULL,
+               "A100 AHRS readable data must retain sample timestamp");
 
         std::vector<std::uint8_t> marker_like_payload_frame =
             make_ahrs_frame(kAhrsTimestampUs + 1ULL);
@@ -153,8 +149,9 @@ int main()
                    kAhrsReceiveTimestampNs + 1000);
         expect(ahrs_callbacks == 2,
                "A100 parser must not resync on FD FC inside a valid payload");
-        expect(callback_ahrs.timestamp == kAhrsTimestampUs + 1ULL,
-               "A100 AHRS frame with marker-like payload bytes must parse");
+        expect(callback_ahrs.sample_timestamp_ns ==
+                   (kAhrsTimestampUs + 1ULL) * 1000ULL,
+               "A100 AHRS frame with marker-like payload bytes must parse sample timestamp");
 
         constexpr std::uint32_t kImuTimestampUs = 424242U;
         constexpr std::int64_t kImuReceiveTimestampNs = 9876549999LL;
@@ -163,14 +160,11 @@ int main()
                    kImuReceiveTimestampNs);
 
         expect(imu_callbacks == 1, "A100 IMU callback must fire once");
-        expect(callback_imu.timestamp == kImuTimestampUs,
-               "A100 raw IMU timestamp must be parsed");
-        expect(callback_imu.timestamp_valid,
-               "A100 raw IMU timestamp must be marked valid");
-        expect(callback_imu.host_receive_timestamp_ns == kImuReceiveTimestampNs,
+        expect(callback_imu.sample_timestamp_ns ==
+                   static_cast<std::uint64_t>(kImuTimestampUs) * 1000ULL,
+               "A100 raw IMU sample timestamp must be converted to ns");
+        expect(callback_imu.receive_timestamp_ns == kImuReceiveTimestampNs,
                "A100 raw IMU receive timestamp must use completing chunk");
-        expect(callback_imu.host_publish_timestamp_ns != 0,
-               "A100 raw IMU publish timestamp must be populated");
 
         return 0;
     } catch (const std::exception& error) {

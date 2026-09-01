@@ -90,6 +90,7 @@ private:
 
     bool apply_ankle_ik(const std::vector<double>& target_q_model_rad,
                         std::vector<double>& target_motor_rad,
+                        const char* ankle_name,
                         const AnkleParallelMap& ankle_map,
                         AnkleIkState& state,
                         std::string& error);

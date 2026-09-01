@@ -35,14 +35,8 @@ struct InferenceRecord {
     std::int64_t inference_end_ns{0};
     
     std::int64_t command_timestamp_ns{0};
-    std::int64_t imu_sample_timestamp_ns{0};
-    std::int64_t imu_rx_timestamp_ns{0};
-    std::int64_t imu_publish_timestamp_ns{0};
-    std::uint64_t imu_device_timestamp_us{0};
-    bool imu_device_timestamp_valid{false};
-    std::int64_t imu_rx_to_publish_us{0};
-    std::int64_t imu_motor_skew_us{0};
-    std::int64_t imu_age_us{0};
+    std::int64_t imu_receive_timestamp_ns{0};
+    std::uint64_t imu_sample_timestamp_ns{0};
     std::int64_t motor_age_us{0};
 
     PolicyObservation policy_observation{};                     // 真正送入 TorchScript 的 flatten policy 输入

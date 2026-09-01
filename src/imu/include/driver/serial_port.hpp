@@ -24,7 +24,7 @@ public:
     int wait_readable(int timeout_ms);
     int read_nonblocking(uint8_t* buffer,
                          int max_len,
-                         std::int64_t* host_receive_timestamp_ns = nullptr);
+                         std::int64_t* receive_timestamp_ns = nullptr);
     int read(uint8_t* buffer, int max_len);
     int write(const uint8_t* data, int len);
     

@@ -4,6 +4,7 @@ project(robot_inference_hw_interface CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)
+enable_testing()
 
 option(ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS
        "Include gait phase in policy observation history, using 705 input dimensions instead of 675"
@@ -137,20 +138,26 @@ add_executable(target_interpolator_test
 target_include_directories(target_interpolator_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-
-add_executable(imu_timestamp_mapper_test
-    tests/imu_timestamp_mapper_test.cpp
-)
-target_include_directories(imu_timestamp_mapper_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/include
-)
-target_link_libraries(imu_timestamp_mapper_test PRIVATE robot_base)
+add_test(NAME target_interpolator_test COMMAND target_interpolator_test)
 
 add_executable(inference_recorder_csv_test
     tests/inference_recorder_csv_test.cpp
 )
 target_link_libraries(inference_recorder_csv_test PRIVATE inference_recorder)
+add_test(NAME inference_recorder_csv_test COMMAND inference_recorder_csv_test)
+
+add_executable(action_processor_ankle_ik_test
+    tests/action_processor_ankle_ik_test.cpp
+    src/robot/action_processor.cpp
+    src/robot/joint_mapping.cpp
+)
+target_include_directories(action_processor_ankle_ik_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/include
+)
+target_link_libraries(action_processor_ankle_ik_test PRIVATE robot_base)
+add_test(NAME action_processor_ankle_ik_test COMMAND action_processor_ankle_ik_test)
 
 add_executable(ankle_inverse_kinematics_test
     tests/ankle_inverse_kinematics_test.cpp
@@ -173,3 +180,4 @@ add_executable(ankle_motor_jacobian_test
 target_include_directories(ankle_motor_jacobian_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+add_test(NAME ankle_motor_jacobian_test COMMAND ankle_motor_jacobian_test)

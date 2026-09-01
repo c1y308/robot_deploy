@@ -8,6 +8,7 @@
 #include <array>
 #include <cstddef>
 #include <cmath>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -38,6 +39,20 @@ LowPass2Coefficients compute_low_pass_coefficients(
 double clamp_symmetric(double value, double limit)
 {
     return std::max(-limit, std::min(limit, value));
+}
+
+std::string ankle_ik_unreachable_error(const char* ankle_name,
+                                       double roll,
+                                       double pitch,
+                                       const ankle_motor_ik::MotorAngles& result)
+{
+    return std::string(ankle_name) +
+           " ankle IK unreachable before any valid solution: roll=" +
+           std::to_string(roll) + " rad, pitch=" + std::to_string(pitch) +
+           " rad, motor1_reachable=" +
+           (result.motor1_reachable ? "true" : "false") +
+           ", motor2_reachable=" +
+           (result.motor2_reachable ? "true" : "false");
 }
 
 }  // namespace
@@ -134,6 +149,7 @@ bool ActionProcessor::build_motor_targets(
 
     if (!apply_ankle_ik(target_q_model_rad,
                         target_motor_rad,
+                        "left",
                         mapping_->left_ankle(),
                         left_ankle_ik_,
                         error)) {
@@ -141,6 +157,7 @@ bool ActionProcessor::build_motor_targets(
     }
     if (!apply_ankle_ik(target_q_model_rad,
                         target_motor_rad,
+                        "right",
                         mapping_->right_ankle(),
                         right_ankle_ik_,
                         error)) {
@@ -174,6 +191,7 @@ bool ActionProcessor::build_motor_targets(
 bool ActionProcessor::apply_ankle_ik(
     const std::vector<double>& target_q_model_rad,  // 模型计算出的关节目标角
     std::vector<double>&       target_motor_rad,    // 电机目标角(引用)
+    const char*                ankle_name,
     const AnkleParallelMap&    ankle_map,           // 脚踝关节的映射关系
     AnkleIkState&              state,               // 脚踝IK求解器的状态
     std::string& error)
@@ -195,19 +213,25 @@ bool ActionProcessor::apply_ankle_ik(
     const double pitch = target_q_model_rad[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
     const double roll  = target_q_model_rad[static_cast<std::size_t>(ankle_map.model_roll_dof)];
 
-    const ankle_motor_ik::MotorAngles result = state.solver.solve(roll, pitch);
+    ankle_motor_ik::Solver candidate_solver = state.solver;
+    const ankle_motor_ik::MotorAngles result =
+        candidate_solver.solve(roll, pitch);
 
     double upper_motor = 0.0;
     double lower_motor = 0.0;
     if (result.reachable()) {
         upper_motor = result.motor1;
         lower_motor = result.motor2;
+        state.solver = candidate_solver;
         state.last_upper_motor = upper_motor;
         state.last_lower_motor = lower_motor;
         state.solved = true;
     } else if (state.solved) {
         upper_motor = state.last_upper_motor;
         lower_motor = state.last_lower_motor;
+    } else {
+        error = ankle_ik_unreachable_error(ankle_name, roll, pitch, result);
+        return false;
     }
 
     const int upper_motor_direction =

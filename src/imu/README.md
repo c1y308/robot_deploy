@@ -72,16 +72,18 @@ make -j$(nproc)
 - 角速度 (gyroscope_x/y/z): rad/s
 - 加速度 (accelerometer_x/y/z): m/s²
 - 磁力计 (magnetometer_x/y/z): mG
-- 时间戳 (timestamp): us
+- `receive_timestamp_ns`: Linux 主机接收时间，`CLOCK_MONOTONIC` ns
+- `sample_timestamp_ns`: 设备原始采样时间转换为 ns
 
 ### A100 AHRS数据
 - 角速度 (roll_speed/pitch_speed/heading_speed): rad/s
 - 欧拉角 (roll/pitch/heading): rad
 - 四元数 (qw/qx/qy/qz)
-- 时间戳 (timestamp): us
+- `receive_timestamp_ns`: Linux 主机接收时间，`CLOCK_MONOTONIC` ns
+- `sample_timestamp_ns`: 设备原始采样时间转换为 ns
 
 ### Xsens MTi CAN AHRS数据
-- `0x005 XCDI_SampleTime`: big-endian uint32，10 kHz tick，保存为 us。
+- `0x005 XCDI_SampleTime`: big-endian uint32，10 kHz tick，保存为 `sample_timestamp_ns`。
 - `0x021 XCDI_Quaternion`: big-endian int16[4]，缩放 `raw / 32767.0`。
 - `0x032 XCDI_RateOfTurn`: big-endian int16[3]，缩放 `raw * 2^-9`，单位 rad/s。
 - `projected_gravity` 由四元数计算。
