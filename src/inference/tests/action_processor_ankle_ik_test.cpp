@@ -83,11 +83,11 @@ std::shared_ptr<const inference::robot_detail::JointMapping> make_mapping()
     return mapping;
 }
 
-inference::PolicyConfig make_policy_config()
+inference::ActionConfig make_action_config()
 {
-    inference::PolicyConfig config;
-    config.stand_pose_rad.assign(kDof, 0.0);
-    return config;
+    /* 零初始化即可：本测试只用 build_motor_targets，
+       default_joint_pos_rad 全 0 等价原 stand_pose_rad 全 0 */
+    return inference::ActionConfig{};
 }
 
 inference::AnkleMotorLimitConfig make_ankle_motor_limits()
@@ -100,13 +100,22 @@ inference::AnkleMotorLimitConfig make_ankle_motor_limits()
 
 inference::robot_detail::ActionProcessor make_processor()
 {
+    /* 原 AnkleTorqueControlConfig 默认值已删除，此处显式给出原值 */
+    const inference::AnkleTorqueControlConfig torque_config{
+        {180.0, 180.0},   // virtual_kp [pitch, roll]
+        {10.54, 10.54},   // virtual_kd [pitch, roll]
+        100.0,            // filter_cutoff_rad_s
+        0.001,            // filter_dt_s
+        10.5,             // motor_rated_torque_nm
+        800.0             // target_torque_limit_permille
+    };
     return inference::robot_detail::ActionProcessor(
         make_mapping(),
-        make_policy_config(),
+        make_action_config(),
         make_ankle_motor_limits(),
-        std::vector<double>(kDof, 0.0),
-        std::vector<double>(kDof, 0.0),
-        inference::AnkleTorqueControlConfig{});
+        std::array<double, motor_base::kMaxMotors>{},
+        std::array<double, motor_base::kMaxMotors>{},
+        torque_config);
 }
 
 std::vector<double> make_model_target(double pitch_deg, double roll_deg)

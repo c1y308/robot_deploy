@@ -47,6 +47,11 @@ endif()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
+# 不用系统包（新 ABI），因为 torch 强制 _GLIBCXX_USE_CXX11_ABI=0，
+# 同一进程内必须统一 ABI；此处以源码随工程编译旧 ABI 版本。
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third_party/yaml-cpp
+                 ${CMAKE_CURRENT_BINARY_DIR}/yaml_cpp_build)
+
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../motors
                  ${CMAKE_CURRENT_BINARY_DIR}/motors_build)
 
@@ -63,9 +68,26 @@ target_include_directories(inference_recorder PUBLIC
 )
 target_compile_definitions(inference_recorder PUBLIC
     ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=$<BOOL:${ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS}>
-    ROBOT_INFERENCE_LOG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/log"
 )
 target_link_libraries(inference_recorder PUBLIC robot_base pthread)
+
+# deploy.yaml 加载器：解析 + 全量校验 + 模型序→电机序转换。
+# 只依赖纯类型（MotorControlMode/ReaderType）与 JointMapping，不依赖 torch。
+add_library(deploy_config STATIC
+    src/config/deploy_config.cpp
+    src/robot/joint_mapping.cpp
+)
+target_include_directories(deploy_config PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/include
+)
+target_compile_definitions(deploy_config PUBLIC
+    ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=$<BOOL:${ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS}>
+    ROBOT_DEPLOY_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/deploy.yaml"
+    ROBOT_INFERENCE_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+target_link_libraries(deploy_config PUBLIC robot_base yaml-cpp)
 
 add_library(robot_interface STATIC
     src/robot/robot_interface.cpp
@@ -73,7 +95,6 @@ add_library(robot_interface STATIC
     src/robot/observation_builder.cpp
     src/robot/robot_motor_session.cpp
     src/robot/robot_imu_session.cpp
-    src/robot/joint_mapping.cpp
     src/policy/policy_runtime.cpp
     src/policy/torch_policy_runner.cpp
 )
@@ -88,6 +109,7 @@ target_compile_definitions(robot_interface PUBLIC
 )
 target_link_libraries(robot_interface
     PUBLIC
+    deploy_config
     inference_recorder
     robot_base
     myactua_ethercat
@@ -149,14 +171,13 @@ add_test(NAME inference_recorder_csv_test COMMAND inference_recorder_csv_test)
 add_executable(action_processor_ankle_ik_test
     tests/action_processor_ankle_ik_test.cpp
     src/robot/action_processor.cpp
-    src/robot/joint_mapping.cpp
 )
 target_include_directories(action_processor_ankle_ik_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../imu/include
 )
-target_link_libraries(action_processor_ankle_ik_test PRIVATE robot_base)
+target_link_libraries(action_processor_ankle_ik_test PRIVATE deploy_config robot_base)
 add_test(NAME action_processor_ankle_ik_test COMMAND action_processor_ankle_ik_test)
 
 add_executable(ankle_inverse_kinematics_test
@@ -181,3 +202,9 @@ target_include_directories(ankle_motor_jacobian_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 add_test(NAME ankle_motor_jacobian_test COMMAND ankle_motor_jacobian_test)
+
+add_executable(deploy_config_test
+    tests/deploy_config_test.cpp
+)
+target_link_libraries(deploy_config_test PRIVATE deploy_config robot_base)
+add_test(NAME deploy_config_test COMMAND deploy_config_test)

@@ -15,9 +15,11 @@ using robot_base::finite_vector;
 using robot_base::index_in_range;
 
 ObservationBuilder::ObservationBuilder(std::shared_ptr<const JointMapping> mapping,
-                                       PolicyConfig policy_config)
+                                       ObservationScaleConfig scales,
+                                       std::array<double, policy_observation::kDof> default_joint_pos_rad)
     : mapping_(std::move(mapping)),
-      policy_config_(std::move(policy_config))
+      scales_(std::move(scales)),
+      default_joint_pos_rad_(default_joint_pos_rad)
 {
     reset_runtime_state();
 }
@@ -37,18 +39,17 @@ void ObservationBuilder::reset_runtime_state()
     }
 }
 
-// 从policy_config_中获取stand_pose_rad的roll和pitch值，调用ankle_fk的reset函数，重置ankle_fk
+// 从default_joint_pos_rad_中获取roll和pitch值，调用ankle_fk的reset函数，重置ankle_fk
 void ObservationBuilder::reset_ankle_state(const AnkleParallelMap& ankle_map,
                                                  AnkleFkState&     state)
 {
     double pitch = 0.0;
     double roll  = 0.0;
-    if (policy_config_.stand_pose_rad.size() == kDof &&
-        index_in_range(ankle_map.model_pitch_dof, static_cast<int>(kDof)) &&
+    if (index_in_range(ankle_map.model_pitch_dof, static_cast<int>(kDof)) &&
         index_in_range(ankle_map.model_roll_dof, static_cast<int>(kDof)))
     {
-        pitch = policy_config_.stand_pose_rad[ankle_map.model_pitch_dof];
-        roll  = policy_config_.stand_pose_rad[ankle_map.model_roll_dof];
+        pitch = default_joint_pos_rad_[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
+        roll  = default_joint_pos_rad_[static_cast<std::size_t>(ankle_map.model_roll_dof)];
     }
     state.reset(roll, pitch);
 }
@@ -93,13 +94,13 @@ bool ObservationBuilder::build(
     // 使用当前数据构建下一观测帧
     PolicyObservationTerms current_terms;
     current_terms.velocity_commands = {
-        static_cast<float>(target_velocity[0] * policy_config_.command_scale[0]),
-        static_cast<float>(target_velocity[1] * policy_config_.command_scale[1]),
-        static_cast<float>(target_velocity[2] * policy_config_.command_scale[2])
+        static_cast<float>(target_velocity[0] * scales_.command_scale[0]),
+        static_cast<float>(target_velocity[1] * scales_.command_scale[1]),
+        static_cast<float>(target_velocity[2] * scales_.command_scale[2])
     };
     for (int i = 0; i < 3; ++i) {
         current_terms.base_ang_vel[i] = static_cast<float>(
-            ahrs_state.body_ang_vel[i] * policy_config_.body_ang_vel_scale[i]);
+            ahrs_state.body_ang_vel[i] * scales_.body_ang_vel_scale[i]);
         current_terms.projected_gravity[i] =
             static_cast<float>(ahrs_state.projected_gravity[i]);
     }
@@ -163,10 +164,10 @@ bool ObservationBuilder::fill_joint_terms(
 
         //  计算关节的相对偏移和速度，并进行缩放
         joint_pos_rel[model_index] =
-            static_cast<float>((q_model - policy_config_.stand_pose_rad[model_index]) *
-                               policy_config_.dof_pos_scale[model_index]);
+            static_cast<float>((q_model - default_joint_pos_rad_[model_index]) *
+                               scales_.dof_pos_scale[model_index]);
         joint_vel_rel[model_index] =
-            static_cast<float>(dq_model * policy_config_.dof_vel_scale[model_index]);
+            static_cast<float>(dq_model * scales_.dof_vel_scale[model_index]);
     }
 
     // 针对脚踝模型的关节，使用FK计算位置，并用解析Jacobian把电机速度映射为虚拟关节速度。
@@ -249,11 +250,11 @@ bool ObservationBuilder::fill_ankle_fk_joint_terms(
 
     // 计算脚踝关节的相对偏移并缩放
     joint_pos_rel[pitch_index] =
-        static_cast<float>((foot.pitch - policy_config_.stand_pose_rad[pitch_index]) *
-                           policy_config_.dof_pos_scale[pitch_index]);
+        static_cast<float>((foot.pitch - default_joint_pos_rad_[pitch_index]) *
+                           scales_.dof_pos_scale[pitch_index]);
     joint_pos_rel[roll_index] =
-        static_cast<float>((foot.roll - policy_config_.stand_pose_rad[roll_index]) *
-                           policy_config_.dof_pos_scale[roll_index]);
+        static_cast<float>((foot.roll - default_joint_pos_rad_[roll_index]) *
+                           scales_.dof_pos_scale[roll_index]);
 
 
     // 使用 q_v_dot = J q_m_dot 计算脚踝虚拟关节速度，顺序为 [pitch, roll]。
@@ -269,9 +270,9 @@ bool ObservationBuilder::fill_ankle_fk_joint_terms(
     }
     // 缩放脚踝关节的速度
     joint_vel_rel[pitch_index] =
-        static_cast<float>(pitch_velocity * policy_config_.dof_vel_scale[pitch_index]);
+        static_cast<float>(pitch_velocity * scales_.dof_vel_scale[pitch_index]);
     joint_vel_rel[roll_index] =
-        static_cast<float>(roll_velocity * policy_config_.dof_vel_scale[roll_index]);
+        static_cast<float>(roll_velocity * scales_.dof_vel_scale[roll_index]);
 
     error.clear();
     return true;

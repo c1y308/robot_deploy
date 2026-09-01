@@ -1,28 +1,10 @@
 #pragma once
 
+#include "robot/joint_mapping_config.hpp"
+
 #include <memory>
 #include <string>
 #include <vector>
-
-namespace inference {
-
-struct AnkleParallelMap {
-    int model_pitch_dof = -1;
-    int model_roll_dof  = -1;
-
-    int upper_motor_index = -1;
-    int lower_motor_index = -1;
-};
-
-struct JointMappingConfig {
-    std::vector<int> model_to_motor_index;
-    std::vector<int> motor_to_model_direction;
-
-    AnkleParallelMap left_ankle_parallel;
-    AnkleParallelMap right_ankle_parallel;
-};
-
-}  // namespace inference
 
 namespace inference::robot_detail {
 

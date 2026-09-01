@@ -22,7 +22,8 @@ public:
     using JointTermArray  = std::array<float,  kDof>;
 
     ObservationBuilder(std::shared_ptr<const JointMapping> mapping,
-                       PolicyConfig policy_config);
+                       ObservationScaleConfig scales,
+                       std::array<double, policy_observation::kDof> default_joint_pos_rad);
 
                        
     void reset_runtime_state();
@@ -65,7 +66,8 @@ private:
                                    std::string& error) const;
 
     std::shared_ptr<const JointMapping> mapping_;
-    PolicyConfig policy_config_;
+    ObservationScaleConfig scales_;
+    std::array<double, policy_observation::kDof> default_joint_pos_rad_;
 };
 
 }  // namespace inference::robot_detail

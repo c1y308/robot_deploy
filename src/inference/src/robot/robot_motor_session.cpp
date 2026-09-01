@@ -16,8 +16,6 @@
 
 namespace inference {
 
-using robot_base::finite_vector;
-
 namespace {
 
 bool finite_impedance_setpoints(
@@ -91,10 +89,6 @@ bool RobotMotorSession::initialize_and_start()
         return true;
     }
 
-    if (!validate_config()) {
-        return false;
-    }
-
     adapter_    = std::make_shared<myactua::EthercatAdapterIGH>();
     controller_ = std::make_unique<myactua::MYACTUA>(adapter_, config_.num_motors);
 
@@ -148,36 +142,6 @@ bool RobotMotorSession::initialize_and_start()
     }
     initialized_.store(true);
     motion_enabled_.store(false);
-
-    return true;
-}
-
-
-bool RobotMotorSession::validate_config() const
-{
-    if (config_.num_motors <= 0) {
-        std::cerr << "[RobotMotorSession] num_motors must be positive\n";
-        return false;
-    }
-
-    if (is_mit_mode(config_.control_mode)) {
-        if (static_cast<int>(config_.mit_kp.size()) != config_.num_motors) {
-            std::cerr << "[RobotMotorSession] MIT mode requires mit_kp size="
-                      << config_.num_motors << ", got=" << config_.mit_kp.size()
-                      << "\n";
-            return false;
-        }
-        if (static_cast<int>(config_.mit_kd.size()) != config_.num_motors) {
-            std::cerr << "[RobotMotorSession] MIT mode requires mit_kd size="
-                      << config_.num_motors << ", got=" << config_.mit_kd.size()
-                      << "\n";
-            return false;
-        }
-        if (!finite_vector(config_.mit_kp) || !finite_vector(config_.mit_kd)) {
-            std::cerr << "[RobotMotorSession] MIT mode requires finite mit_kp/mit_kd values\n";
-            return false;
-        }
-    }
 
     return true;
 }

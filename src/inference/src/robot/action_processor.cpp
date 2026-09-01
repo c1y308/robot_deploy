@@ -18,7 +18,7 @@ using robot_base::index_in_range;
 
 namespace {
 
-// filter_cutoff/filter_dt 已由 validate_policy_config 校验为有限正值，这里只做纯计算。
+// filter_cutoff/filter_dt 已由配置加载器校验为有限正值，这里只做纯计算。
 LowPass2Coefficients compute_low_pass_coefficients(
     const AnkleTorqueControlConfig& config)
 {
@@ -58,13 +58,13 @@ std::string ankle_ik_unreachable_error(const char* ankle_name,
 }  // namespace
 
 ActionProcessor::ActionProcessor(std::shared_ptr<const JointMapping> mapping,
-                                 PolicyConfig policy_config,
+                                 ActionConfig action_config,
                                  AnkleMotorLimitConfig ankle_motor_limits,
-                                 std::vector<double> motor_kp,
-                                 std::vector<double> motor_kd,
+                                 std::array<double, motor_base::kMaxMotors> motor_kp,
+                                 std::array<double, motor_base::kMaxMotors> motor_kd,
                                  AnkleTorqueControlConfig torque_config)
     : mapping_(std::move(mapping)),
-      policy_config_(std::move(policy_config)),
+      action_config_(std::move(action_config)),
       ankle_motor_limits_(ankle_motor_limits),
       motor_kp_(std::move(motor_kp)),
       motor_kd_(std::move(motor_kd)),
@@ -92,11 +92,10 @@ void ActionProcessor::reset_runtime_state()
         double pitch = 0.0;
         double roll = 0.0;
         const int count = dof_count();
-        if (policy_config_.stand_pose_rad.size() == static_cast<std::size_t>(count) &&
-            index_in_range(ankle_map.model_pitch_dof, count) &&
+        if (index_in_range(ankle_map.model_pitch_dof, count) &&
             index_in_range(ankle_map.model_roll_dof, count)) {
-            pitch = policy_config_.stand_pose_rad[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
-            roll = policy_config_.stand_pose_rad[static_cast<std::size_t>(ankle_map.model_roll_dof)];
+            pitch = action_config_.default_joint_pos_rad[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
+            roll = action_config_.default_joint_pos_rad[static_cast<std::size_t>(ankle_map.model_roll_dof)];
         }
         state.reset(roll, pitch);
     };

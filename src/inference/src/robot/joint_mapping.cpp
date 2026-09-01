@@ -23,7 +23,8 @@ bool ankle_parallel_map_indices_in_range(const inference::AnkleParallelMap& ankl
 }
 
 // 检查方向数组值是否为 1 或 -1
-bool valid_motor_direction_values(const std::vector<int>& directions)
+template <typename DirectionContainer>
+bool valid_motor_direction_values(const DirectionContainer& directions)
 {
     return std::all_of(directions.begin(), directions.end(), [](int direction) {
         return direction == 1 || direction == -1;
@@ -62,9 +63,8 @@ bool JointMapping::configure(int dof_count)
         return false;
     }
 
-    if (!config_.motor_to_model_direction.empty() &&
-        static_cast<int>(config_.motor_to_model_direction.size()) != dof_count) {
-        last_error_ = "motor_to_model_direction must have one value per motor or be empty";
+    if (static_cast<int>(config_.motor_to_model_direction.size()) != dof_count) {
+        last_error_ = "motor_to_model_direction must have one value per motor";
         return false;
     }
     if (!valid_motor_direction_values(config_.motor_to_model_direction)) {
@@ -164,10 +164,8 @@ bool JointMapping::configure(int dof_count)
     }
 
     std::vector<int> next_motor_to_model_direction(
-        static_cast<std::size_t>(dof_count), 1);
-    if (!config_.motor_to_model_direction.empty()) {
-        next_motor_to_model_direction = config_.motor_to_model_direction;
-    }
+        config_.motor_to_model_direction.begin(),
+        config_.motor_to_model_direction.end());
 
     dof_count_ = dof_count;
     parallel_model_dof_ = std::move(seen_ankle_model_dof);

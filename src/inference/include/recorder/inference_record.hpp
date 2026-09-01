@@ -1,24 +1,19 @@
 #pragma once
 
 #include "policy/policy_observation_config.hpp"
+#include "recorder/inference_recorder_config.hpp"
 #include "tool/tool.hpp"
 
 #include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <string>
-
-#ifndef ROBOT_INFERENCE_LOG_DIR
-#define ROBOT_INFERENCE_LOG_DIR "src/inference/log"
-#endif
 
 namespace inference {
 
 inline constexpr std::size_t kInferenceDof = policy_observation::kDof;
 inline constexpr std::size_t kInferenceMotorCount = policy_observation::kDof;
-inline constexpr std::size_t kDefaultInferenceRecorderQueueDepth = 4096;
 
 inline std::int64_t steady_now_ns() noexcept
 {
@@ -53,15 +48,6 @@ struct InferenceRecord {
     std::array<std::uint8_t, kInferenceMotorCount> enabled{};
 
     bool command_applied{false};
-};
-
-
-struct InferenceRecorderConfig {
-    bool enabled{false};
-    std::filesystem::path directory{ROBOT_INFERENCE_LOG_DIR};
-    std::string file_prefix{};
-    std::chrono::milliseconds flush_interval{1000};
-    std::size_t max_queue_depth{kDefaultInferenceRecorderQueueDepth};
 };
 
 }  // namespace inference

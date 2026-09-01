@@ -35,10 +35,10 @@ public:
         std::array<double, policy_observation::kDof>;
 
     ActionProcessor(std::shared_ptr<const JointMapping> mapping,
-                    PolicyConfig policy_config,
+                    ActionConfig action_config,
                     AnkleMotorLimitConfig ankle_motor_limits,
-                    std::vector<double> motor_kp,
-                    std::vector<double> motor_kd,
+                    std::array<double, motor_base::kMaxMotors> motor_kp,
+                    std::array<double, motor_base::kMaxMotors> motor_kd,
                     AnkleTorqueControlConfig torque_config);
 
     void reset_runtime_state();
@@ -105,10 +105,10 @@ private:
         std::string& error);
 
     std::shared_ptr<const JointMapping> mapping_;
-    PolicyConfig policy_config_;
+    ActionConfig action_config_;
     AnkleMotorLimitConfig ankle_motor_limits_;
-    std::vector<double> motor_kp_;
-    std::vector<double> motor_kd_;
+    std::array<double, motor_base::kMaxMotors> motor_kp_;
+    std::array<double, motor_base::kMaxMotors> motor_kd_;
     AnkleTorqueControlConfig torque_config_;
     LowPass2Coefficients low_pass_coeffs_;
 

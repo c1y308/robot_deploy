@@ -72,8 +72,9 @@ bool near(double actual, double expected)
 
 void test_policy_observation_csv_columns()
 {
-    static_assert(inference::policy_observation::kObservationSize == 705,
-                  "test expects the P1 705-dim observation layout");
+    static_assert(inference::policy_observation::kObservationSize ==
+                      (inference::policy_observation::kEnableGaitPhase ? 705 : 675),
+                  "test expects the P1 observation layout of the active branch");
 
     const std::filesystem::path dir = unique_test_dir();
 

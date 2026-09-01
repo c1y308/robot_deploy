@@ -9,8 +9,9 @@
 
 namespace inference {
 
-static_assert(policy_observation::kObservationSize == 705,
-              "P1 real2sim policy input CSV requires policy_obs_0..policy_obs_704");
+static_assert(policy_observation::kObservationSize ==
+                  (policy_observation::kEnableGaitPhase ? 705 : 675),
+              "P1 real2sim policy input CSV requires policy_obs_0..policy_obs_N");
 
 namespace {
 

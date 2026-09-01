@@ -9,9 +9,6 @@
 
 namespace inference {
 
-static_assert(policy_observation::kObservationSize == 705,
-              "P1 real2sim policy input CSV requires 705 observation elements");
-
 namespace {
 
 std::int64_t policy_runtime_now_ns() noexcept
@@ -34,7 +31,7 @@ std::array<float, 2> gait_phase_observation(std::uint64_t episode_length,
 
 std::array<float, 2> gated_gait_phase_observation(
     const PolicyObservationTerms& terms,
-    const PolicyConfig& policy_config,
+    const PolicyRuntimeConfig& policy_config,
     std::uint64_t episode_length)
 {
     const double command_norm = std::sqrt(
@@ -43,9 +40,9 @@ std::array<float, 2> gated_gait_phase_observation(
         static_cast<double>(terms.velocity_commands[2]) * terms.velocity_commands[2]);
 
     double gate = std::clamp(
-        (command_norm - policy_config.gait_phase_stand_threshold) /
-            (policy_config.gait_phase_move_threshold -
-             policy_config.gait_phase_stand_threshold),
+        (command_norm - policy_config.gait.stand_threshold) /
+            (policy_config.gait.move_threshold -
+             policy_config.gait.stand_threshold),
         0.0,
         1.0);
     gate = gate * gate * (3.0 - 2.0 * gate);
@@ -53,7 +50,7 @@ std::array<float, 2> gated_gait_phase_observation(
     const std::array<float, 2> phase =
         gait_phase_observation(episode_length,
                                policy_config.step_dt,
-                               policy_config.gait_phase_period);
+                               policy_config.gait.period);
     return {
         static_cast<float>(phase[0] * gate),
         static_cast<float>(phase[1] * gate)
@@ -93,7 +90,7 @@ void append_term_history(std::array<float, ObservationSize>& history,
 PolicyRuntime::PolicyRuntime() = default;
 PolicyRuntime::~PolicyRuntime() = default;
 
-bool PolicyRuntime::load(const PolicyConfig& config)
+bool PolicyRuntime::load(const PolicyRuntimeConfig& config)
 {
     shutdown();
     policy_config_ = config;

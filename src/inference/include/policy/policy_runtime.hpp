@@ -42,7 +42,7 @@ public:
     PolicyRuntime(const PolicyRuntime&) = delete;
     PolicyRuntime& operator=(const PolicyRuntime&) = delete;
 
-    bool load(const PolicyConfig& config);
+    bool load(const PolicyRuntimeConfig& config);
     void shutdown();
     void reset();
 
@@ -72,7 +72,7 @@ private:
 #endif
     void set_error(std::string message);
 
-    PolicyConfig policy_config_;
+    PolicyRuntimeConfig policy_config_;
     std::unique_ptr<TorchPolicyRunner> runner_;
     PolicyAction last_action_raw_{};
     ObservationArray observation_history_{};

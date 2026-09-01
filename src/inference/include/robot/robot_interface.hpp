@@ -26,15 +26,16 @@ class ObservationBuilder;
 
 class RobotInterface {
 public:
-    /* 构造函数只保存配置；initialize/shutdown/policy_step/apply_action 需由同一控制线程串行调用。 */
-    explicit RobotInterface(RobotInterfaceConfig config = {});
+    /* 构造函数只保存配置；配置由 load_deploy_config() 加载并完整校验。
+       initialize/shutdown/policy_step/apply_action 需由同一控制线程串行调用。 */
+    explicit RobotInterface(RobotInterfaceConfig config);
     ~RobotInterface();
 
     bool initialize();
     bool is_initialized() const { return initialized_.load(); }
 
 
-    bool reset_joints();  /* 复位到模型 DOF 顺序配置的 stand_pose_rad，单位为 rad */
+    bool reset_joints();  /* 复位到模型 DOF 顺序配置的 action.default_joint_pos_rad，单位为 rad */
     bool policy_step();
     bool apply_action(const std::vector<double>& target_q_model_rad);  // 模型 DOF 顺序目标角(rad)
     void shutdown();
@@ -87,8 +88,6 @@ private:
 
     mutable std::mutex policy_command_error_mutex_;
     std::string policy_command_worker_error_;
-
-    bool validate_policy_config() const;
 
     bool load_policy();
     void unload_policy();

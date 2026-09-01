@@ -33,7 +33,7 @@ static_assert(std::is_trivially_copyable<AhrsStateSnapshot>::value,
 
 class RobotImuSession {
 public:
-    explicit RobotImuSession(ImuConfig config = {});
+    explicit RobotImuSession(ImuConfig config);
     ~RobotImuSession();
 
     RobotImuSession(const RobotImuSession&) = delete;

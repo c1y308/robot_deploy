@@ -1,3 +1,4 @@
+#include "config/deploy_config.hpp"
 #include "robot/robot_imu_session.hpp"
 
 #include <algorithm>
@@ -11,6 +12,10 @@
 #include <limits>
 #include <string>
 #include <thread>
+
+#ifndef ROBOT_DEPLOY_CONFIG_PATH
+#define ROBOT_DEPLOY_CONFIG_PATH ""
+#endif
 
 namespace {
 
@@ -135,17 +140,16 @@ void print_usage(const char* program)
 {
     std::cout
         << "Usage: " << program
-        << " [--type a100|xsens] [--device PATH] [--baudrate N]"
-        << " [--report-ms N]\n";
+        << " [--config deploy.yaml] [--type a100|xsens] [--device PATH]"
+        << " [--baudrate N] [--report-ms N]\n";
 }
 
 ParseResult parse_args(int argc,
                        char** argv,
                        inference::ImuConfig& config,
+                       std::string& config_path,
                        std::chrono::milliseconds& report_interval)
 {
-    bool device_overridden = false;
-
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {
@@ -168,9 +172,10 @@ ParseResult parse_args(int argc,
             config.type = imu_base::ReaderType::XSENS_MTI_CAN;
         } else if (arg == "--device" && i + 1 < argc) {
             config.device = argv[++i];
-            device_overridden = true;
         } else if (arg == "--baudrate" && i + 1 < argc) {
             config.baudrate = std::stoi(argv[++i]);
+        } else if (arg == "--config" && i + 1 < argc) {
+            config_path = argv[++i];
         } else if (arg == "--report-ms" && i + 1 < argc) {
             report_interval = std::chrono::milliseconds(std::stoi(argv[++i]));
             if (report_interval.count() <= 0) {
@@ -185,10 +190,6 @@ ParseResult parse_args(int argc,
         }
     }
 
-    if (!device_overridden &&
-        config.type == imu_base::ReaderType::XSENS_MTI_CAN) {
-        config.device = "can0";
-    }
     return ParseResult::Ok;
 }
 
@@ -242,11 +243,29 @@ int main(int argc, char** argv)
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
+    /* 先从 deploy.yaml 取 imu 配置，命令行参数可覆盖 */
+    std::string config_path = ROBOT_DEPLOY_CONFIG_PATH;
+    inference::RobotInterfaceConfig robot_cfg;
+    std::string config_error;
     inference::ImuConfig cfg;
     std::chrono::milliseconds report_interval(1000);
+
+    /* 先解析 --config，再加载配置，其余参数覆盖配置值 */
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::string(argv[i]) == "--config") {
+            config_path = argv[i + 1];
+        }
+    }
+    if (!inference::load_deploy_config(config_path, robot_cfg, config_error)) {
+        std::cerr << "[IMU_TEST] Failed to load deploy config: "
+                  << config_error << "\n";
+        return 1;
+    }
+    cfg = robot_cfg.imu;
+
     try {
         const ParseResult parse_result =
-            parse_args(argc, argv, cfg, report_interval);
+            parse_args(argc, argv, cfg, config_path, report_interval);
         if (parse_result == ParseResult::Help) {
             return 0;
         }

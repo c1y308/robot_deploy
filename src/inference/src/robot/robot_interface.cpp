@@ -22,18 +22,7 @@
 
 namespace inference {
 
-using robot_base::finite_array;
-using robot_base::finite_vector;
-
 namespace {
-
-/* 检查 action 截断范围中的上下界是否全部为有限值。 */
-bool finite_action_clip_ranges(const std::vector<std::array<double, 2>>& ranges)
-{
-    return std::all_of(ranges.begin(), ranges.end(), [](const auto& range) {
-        return std::isfinite(range[0]) && std::isfinite(range[1]);
-    });
-}
 
 std::int64_t seconds_to_ns(double seconds)
 {
@@ -87,10 +76,6 @@ bool RobotInterface::initialize() {
 
     shutdown();
 
-    if (!validate_policy_config()) {
-        shutdown();
-        return false;
-    }
     if (!initialize_model_processors()) {
         shutdown();
         return false;
@@ -143,125 +128,12 @@ void RobotInterface::shutdown() {
 }
 
 
-/* 检查策略模型路径、映射、缩放、限位和观测参数是否有效。 */
-bool RobotInterface::validate_policy_config() const {
-    auto fail = [](const std::string& message) {
-        std::cerr << "[RobotInterface] invalid policy config: "
-                  << message << "\n";
-        return false;
-    };
-
-    if (config_.motor.num_motors != static_cast<int>(PolicyRuntime::kDof)) {
-        return fail("num_motors must be 12");
-    }
-    if (config_.motor.control_mode != motor_base::MotorControlMode::IMPEDANCE) {
-        return fail("policy ankle torque control requires motor.control_mode IMPEDANCE");
-    }
-    if (config_.policy.model_path.empty()) {
-        return fail("policy.model_path is empty");
-    }
-    if (config_.policy.action_clip.size() != PolicyRuntime::kDof) {
-        return fail("action_clip must have 12 ranges");
-    }
-    if (config_.policy.stand_pose_rad.size() != PolicyRuntime::kDof) {
-        return fail("stand_pose_rad must have 12 values");
-    }
-    if (config_.policy.action_scale.size() != PolicyRuntime::kDof) {
-        return fail("action_scale must have 12 values");
-    }
-    if (config_.policy.dof_pos_scale.size() != PolicyRuntime::kDof ||
-        config_.policy.dof_vel_scale.size() != PolicyRuntime::kDof) {
-        return fail("dof_pos_scale and dof_vel_scale must have 12 values");
-    }
-
-    if (!finite_vector(config_.policy.stand_pose_rad) ||
-        !finite_action_clip_ranges(config_.policy.action_clip) ||
-        !finite_vector(config_.policy.action_scale) ||
-        !finite_vector(config_.policy.dof_pos_scale) ||
-        !finite_vector(config_.policy.dof_vel_scale)) {
-        return fail("all vector policy values must be finite");
-    }
-    if (!finite_array(config_.policy.command_scale) ||
-        !finite_array(config_.policy.body_ang_vel_scale)) {
-        return fail("command/body_ang_vel scales must be finite");
-    }
-    if (!finite_array(config_.ankle_motor_limits.min_rad) ||
-        !finite_array(config_.ankle_motor_limits.max_rad)) {
-        return fail("ankle motor physical limits must be finite");
-    }
-    if (!std::isfinite(config_.policy.raw_action_clip) ||
-        config_.policy.raw_action_clip <= 0.0) {
-        return fail("policy.raw_action_clip must be a finite positive value");
-    }
-    if (!finite_array(config_.ankle_torque.virtual_kp) ||
-        !finite_array(config_.ankle_torque.virtual_kd)) {
-        return fail("ankle_torque virtual_kp/virtual_kd must be finite");
-    }
-    if (config_.ankle_torque.virtual_kp[0] < 0.0 ||
-        config_.ankle_torque.virtual_kp[1] < 0.0 ||
-        config_.ankle_torque.virtual_kd[0] < 0.0 ||
-        config_.ankle_torque.virtual_kd[1] < 0.0) {
-        return fail("ankle_torque virtual_kp/virtual_kd must be non-negative");
-    }
-    if (!std::isfinite(config_.ankle_torque.filter_cutoff_rad_s) ||
-        config_.ankle_torque.filter_cutoff_rad_s <= 0.0 ||
-        !std::isfinite(config_.ankle_torque.filter_dt_s) ||
-        config_.ankle_torque.filter_dt_s <= 0.0) {
-        return fail("ankle_torque filter cutoff and dt must be finite positive values");
-    }
-    if (!std::isfinite(config_.ankle_torque.motor_rated_torque_nm) ||
-        config_.ankle_torque.motor_rated_torque_nm <= 0.0) {
-        return fail("ankle_torque motor_rated_torque_nm must be a finite positive value");
-    }
-    if (!std::isfinite(config_.ankle_torque.target_torque_limit_permille) ||
-        config_.ankle_torque.target_torque_limit_permille <= 0.0 ||
-        config_.ankle_torque.target_torque_limit_permille > 32767.0) {
-        return fail("ankle_torque target_torque_limit_permille must be explicitly configured in (0, 32767]");
-    }
-    if (!std::isfinite(config_.policy.step_dt) ||
-        config_.policy.step_dt <= 0.0) {
-        return fail("policy.step_dt must be a finite positive value");
-    }
-    if (!std::isfinite(config_.policy.max_imu_sample_age_s) ||
-        config_.policy.max_imu_sample_age_s <= 0.0 ||
-        !std::isfinite(config_.policy.max_motor_sample_age_s) ||
-        config_.policy.max_motor_sample_age_s <= 0.0 ||
-        !std::isfinite(config_.policy.max_sensor_state_skew_s) ||
-        config_.policy.max_sensor_state_skew_s <= 0.0) {
-        return fail("policy timing thresholds must be finite positive values");
-    }
-    if (!std::isfinite(config_.policy.target_interpolation_duration_s) ||
-        config_.policy.target_interpolation_duration_s < 0.0) {
-        return fail("policy.target_interpolation_duration_s must be finite and non-negative");
-    }
-    if constexpr (policy_observation::kEnableGaitPhase) {
-        if (!std::isfinite(config_.policy.gait_phase_period) ||
-            config_.policy.gait_phase_period <= 0.0) {
-            return fail("gait_phase_period must be a finite positive value");
-        }
-    }
-
-    for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
-        if (config_.policy.action_clip[i][0] > config_.policy.action_clip[i][1]) {
-            return fail("action_clip lower bound must be <= upper bound for every model DOF");
-        }
-        if (config_.policy.action_scale[i] <= 0.0) {
-            return fail("action_scale must be > 0 for every model DOF");
-        }
-    }
-    for (std::size_t i = 0; i < config_.ankle_motor_limits.min_rad.size(); ++i) {
-        if (config_.ankle_motor_limits.min_rad[i] >
-            config_.ankle_motor_limits.max_rad[i]) {
-            return fail("ankle motor physical limit min must be <= max");
-        }
-    }
-
-    return true;
-}
+/* 检查配置有效性的职责已移到配置加载器（load_deploy_config），
+   在进程启动边界一次性完成。 */
 
 bool RobotInterface::initialize_model_processors() {
     std::string error;
-    auto mapping = robot_detail::JointMapping::create(config_.motor.num_motors,
+    auto mapping = robot_detail::JointMapping::create(static_cast<int>(policy_observation::kDof),
                                                          config_.joint_mapping,
                                                                  error);
     if (!mapping) {
@@ -272,12 +144,15 @@ bool RobotInterface::initialize_model_processors() {
 
     auto action_processor = std::make_unique<robot_detail::ActionProcessor>(
         mapping,
-        config_.policy,
+        config_.action,
         config_.ankle_motor_limits,
         config_.motor.mit_kp,
         config_.motor.mit_kd,
         config_.ankle_torque);
-    auto observation_builder = std::make_unique<robot_detail::ObservationBuilder>(mapping, config_.policy);
+    auto observation_builder = std::make_unique<robot_detail::ObservationBuilder>(
+        mapping,
+        config_.observation_scales,
+        config_.action.default_joint_pos_rad);
 
     joint_mapping_       = std::move(mapping);
     action_processor_    = std::move(action_processor);
@@ -356,7 +231,7 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
 }
 
 
-/* 按平滑插值将关节恢复到 stand_pose_rad 初始姿态。 */
+/* 按平滑插值将关节恢复到 default_joint_pos_rad 初始姿态。 */
 bool RobotInterface::reset_joints() {
     if (!motor_session_.is_initialized()) {
         return false;
@@ -372,7 +247,9 @@ bool RobotInterface::reset_joints() {
         return false;
     }
 
-    const std::vector<double> target_model_q = config_.policy.stand_pose_rad;
+    const std::vector<double> target_model_q(
+        config_.action.default_joint_pos_rad.begin(),
+        config_.action.default_joint_pos_rad.end());
 
     const std::vector<double> current_motor_q = motor_session_.get_joint_q();
     std::vector<double> start_model_q;
@@ -460,7 +337,7 @@ bool RobotInterface::start_policy_command_worker()
     PolicyTargetState initial_target;
     initial_target.sequence = ++latest_policy_target_sequence_;
     for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
-        initial_target.q_model_rad[i] = config_.policy.stand_pose_rad[i];
+        initial_target.q_model_rad[i] = config_.action.default_joint_pos_rad[i];
     }
     policy_target_channel_.reset_with_value(initial_target);
     policy_command_log_channel_.reset_empty();
@@ -694,11 +571,11 @@ bool RobotInterface::policy_step() {
                                   : 0;
     const bool compare_imu_timing = imu_age_ns != 0;
     const std::int64_t max_imu_age_ns =
-        seconds_to_ns(config_.policy.max_imu_sample_age_s);
+        seconds_to_ns(config_.sensor_guard.max_imu_sample_age_s);
     const std::int64_t max_motor_age_ns =
-        seconds_to_ns(config_.policy.max_motor_sample_age_s);
+        seconds_to_ns(config_.sensor_guard.max_motor_sample_age_s);
     const std::int64_t max_skew_ns =
-        seconds_to_ns(config_.policy.max_sensor_state_skew_s);
+        seconds_to_ns(config_.sensor_guard.max_sensor_state_skew_s);
 
     if ((compare_imu_timing && imu_age_ns < 0) || motor_age_ns < 0) {
         return handle_policy_step_failure(
@@ -755,18 +632,18 @@ bool RobotInterface::policy_step() {
 
         // 对模型原始输出截断[-1, 1]
         const double clipped_raw_action =
-            std::max(-config_.policy.raw_action_clip,
-                     std::min(config_.policy.raw_action_clip,
+            std::max(-config_.action.raw_action_clip,
+                     std::min(config_.action.raw_action_clip,
                               static_cast<double>(policy_result.raw_action[model_index])));
         // 进行缩放
-        const double scaled_action = clipped_raw_action * config_.policy.action_scale[model_index];
+        const double scaled_action = clipped_raw_action * config_.action.action_scale[model_index];
         // 进行截断
-        const auto& action_clip = config_.policy.action_clip[model_index];
+        const auto& action_clip = config_.action.action_clip[model_index];
         const double clipped_action_offset =
             std::max(action_clip[0], std::min(action_clip[1], scaled_action));
 
         // 叠加模型顺序的站立姿态，得到模型顺序的目标关节角
-        target_q_model_rad[model_index] = config_.policy.stand_pose_rad[model_index] + clipped_action_offset;
+        target_q_model_rad[model_index] = config_.action.default_joint_pos_rad[model_index] + clipped_action_offset;
         record.target_q_model_rad[model_index] = target_q_model_rad[model_index];
     }
 

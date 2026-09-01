@@ -37,7 +37,7 @@ struct MotorStateSnapshot {
 
 class RobotMotorSession {
 public:
-    explicit RobotMotorSession(MotorConfig config = {});
+    explicit RobotMotorSession(MotorConfig config);
     ~RobotMotorSession();
 
     RobotMotorSession(const RobotMotorSession&) = delete;
@@ -68,7 +68,6 @@ public:
     std::vector<double> get_joint_q() const;
 
 private:
-    bool validate_config() const;
     bool submit_command(const motor_base::ControlCommand& command,
                         const char* context);
     bool wait_all_mode_ready(motor_base::MotorControlMode expected_mode,
