@@ -141,7 +141,8 @@ void print_usage(const char* program)
     std::cout
         << "Usage: " << program
         << " [--config deploy.yaml] [--type a100|xsens] [--device PATH]"
-        << " [--baudrate N] [--report-ms N]\n";
+        << " [--baudrate N] [--can-bitrate N] [--no-configure-can]"
+        << " [--report-ms N]\n";
 }
 
 ParseResult parse_args(int argc,
@@ -174,6 +175,14 @@ ParseResult parse_args(int argc,
             config.device = argv[++i];
         } else if (arg == "--baudrate" && i + 1 < argc) {
             config.baudrate = std::stoi(argv[++i]);
+        } else if (arg == "--can-bitrate" && i + 1 < argc) {
+            config.can_bitrate = std::stoi(argv[++i]);
+            if (config.can_bitrate <= 0) {
+                std::cerr << "[IMU_TEST] --can-bitrate must be positive\n";
+                return ParseResult::Error;
+            }
+        } else if (arg == "--no-configure-can") {
+            config.configure_can = false;
         } else if (arg == "--config" && i + 1 < argc) {
             config_path = argv[++i];
         } else if (arg == "--report-ms" && i + 1 < argc) {
@@ -283,7 +292,10 @@ int main(int argc, char** argv)
     std::cout << "[IMU_TEST] Starting IMU channel test: type="
               << reader_type_name(cfg.type)
               << " device=" << cfg.device
-              << " baudrate=" << cfg.baudrate << "\n";
+              << " baudrate=" << cfg.baudrate
+              << " configure_can="
+              << (cfg.configure_can ? "true" : "false")
+              << " can_bitrate=" << cfg.can_bitrate << "\n";
     if (!imu.initialize_and_start()) {
         std::cerr << "[IMU_TEST] Failed to start IMU." << std::endl;
         return -1;

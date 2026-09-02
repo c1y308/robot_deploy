@@ -1,100 +1,73 @@
-# 机器人部署配置（唯一配置来源，由 src/config/deploy_config.cpp 加载）。
-# 规则：
-# - 所有键必填；任何未知键都会导致加载失败（快速失败，不做回退）。
-# - 按 DOF 维度的参数一律按模型 DOF 顺序书写（与训练配置一致）。
-# - 例外：motor_to_model_direction 按物理电机顺序书写。
-# - motor.kp/kd 仅写 8 个直驱项（模型 DOF 0..7）；4 个脚踝物理电机
-#   (M4, M5, M10, M11) 的增益直接取 ankle.torque.virtual_kp[0]/virtual_kd[0]。
-
-hardware:
-  ethercat_ifname: enp8s0
-  imu:
-    type: xsens_mti_can       # xsens_mti_can | a100_serial
-    device: can0
-    baudrate: 921600
-    print_imu: false
-    print_ahrs: false
-
-# 模型 DOF → 物理电机下标。前 8 项为直驱映射；
-# 后 4 项必须与 ankle_parallel 声明的 4 个电机一致（仅用于校验）。
 joint_ids_map: [0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11]
-
-# 物理电机顺序：电机角度 → 模型角度的方向系数，1 同向 / -1 反向。
-motor_to_model_direction: [-1, -1, 1, 1, -1, -1, -1, 1, 1, -1, -1, -1]
-
-# 脚踝并联机构：模型虚拟轴（pitch/roll）由上下两个物理电机并联驱动。
-ankle_parallel:
-  left:  { pitch_dof: 8, roll_dof: 10, upper_motor: 4,  lower_motor: 5 }
-  right: { pitch_dof: 9, roll_dof: 11, upper_motor: 10, lower_motor: 11 }
-
-motor:
-  control_mode: impedance     # 策略脚踝扭矩控制要求阻抗模式
-  # 模型 DOF 0..7 顺序，仅直驱 8 项；脚踝电机增益由
-  # ankle.torque.virtual_kp/virtual_kd 填充。
-  kp: [250.0, 250.0, 250.0, 250.0, 250.0, 250.0, 250.0, 250.0]
-  kd: [10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0]
-  wait_all_motors_timeout_ms: 20000
-  wait_all_motors_poll_ms: 100
-  control_ready_timeout_ms: 4000
-  print_info: true
-  print_ids: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-
-policy:
-  model_path: model/policy.pt   # 相对路径按 ROBOT_INFERENCE_ROOT_DIR 解析
-  step_dt: 0.02
-  target_interpolation_duration_s: 0.0
-  raw_action_clip: 1.0
-  # 仅 705 观测编译（ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=ON）时必填；
-  # 675 编译时此段出现即为错误。
-  gait_phase: { period: 0.74, stand_threshold: 0.05, move_threshold: 0.15 }
-
-# 动作后处理（模型 DOF 顺序）：
-# target = default_joint_pos + clamp(raw_action * scale, clip)。
-action:
-  default_joint_pos: [0.0, 0.0, -0.2, -0.2, 0.0, 0.0, 0.2, 0.2, -0.05, -0.05, 0.0, 0.0]
-  scale: [0.16, 0.16, 0.32, 0.32, 0.1, 0.1, 0.36, 0.36, 0.18, 0.18, 0.1, 0.1]
-  clip:  [[-0.22, 0.22], [-0.22, 0.22], [-0.28, 0.35], [-0.28, 0.35],
-          [-0.16, 0.16], [-0.16, 0.16], [-0.22, 0.38], [-0.22, 0.38],
-          [-0.14, 0.2],  [-0.14, 0.2],  [-0.12, 0.12], [-0.12, 0.12]]
-
-# 观测缩放；history_length 必须等于编译期帧堆叠长度（15）。
-observation:
-  base_ang_vel:      { scale: [0.2, 0.2, 0.2], history_length: 15 }
-  velocity_commands: { scale: [1.0, 1.0, 1.0], history_length: 15 }
+step_dt: 0.02
+stiffness: [180.0, 180.0, 180.0, 180.0, 187.0, 187.0, 180.0, 180.0, 180.0, 180.0,
+  187.0, 187.0]
+damping: [10.0, 10.0, 10.0, 10.0, 9.07, 9.07, 10.0, 10.0, 10.0, 10.0, 9.07, 9.07]
+default_joint_pos: [0.0, 0.0, -0.2, -0.2, 0.0, 0.0, 0.2, 0.2, -0.05, -0.05, 0.0, 0.0]
+commands:
+  base_velocity:
+    ranges:
+      lin_vel_x: [-0.45, 0.55]
+      lin_vel_y: [-0.3, 0.3]
+      ang_vel_z: [-0.6, 0.6]
+      heading: null
+actions:
+  JointPositionAction:
+    clip:
+    - [-0.22, 0.22]
+    - [-0.22, 0.22]
+    - [-0.28, 0.35]
+    - [-0.28, 0.35]
+    - [-0.16, 0.16]
+    - [-0.16, 0.16]
+    - [-0.22, 0.38]
+    - [-0.22, 0.38]
+    - [-0.14, 0.2]
+    - [-0.14, 0.2]
+    - [-0.12, 0.12]
+    - [-0.12, 0.12]
+    joint_names: [.*]
+    scale: [0.16, 0.16, 0.32, 0.32, 0.1, 0.1, 0.36, 0.36, 0.18, 0.18, 0.1, 0.1]
+    offset: [0.0, 0.0, -0.2, -0.2, 0.0, 0.0, 0.2, 0.2, -0.05, -0.05, 0.0, 0.0]
+    raw_action_clip: 1.0
+    min_inference_delay: 0
+    max_inference_delay: 1
+    min_communication_delay: 0
+    max_communication_delay: 1
+    joint_ids: null
+observations:
+  base_ang_vel:
+    params: {}
+    clip: null
+    scale: [0.2, 0.2, 0.2]
+    history_length: 15
+  projected_gravity:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0]
+    history_length: 15
+  velocity_commands:
+    params: {command_name: base_velocity}
+    clip: null
+    scale: [1.0, 1.0, 1.0]
+    history_length: 15
+  # gait_phase:
+  #   params: {period: 0.74, command_name: base_velocity, gate_by_command: true}
+  #   clip: null
+  #   scale: [1.0, 1.0]
+  #   history_length: 15
   joint_pos_rel:
+    params: {}
+    clip: null
     scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
     history_length: 15
   joint_vel_rel:
+    params: {}
+    clip: null
     scale: [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05]
     history_length: 15
-
-ankle:
-  # 脚踝物理电机行程限位，显式命名键，每项 [min, max]。
-  motor_limits:
-    left_upper:  [-1.1, 1.1]
-    left_lower:  [-1.1, 1.1]
-    right_upper: [-1.1, 1.1]
-    right_lower: [-1.1, 1.1]
-  torque:
-    # [pitch, roll]；virtual_kp[0]/virtual_kd[0] 同时是 4 个脚踝物理电机
-    # 复位增益（motor.kp/kd 脚踝槽位）的唯一来源。
-    virtual_kp: [187.0, 187.0]
-    virtual_kd: [9.07, 9.07]
-    filter_cutoff_rad_s: 100.0
-    filter_dt_s: 0.001
-    motor_rated_torque_nm: 10.5
-    target_torque_limit_permille: 2000.0   # (0, 32767]
-
-# policy_step 传感器时序守卫。
-guard:
-  max_imu_sample_age_s: 0.050
-  max_motor_sample_age_s: 0.050
-  max_sensor_state_skew_s: 0.030
-
-# 推理日志；directory 相对路径按 ROBOT_INFERENCE_ROOT_DIR 解析。
-recorder:
-  enabled: true
-  directory: log
-  file_prefix: ""
-  flush_interval_ms: 1000
-  max_queue_depth: 4096
+  last_action:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 15

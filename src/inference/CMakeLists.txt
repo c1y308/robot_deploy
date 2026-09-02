@@ -71,7 +71,7 @@ target_compile_definitions(inference_recorder PUBLIC
 )
 target_link_libraries(inference_recorder PUBLIC robot_base pthread)
 
-# deploy.yaml 加载器：解析 + 全量校验 + 模型序→电机序转换。
+# deploy.yaml 加载器：解析真实 schema，并校验模型序/电机序边界。
 # 只依赖纯类型（MotorControlMode/ReaderType）与 JointMapping，不依赖 torch。
 add_library(deploy_config STATIC
     src/config/deploy_config.cpp
@@ -208,3 +208,15 @@ add_executable(deploy_config_test
 )
 target_link_libraries(deploy_config_test PRIVATE deploy_config robot_base)
 add_test(NAME deploy_config_test COMMAND deploy_config_test)
+
+add_executable(robot_imu_session_config_test
+    tests/robot_imu_session_config_test.cpp
+)
+target_include_directories(robot_imu_session_config_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../base/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/include
+)
+add_test(NAME robot_imu_session_config_test
+         COMMAND robot_imu_session_config_test)

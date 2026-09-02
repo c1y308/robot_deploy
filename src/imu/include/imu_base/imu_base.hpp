@@ -15,6 +15,8 @@ struct ReaderConfig {
     ReaderType type = ReaderType::A100_SERIAL;
     std::string device = "/dev/ttyUSB0";
     int baudrate = 921600;
+    bool configure_can = true;
+    int can_bitrate = 250000;
     bool print_imu = false;
     bool print_ahrs = false;
 };

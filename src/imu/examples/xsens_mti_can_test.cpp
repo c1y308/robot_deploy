@@ -36,6 +36,11 @@ int main()
     cfg.device = "can0";
     cfg.print_ahrs = true;
 
+    std::cout << "[XSENS_MTI_CAN_TEST] Starting: device=" << cfg.device
+              << " configure_can="
+              << (cfg.configure_can ? "true" : "false")
+              << " can_bitrate=" << cfg.can_bitrate << "\n";
+
     SharedState state;
     imu::XsensMtiCanReader reader;
     reader.set_ahrs_callback([&state](const imu_base::AHRSData& data) {

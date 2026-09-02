@@ -54,7 +54,7 @@ make -j$(nproc)
 ## IMU类型
 
 - `imu_base::ReaderType::A100_SERIAL`：默认类型，`device` 为串口设备路径，`baudrate` 为串口波特率。
-- `imu_base::ReaderType::XSENS_MTI_CAN`：`device` 为 SocketCAN 接口名，例如 `can0`；CAN bitrate 和接口 up/down 由系统外部配置。
+- `imu_base::ReaderType::XSENS_MTI_CAN`：`device` 为 SocketCAN 接口名，例如 `can0`；默认启动时自动配置接口 down、`type can bitrate 250000`、up。该操作需要 root 权限或 `CAP_NET_ADMIN`。
 
 ## 使用方法
 

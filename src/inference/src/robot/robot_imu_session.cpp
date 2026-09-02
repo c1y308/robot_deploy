@@ -25,12 +25,7 @@ bool RobotImuSession::initialize_and_start()
         return true;
     }
 
-    imu_base::ReaderConfig imu_cfg;
-    imu_cfg.type        = config_.type;
-    imu_cfg.device      = config_.device;
-    imu_cfg.baudrate    = config_.baudrate;
-    imu_cfg.print_imu   = config_.print_imu;
-    imu_cfg.print_ahrs  = config_.print_ahrs;
+    const imu_base::ReaderConfig imu_cfg = make_reader_config(config_);
 
     ahrs_ready_.store(false);
     ahrs_state_channel_.reset_empty();

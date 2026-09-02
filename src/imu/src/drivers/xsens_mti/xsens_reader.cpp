@@ -1,5 +1,7 @@
 #include "driver/xsens_mti/xsens_reader.hpp"
 
+#include "driver/socket_can_config.hpp"
+
 #include <iomanip>
 #include <iostream>
 #include <linux/can.h>
@@ -30,6 +32,10 @@ bool XsensMtiCanReader::start(const imu_base::ReaderConfig& config)
     print_configuration();
 
     parser_->reset();
+    if (config_.configure_can &&
+        !configure_socket_can_interface(config_.device, config_.can_bitrate)) {
+        return false;
+    }
     if (!can_port_->open(config_.device)) {
         return false;
     }
@@ -123,6 +129,11 @@ void XsensMtiCanReader::print_configuration() const
     std::cout << "  Xsens MTi CAN Reader" << std::endl;
     std::cout << "========================================" << std::endl;
     std::cout << "CAN Interface: " << config_.device << std::endl;
+    std::cout << "Configure CAN: "
+              << (config_.configure_can ? "Yes" : "No") << std::endl;
+    if (config_.configure_can) {
+        std::cout << "CAN Bitrate: " << config_.can_bitrate << std::endl;
+    }
     std::cout << "Print AHRS: " << (config_.print_ahrs ? "Yes" : "No")
               << std::endl;
     std::cout << "========================================" << std::endl << std::endl;

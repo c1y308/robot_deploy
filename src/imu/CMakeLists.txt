@@ -32,6 +32,7 @@ target_link_libraries(imu_a100_core
 )
 
 add_library(imu_xsens_mti_core STATIC
+    src/drivers/socket_can_config.cpp
     src/drivers/socket_can_port.cpp
     src/protocol/xsens_mti/can_parser.cpp
     src/drivers/xsens_mti/xsens_reader.cpp
@@ -63,6 +64,12 @@ add_executable(xsens_mti_can_parser_test
 )
 target_link_libraries(xsens_mti_can_parser_test PRIVATE imu_xsens_mti_core)
 add_test(NAME xsens_mti_can_parser_test COMMAND xsens_mti_can_parser_test)
+
+add_executable(socket_can_config_test
+    tests/socket_can_config_test.cpp
+)
+target_link_libraries(socket_can_config_test PRIVATE imu_xsens_mti_core)
+add_test(NAME socket_can_config_test COMMAND socket_can_config_test)
 
 add_executable(a100_parser_test
     tests/a100_parser_test.cpp

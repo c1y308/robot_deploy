@@ -12,18 +12,16 @@ struct DeployConfigLoadOptions {
     std::string root_dir;
 };
 
-/* 从 deploy.yaml 加载并完整校验机器人配置（唯一配置入口）。
+/* 从真实 deploy.yaml 格式加载并完整校验机器人配置（唯一配置入口）。
 
-   加载期一次性完成：解析 → 全键必填/未知键检查 → 模型序→电机序转换
-   → 类型/数值检查。任何失败都通过 error 返回描述，不做回退。
+   加载期一次性完成：解析 → 必填/未知键检查 → 模型序/电机序
+   边界校验 → 类型/数值检查。任何失败都通过 error 返回描述。
 
    顺序约定：
-   - YAML 中按 DOF 维度的参数一律按模型 DOF 顺序书写；
-   - motor.kp/kd 仅写 8 个直驱项（模型 DOF 0..7），加载器经
-     joint_ids_map 转为物理电机顺序，4 个脚踝电机槽位取
-     ankle.torque.virtual_kp[0] / virtual_kd[0]（两轴当前等值）；
-   - motor_to_model_direction 例外：按物理电机顺序书写，因为脚踝
-     上下两电机的方向无法用 12 项模型序表达。 */
+   - default_joint_pos / actions.JointPositionAction / observations 中
+     按 DOF 维度的参数按模型 DOF 顺序书写；
+   - stiffness / damping 按物理电机顺序书写，直接填充 MIT 增益；
+   - joint_ids_map 只用于生成模型 DOF → 物理电机下标的拓扑映射。 */
 bool load_deploy_config(const std::string& yaml_path,
                         RobotInterfaceConfig& config,
                         std::string& error);

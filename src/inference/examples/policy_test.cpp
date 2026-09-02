@@ -40,7 +40,10 @@ void print_config_summary(const inference::RobotInterfaceConfig& cfg)
     std::cout << "[INFO] Deploy config summary:\n"
               << "  ethercat_ifname: " << cfg.motor.ethercat_ifname << "\n"
               << "  imu device: " << cfg.imu.device
-              << " baudrate: " << cfg.imu.baudrate << "\n"
+              << " baudrate: " << cfg.imu.baudrate
+              << " configure_can: "
+              << (cfg.imu.configure_can ? "true" : "false")
+              << " can_bitrate: " << cfg.imu.can_bitrate << "\n"
               << "  model_path: " << cfg.policy.model_path << "\n"
               << "  step_dt: " << cfg.policy.step_dt << "\n"
               << "  raw_action_clip: " << cfg.action.raw_action_clip << "\n";

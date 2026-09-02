@@ -16,12 +16,15 @@ struct AnkleParallelMap {
 
 struct JointMappingConfig {
     /* 直驱模型 DOF（按模型顺序，跳过脚踝并联轴）→ 物理电机下标 */
-    std::vector<int> model_to_motor_index;
+    std::vector<int> model_to_motor_index = {0, 6, 1, 7, 2, 8, 3, 9};
     /* 物理电机顺序：电机方向与模型方向的关系，1 同向 / -1 反向 */
-    std::array<int, 12> motor_to_model_direction;
+    std::array<int, 12> motor_to_model_direction = {
+        -1, -1, 1,  1, -1, -1,
+        -1,  1, 1, -1, -1, -1
+    };
 
-    AnkleParallelMap left_ankle_parallel;
-    AnkleParallelMap right_ankle_parallel;
+    AnkleParallelMap left_ankle_parallel  = {8, 10, 4, 5};
+    AnkleParallelMap right_ankle_parallel = {9, 11, 10, 11};
 };
 
 }  // namespace inference

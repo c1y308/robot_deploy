@@ -31,6 +31,19 @@ struct AhrsStateSnapshot {
 static_assert(std::is_trivially_copyable<AhrsStateSnapshot>::value,
               "AhrsStateSnapshot must be trivially copyable for SpscLatestValue");
 
+inline imu_base::ReaderConfig make_reader_config(const ImuConfig& config)
+{
+    imu_base::ReaderConfig imu_cfg;
+    imu_cfg.type = config.type;
+    imu_cfg.device = config.device;
+    imu_cfg.baudrate = config.baudrate;
+    imu_cfg.configure_can = config.configure_can;
+    imu_cfg.can_bitrate = config.can_bitrate;
+    imu_cfg.print_imu = config.print_imu;
+    imu_cfg.print_ahrs = config.print_ahrs;
+    return imu_cfg;
+}
+
 class RobotImuSession {
 public:
     explicit RobotImuSession(ImuConfig config);
