@@ -19,7 +19,7 @@ RobotImuSession::~RobotImuSession()
     deinitialize();
 }
 
-bool RobotImuSession::initialize_and_start()
+bool RobotImuSession::initialize()
 {
     if (initialized_.load()) {
         return true;

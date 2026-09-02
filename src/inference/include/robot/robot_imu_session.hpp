@@ -1,7 +1,7 @@
 #pragma once
 
 #include "robot/robot_config.hpp"
-#include "spsc_latest_value/spsc_latest_value.hpp"
+#include "spsc_latest_channel/spsc_latest_channel.hpp"
 
 #include <array>
 #include <atomic>
@@ -29,7 +29,7 @@ struct AhrsStateSnapshot {
 };
 
 static_assert(std::is_trivially_copyable<AhrsStateSnapshot>::value,
-              "AhrsStateSnapshot must be trivially copyable for SpscLatestValue");
+              "AhrsStateSnapshot must be trivially copyable for SpscLatestChannel");
 
 inline imu_base::ReaderConfig make_reader_config(const ImuConfig& config)
 {
@@ -52,7 +52,7 @@ public:
     RobotImuSession(const RobotImuSession&) = delete;
     RobotImuSession& operator=(const RobotImuSession&) = delete;
 
-    bool initialize_and_start();
+    bool initialize();
     void deinitialize();
 
     bool is_initialized() const noexcept { return initialized_.load(); }
@@ -67,7 +67,7 @@ private:
     std::atomic<bool> initialized_{false};
     std::atomic<bool> ahrs_ready_{false};
 
-    robot_base::SpscLatestValue<AhrsStateSnapshot> ahrs_state_channel_;
+    robot_base::SpscLatestChannel<AhrsStateSnapshot> ahrs_state_channel_;
     AhrsStateSnapshot latest_ahrs_state_cache_;
     bool has_ahrs_state_cache_{false};
 };

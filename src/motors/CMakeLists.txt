@@ -20,9 +20,9 @@ link_directories(
 
 # 编译静态/动态库
 add_library(myactua_ethercat
-    src/motor_base/motor_base.cpp
+    src/motor_base/motor_controller_base.cpp
     src/motor_base/rt_event_dispatcher.cpp
-    src/drivers/myact/motor_control.cpp
+    src/drivers/myact/myact_motor_controller.cpp
     src/drivers/myact/myact_debug_printers.cpp
     src/protocol/ethercat/ethercat_adapter_igh.cpp
 )

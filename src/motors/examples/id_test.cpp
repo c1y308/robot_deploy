@@ -1,4 +1,4 @@
-#include "driver/myact/motor_control.hpp"
+#include "driver/myact/myact_motor_controller.hpp"
 #include "protocol/ethercat/ethercat_adapter_igh.hpp"
 #include "motor_base/command_types.hpp"
 #include "motor_base/rt_event_dispatcher.hpp"
@@ -11,7 +11,7 @@
 
 namespace {
 
-bool wait_all_position_running(myactua::MYACTUA& controller,
+bool wait_all_position_running(myactua::MyActMotorController& controller,
                                int motor_count,
                                std::chrono::milliseconds timeout,
                                std::chrono::milliseconds poll_interval)
@@ -46,7 +46,7 @@ int main() {
     constexpr int motors_nums = 12;
     auto adapter = std::make_shared<myactua::EthercatAdapterIGH>();
     // 实例化控制类，与适配器关联
-    myactua::MYACTUA controller(adapter, motors_nums);
+    myactua::MyActMotorController controller(adapter, motors_nums);
     controller.set_print_info({-1});
     controller.set_event_callback([](const motor_base::RtEvent& event) {
         if (event.type == motor_base::RtEventType::STATUS_CHANNEL_BUSY) {

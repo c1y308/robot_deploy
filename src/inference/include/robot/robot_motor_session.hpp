@@ -43,7 +43,7 @@ public:
     RobotMotorSession(const RobotMotorSession&) = delete;
     RobotMotorSession& operator=(const RobotMotorSession&) = delete;
 
-    bool initialize_and_start();
+    bool initialize();
     bool stop(int motor_index = -1);
     bool restart(int motor_index = -1);
     void deinitialize();
@@ -70,12 +70,6 @@ public:
 private:
     bool submit_command(const motor_base::ControlCommand& command,
                         const char* context);
-    bool wait_all_mode_ready(motor_base::MotorControlMode expected_mode,
-                             int timeout_ms,
-                             const char* context) const;
-    bool wait_all_control_ready(motor_base::MotorControlMode expected_mode,
-                                int timeout_ms,
-                                const char* context) const;
 
     MotorConfig config_;
 

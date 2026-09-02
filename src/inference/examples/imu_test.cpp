@@ -296,7 +296,7 @@ int main(int argc, char** argv)
               << " configure_can="
               << (cfg.configure_can ? "true" : "false")
               << " can_bitrate=" << cfg.can_bitrate << "\n";
-    if (!imu.initialize_and_start()) {
+    if (!imu.initialize()) {
         std::cerr << "[IMU_TEST] Failed to start IMU." << std::endl;
         return -1;
     }

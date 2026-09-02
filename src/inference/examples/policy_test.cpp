@@ -49,18 +49,6 @@ void print_config_summary(const inference::RobotInterfaceConfig& cfg)
               << "  raw_action_clip: " << cfg.action.raw_action_clip << "\n";
 }
 
-bool safety_countdown()
-{
-    for (int remaining = 3; remaining > 0; --remaining) {
-        if (g_stop_requested.load()) {
-            return false;
-        }
-        std::cout << "[INFO] Starting hardware in " << remaining
-                  << " seconds. Press Ctrl+C to cancel.\n";
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
-    return !g_stop_requested.load();
-}
 
 void send_zero_velocity(inference::RobotInterface& robot)
 {
@@ -111,11 +99,6 @@ int main(int argc, char** argv)
         std::cerr << "[ERROR] Policy model is not readable: "
                   << cfg.policy.model_path << "\n";
         return 1;
-    }
-
-    if (!safety_countdown()) {
-        std::cout << "[INFO] Startup canceled before hardware initialization.\n";
-        return 0;
     }
 
     inference::RobotInterface robot(cfg);

@@ -9,15 +9,15 @@
 namespace robot_base {
 
 template <typename T>
-class SpscLatestValue {
+class SpscLatestChannel {
     static_assert(std::is_trivially_copyable<T>::value,
-                  "SpscLatestValue<T> requires trivially copyable T");
+                  "SpscLatestChannel<T> requires trivially copyable T");
 
 public:
-    SpscLatestValue() = default;
+    SpscLatestChannel() = default;
 
-    SpscLatestValue(const SpscLatestValue&) = delete;
-    SpscLatestValue& operator=(const SpscLatestValue&) = delete;
+    SpscLatestChannel(const SpscLatestChannel&) = delete;
+    SpscLatestChannel& operator=(const SpscLatestChannel&) = delete;
 
     void reset_empty() noexcept
     {

@@ -43,6 +43,24 @@ inline std::int64_t monotonic_now_ns() noexcept
            static_cast<std::int64_t>(time.tv_nsec);
 }
 
+/// @brief Convert seconds to nanoseconds with nearest-integer rounding.
+inline std::int64_t seconds_to_ns(double seconds) noexcept
+{
+    return static_cast<std::int64_t>(std::llround(seconds * 1'000'000'000.0));
+}
+
+/// @brief Convert nanoseconds to microseconds.
+inline std::int64_t ns_to_us(std::int64_t ns) noexcept
+{
+    return ns / 1000;
+}
+
+/// @brief Absolute value for nanosecond deltas.
+inline std::int64_t abs_ns(std::int64_t ns) noexcept
+{
+    return ns < 0 ? -ns : ns;
+}
+
 /// @brief double → int32_t（四舍五入）
 inline int32_t double_to_i32(double value)
 {

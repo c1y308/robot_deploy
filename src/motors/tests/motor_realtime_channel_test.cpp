@@ -1,6 +1,6 @@
 #include "motor_base/command_types.hpp"
 #include "protocol/ethercat/ethercat_adapter.hpp"
-#include "driver/myact/motor_control.hpp"
+#include "driver/myact/myact_motor_controller.hpp"
 #include "driver/myact/motor_units.hpp"
 
 #include <array>
@@ -209,9 +209,9 @@ void append_health(
     }
 }
 
-myactua::MYACTUA::Options test_options()
+myactua::MyActMotorController::Options test_options()
 {
-    myactua::MYACTUA::Options options;
+    myactua::MyActMotorController::Options options;
     options.command_queue_capacity = 8;
     options.discrete_queue_capacity_per_motor = 4;
     options.rt_event_queue_capacity = 64;
@@ -222,7 +222,7 @@ myactua::MYACTUA::Options test_options()
     return options;
 }
 
-bool expect_start(myactua::MYACTUA& controller, const char* message)
+bool expect_start(myactua::MyActMotorController& controller, const char* message)
 {
     if (!expect(controller.start(), message)) {
         controller.shutdown();
@@ -235,7 +235,7 @@ bool expect_start(myactua::MYACTUA& controller, const char* message)
 
 int main()
 {
-    myactua::MYACTUA::Options options;
+    myactua::MyActMotorController::Options options;
     options.command_queue_capacity = 3;
     options.discrete_queue_capacity_per_motor = 1;
     options.rt_event_queue_capacity = 32;
@@ -244,7 +244,7 @@ int main()
     options.rt_priority = 0;
 
     auto adapter = std::make_shared<FakeAdapter>(1);
-    myactua::MYACTUA controller(adapter, 1, options);
+    myactua::MyActMotorController controller(adapter, 1, options);
 
     std::vector<double> too_many(motor_base::kMaxMotorCommandSetpoints + 1, 0.0);
     const motor_base::CommandSubmitResult invalid_setpoint_result =
@@ -436,10 +436,10 @@ int main()
     controller.shutdown();
 
     {
-        myactua::MYACTUA::Options wrap_options = test_options();
+        myactua::MyActMotorController::Options wrap_options = test_options();
         wrap_options.command_queue_capacity = 70;
         auto wrap_adapter = std::make_shared<FakeAdapter>(1);
-        myactua::MYACTUA wrap_controller(wrap_adapter, 1, wrap_options);
+        myactua::MyActMotorController wrap_controller(wrap_adapter, 1, wrap_options);
 
         const motor_base::CommandSubmitResult first_result =
             wrap_controller.send_command(motor_base::ControlCommand::stop());
@@ -470,7 +470,7 @@ int main()
     }
 
     {
-        myactua::MYACTUA::Options failing_options = test_options();
+        myactua::MyActMotorController::Options failing_options = test_options();
         const int max_fifo_priority = sched_get_priority_max(SCHED_FIFO);
         if (!expect(max_fifo_priority > 0,
                     "SCHED_FIFO max priority should be available")) {
@@ -479,7 +479,7 @@ int main()
         failing_options.rt_priority = max_fifo_priority + 1;
 
         auto failing_adapter = std::make_shared<FakeAdapter>(1);
-        myactua::MYACTUA failing_controller(failing_adapter, 1, failing_options);
+        myactua::MyActMotorController failing_controller(failing_adapter, 1, failing_options);
         if (!expect(!failing_controller.start(),
                     "invalid realtime priority should make start return false")) {
             failing_controller.shutdown();
@@ -536,7 +536,7 @@ int main()
         adapter->set_rx_status_word(0, operation_enabled_status_word());
         adapter->set_rx_mode(0, myactua::MyactControlMode::CSP);
 
-        myactua::MYACTUA mode_controller(adapter, 1, test_options());
+        myactua::MyActMotorController mode_controller(adapter, 1, test_options());
         std::atomic<int> reject_events{0};
         std::atomic<int> reject_motor{-2};
         std::atomic<int> reject_reason{0};
@@ -621,7 +621,7 @@ int main()
         adapter->set_rx_status_word(0, myactua::BIT_READY_TO_SWITCH_ON);
         adapter->set_rx_mode(0, myactua::MyactControlMode::CSP);
 
-        myactua::MYACTUA stopped_controller(adapter, 1, test_options());
+        myactua::MyActMotorController stopped_controller(adapter, 1, test_options());
         std::atomic<int> reject_events{0};
         stopped_controller.set_event_callback(
             [&reject_events](const motor_base::RtEvent& event) {
@@ -673,7 +673,7 @@ int main()
         adapter->set_rx_status_word(0, operation_enabled_status_word());
         adapter->set_rx_mode(0, myactua::MyactControlMode::CSP);
 
-        myactua::MYACTUA running_controller(adapter, 1, test_options());
+        myactua::MyActMotorController running_controller(adapter, 1, test_options());
         std::atomic<int> reject_events{0};
         running_controller.set_event_callback(
             [&reject_events](const motor_base::RtEvent& event) {
@@ -751,7 +751,7 @@ int main()
         adapter->set_rx_mode(0, myactua::MyactControlMode::CSP);
         adapter->set_rx_mode(1, myactua::MyactControlMode::CSP);
 
-        myactua::MYACTUA all_ready_controller(adapter, 2, test_options());
+        myactua::MyActMotorController all_ready_controller(adapter, 2, test_options());
         if (!expect_start(all_ready_controller,
                           "all-ready restart controller should start")) {
             return 1;
@@ -788,7 +788,7 @@ int main()
         adapter->set_rx_mode(0, myactua::MyactControlMode::CSP);
         adapter->set_rx_mode(1, myactua::MyactControlMode::CSP);
 
-        myactua::MYACTUA partial_controller(adapter, 2, test_options());
+        myactua::MyActMotorController partial_controller(adapter, 2, test_options());
         std::atomic<int> reject_events{0};
         std::atomic<int> reject_motor{-2};
         partial_controller.set_event_callback(
@@ -865,7 +865,7 @@ int main()
           append_health(script, 9, health(true, EC_WC_INCOMPLETE, 0));
           adapter->set_health_script(script);
 
-          myactua::MYACTUA watchdog_controller(adapter, 1, test_options());
+          myactua::MyActMotorController watchdog_controller(adapter, 1, test_options());
           std::atomic<int> fault_events{0};
           watchdog_controller.set_event_callback(
               [&fault_events](const motor_base::RtEvent& event) {
@@ -897,7 +897,7 @@ int main()
           append_health(script, 5, health(true, EC_WC_INCOMPLETE, 0));
           adapter->set_health_script(script);
 
-          myactua::MYACTUA watchdog_controller(adapter, 1, test_options());
+          myactua::MyActMotorController watchdog_controller(adapter, 1, test_options());
           std::atomic<int> fault_events{0};
           watchdog_controller.set_event_callback(
               [&fault_events](const motor_base::RtEvent& event) {
@@ -927,7 +927,7 @@ int main()
           append_health(script, 10, health(true, EC_WC_INCOMPLETE, 0));
           adapter->set_health_script(script);
 
-          myactua::MYACTUA watchdog_controller(adapter, 1, test_options());
+          myactua::MyActMotorController watchdog_controller(adapter, 1, test_options());
           std::atomic<int> fault_events{0};
           std::atomic<int> last_reason{0};
           watchdog_controller.set_event_callback(
@@ -992,7 +992,7 @@ int main()
           append_health(script, 10, health(false, EC_WC_COMPLETE, 0));
           adapter->set_health_script(script);
 
-          myactua::MYACTUA watchdog_controller(adapter, 1, test_options());
+          myactua::MyActMotorController watchdog_controller(adapter, 1, test_options());
           std::atomic<int> last_reason{0};
           watchdog_controller.set_event_callback(
               [&last_reason](const motor_base::RtEvent& event) {
@@ -1023,7 +1023,7 @@ int main()
           append_health(script, 10, health(true, EC_WC_INCOMPLETE, 0));
           adapter->set_health_script(script);
 
-          myactua::MYACTUA watchdog_controller(adapter, 1, test_options());
+          myactua::MyActMotorController watchdog_controller(adapter, 1, test_options());
           if (!expect_start(watchdog_controller,
                             "single-motor restart controller should start")) {
               return 1;
@@ -1069,7 +1069,7 @@ int main()
           append_health(script, 10, health(true, EC_WC_INCOMPLETE, 0));
           adapter->set_health_script(script);
 
-          myactua::MYACTUA watchdog_controller(adapter, 1, test_options());
+          myactua::MyActMotorController watchdog_controller(adapter, 1, test_options());
           std::atomic<int> fault_events{0};
           watchdog_controller.set_event_callback(
               [&fault_events](const motor_base::RtEvent& event) {
@@ -1110,7 +1110,7 @@ int main()
           append_health(script, 10, health(true, EC_WC_INCOMPLETE, 0));
           adapter->set_health_script(script);
 
-          myactua::MYACTUA watchdog_controller(adapter, 1, test_options());
+          myactua::MyActMotorController watchdog_controller(adapter, 1, test_options());
           if (!expect_start(watchdog_controller,
                             "RT restart latch controller should start")) {
               return 1;

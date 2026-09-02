@@ -10,10 +10,10 @@ target_include_directories(robot_base INTERFACE
 )
 target_link_libraries(robot_base INTERFACE rt)
 
-add_executable(spsc_latest_value_test
-    tests/spsc_latest_value_test.cpp
+add_executable(spsc_latest_channel_test
+    tests/spsc_latest_channel_test.cpp
 )
-target_link_libraries(spsc_latest_value_test PRIVATE
+target_link_libraries(spsc_latest_channel_test PRIVATE
     robot_base
     pthread
 )

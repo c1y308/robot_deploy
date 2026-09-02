@@ -154,14 +154,6 @@ target_link_libraries(policy_test PRIVATE
     xbox_control_core
 )
 
-add_executable(target_interpolator_test
-    tests/target_interpolator_test.cpp
-)
-target_include_directories(target_interpolator_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-add_test(NAME target_interpolator_test COMMAND target_interpolator_test)
-
 add_executable(inference_recorder_csv_test
     tests/inference_recorder_csv_test.cpp
 )

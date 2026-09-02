@@ -1,4 +1,4 @@
-#include "motor_base/motor_base.hpp"
+#include "motor_base/motor_controller_base.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -677,7 +677,7 @@ bool MotorControllerBase::is_running() const
 }
 
 
-std::vector<double> MotorControllerBase::get_joint_q_rad()
+std::vector<double> MotorControllerBase::get_positions_rad()
 {
     const auto status = get_status();
     std::vector<double> q(status.size(), 0.0);

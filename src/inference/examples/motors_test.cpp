@@ -56,9 +56,9 @@ int main(int argc, char** argv) {
 
     inference::RobotMotorSession motors(cfg);
 
-    std::cout << "[MOTORS_TEST] 1/4 initialize_and_start()" << std::endl;
-    if (!motors.initialize_and_start()) {
-        std::cerr << "[MOTORS_TEST] initialize_and_start failed." << std::endl;
+    std::cout << "[MOTORS_TEST] 1/4 initialize()" << std::endl;
+    if (!motors.initialize()) {
+        std::cerr << "[MOTORS_TEST] initialize failed." << std::endl;
         return -1;
     }
 

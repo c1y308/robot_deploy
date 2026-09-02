@@ -1,9 +1,9 @@
 #include "robot/robot_motor_session.hpp"
 
 #include "tool/tool.hpp"
-#include "driver/myact/motor_control.hpp"
+#include "driver/myact/myact_motor_controller.hpp"
 #include "protocol/ethercat/ethercat_adapter_igh.hpp"
-#include "motor_base/motor_base.hpp"
+#include "motor_base/motor_controller_base.hpp"
 
 #include <algorithm>
 #include <array>
@@ -83,14 +83,14 @@ RobotMotorSession::~RobotMotorSession()
 }
 
 
-bool RobotMotorSession::initialize_and_start()
+bool RobotMotorSession::initialize()
 {
     if (initialized_.load()) {
         return true;
     }
 
     adapter_    = std::make_shared<myactua::EthercatAdapterIGH>();
-    controller_ = std::make_unique<myactua::MYACTUA>(adapter_, config_.num_motors);
+    controller_ = std::make_unique<myactua::MyActMotorController>(adapter_, config_.num_motors);
 
     std::cout << "[RobotMotorSession] Connecting EtherCAT on "
               << config_.ethercat_ifname << "...\n";
@@ -376,7 +376,7 @@ bool RobotMotorSession::submit_command(const motor_base::ControlCommand& command
 
 std::vector<double> RobotMotorSession::get_joint_q() const
 {
-    return controller_->get_joint_q_rad();
+    return controller_->get_positions_rad();
 }
 
 

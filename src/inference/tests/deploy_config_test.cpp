@@ -156,8 +156,6 @@ void test_load_real_deploy_yaml()
                std::string(ROBOT_INFERENCE_ROOT_DIR) + "/model/policy.pt",
            "default policy.model_path resolved against ROBOT_INFERENCE_ROOT_DIR");
     expect_near(cfg.policy.step_dt, 0.02, "policy.step_dt");
-    expect_near(cfg.policy.target_interpolation_duration_s, 0.0,
-                "default policy.target_interpolation_duration_s");
     expect_near(cfg.policy.gait.period, 0.74, "default gait.period");
     expect_near(cfg.policy.gait.stand_threshold, 0.05,
                 "default gait.stand_threshold");

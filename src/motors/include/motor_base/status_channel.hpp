@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-#include "spsc_latest_value/spsc_latest_value.hpp"
+#include "spsc_latest_channel/spsc_latest_channel.hpp"
 #include "motor_base/command_types.hpp"
 
 namespace motor_base {
@@ -101,7 +101,7 @@ private:
     std::size_t motor_count_{0};
     int publish_period_ms_{1};   // 读取频率
 
-    robot_base::SpscLatestValue<StatusFrame> latest_frame_;
+    robot_base::SpscLatestChannel<StatusFrame> latest_frame_;
 
     std::vector<Snapshot> status_cache_;
     mutable std::mutex    status_cache_mutex_;
@@ -313,8 +313,5 @@ void LatestStatusChannel<Snapshot>::thread_func()
         status_cache_ = latest;
     }
 }
-
-
-using MotorStatusChannel = LatestStatusChannel<MotorStatusSnapshot>;
 
 } // namespace motor_base

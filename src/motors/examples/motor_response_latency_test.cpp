@@ -1,7 +1,7 @@
 #include "motor_base/command_types.hpp"
 #include "protocol/ethercat/ethercat_adapter_igh.hpp"
 #include "kinematics/ankle_motor_ik.hpp"
-#include "driver/myact/motor_control.hpp"
+#include "driver/myact/myact_motor_controller.hpp"
 
 #include <algorithm>
 #include <array>
@@ -363,14 +363,14 @@ std::vector<motor_base::ImpedanceSetpoint> make_impedance_setpoints(
     return setpoints;
 }
 
-void send_impedance_targets(myactua::MYACTUA& controller,
+void send_impedance_targets(myactua::MyActMotorController& controller,
                             const std::array<double, kNumMotors>& target_rad)
 {
     controller.send_command(
         motor_base::ControlCommand::set_impedance_targets(make_impedance_setpoints(target_rad)));
 }
 
-bool read_motor_positions(myactua::MYACTUA& controller,
+bool read_motor_positions(myactua::MyActMotorController& controller,
                           std::array<double, kNumMotors>& positions_rad)
 {
     constexpr int kAttempts = 50;
@@ -397,7 +397,7 @@ bool read_motor_positions(myactua::MYACTUA& controller,
     return false;
 }
 
-bool wait_all_mode(myactua::MYACTUA& controller,
+bool wait_all_mode(myactua::MyActMotorController& controller,
                    motor_base::MotorControlMode mode,
                    int timeout_ms)
 {
@@ -423,7 +423,7 @@ bool wait_all_mode(myactua::MYACTUA& controller,
     return false;
 }
 
-bool wait_all_running(myactua::MYACTUA& controller,
+bool wait_all_running(myactua::MyActMotorController& controller,
                       motor_base::MotorControlMode mode,
                       int timeout_ms)
 {
@@ -451,14 +451,14 @@ bool wait_all_running(myactua::MYACTUA& controller,
     return false;
 }
 
-void send_mode_all(myactua::MYACTUA& controller, motor_base::MotorControlMode mode)
+void send_mode_all(myactua::MyActMotorController& controller, motor_base::MotorControlMode mode)
 {
     for (int i = 0; i < kNumMotors; ++i) {
         controller.send_command(motor_base::ControlCommand::set_mode(mode, i));
     }
 }
 
-bool stream_target_for(myactua::MYACTUA& controller,
+bool stream_target_for(myactua::MyActMotorController& controller,
                        const std::array<double, kNumMotors>& target_rad,
                        int duration_ms)
 {
@@ -475,7 +475,7 @@ bool stream_target_for(myactua::MYACTUA& controller,
     return !g_should_stop;
 }
 
-bool ramp_to_target(myactua::MYACTUA& controller,
+bool ramp_to_target(myactua::MyActMotorController& controller,
                     const std::array<double, kNumMotors>& start_rad,
                     const std::array<double, kNumMotors>& target_rad,
                     int duration_ms)
@@ -513,7 +513,7 @@ bool ramp_to_target(myactua::MYACTUA& controller,
     return !g_should_stop;
 }
 
-bool send_measured_step(myactua::MYACTUA& controller,
+bool send_measured_step(myactua::MyActMotorController& controller,
                         const std::array<double, kNumMotors>& target_rad,
                         int trial,
                         std::vector<StepEvent>& events)
@@ -544,7 +544,7 @@ bool send_measured_step(myactua::MYACTUA& controller,
     return !g_should_stop;
 }
 
-void safe_stop(myactua::MYACTUA& controller, bool started)
+void safe_stop(myactua::MyActMotorController& controller, bool started)
 {
     g_recorder.set_recording(false);
     if (started) {
@@ -678,7 +678,7 @@ int main()
     }
 
     auto adapter = std::make_shared<myactua::EthercatAdapterIGH>();
-    myactua::MYACTUA controller(adapter, kNumMotors);
+    myactua::MyActMotorController controller(adapter, kNumMotors);
     bool controller_started = false;
 
     controller.set_print_info({});

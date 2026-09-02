@@ -11,13 +11,13 @@ src/motors/
 ├── include/
 │   ├── motor_base/
 │       ├── command_types.hpp
-│       ├── motor_base.hpp
+│       ├── motor_controller_base.hpp
 │       ├── motor_status_monitor.hpp
 │       ├── status_channel.hpp
 │       └── rt_event_dispatcher.hpp
 │   └── driver/
 │       └── myact/
-│           ├── motor_control.hpp
+│           ├── myact_motor_controller.hpp
 │           ├── motor_state.hpp
 │           ├── motor_units.hpp
 │           ├── myact_debug_printers.hpp
@@ -29,11 +29,11 @@ src/motors/
 │           └── ethercat_types.hpp
 ├── src/
 │   ├── motor_base/
-│   │   ├── motor_base.cpp
+│   │   ├── motor_controller_base.cpp
 │   │   └── rt_event_dispatcher.cpp
 │   ├── drivers/
 │   │   └── myact/
-│   │       ├── motor_control.cpp
+│   │       ├── myact_motor_controller.cpp
 │   │       └── myact_debug_printers.cpp
 │   └── protocol/
 │       └── ethercat/
@@ -83,7 +83,7 @@ cd src/motors/build
 - `TORQUE` 力矩/出力控制，目标值单位由具体控制器解释
 - `IMPEDANCE` 阻抗控制，位置/速度使用 `rad`/`rad/s`，`effort_ff` 由具体控制器解释
 
-MYACTUA 驱动内部会把公共模式映射到 CiA402/PDO 模式：
+MyActMotorController 驱动内部会把公共模式映射到 CiA402/PDO 模式：
 `POSITION -> CSP`，`VELOCITY -> CSV`，`TORQUE -> CST`，`IMPEDANCE -> PVT`。
 
 ### 控制命令（`ControlCommand`）
@@ -109,7 +109,7 @@ MYACTUA 驱动内部会把公共模式映射到 CiA402/PDO 模式：
    - 示例默认：`enp8s0`
    - 请按实际 EtherCAT 主站网卡修改。
 2. **从站数量**
-   - 由示例中的 `MYACTUA controller(adapter, N)` 决定。
+   - 由示例中的 `MyActMotorController controller(adapter, N)` 决定。
    - 当前 `EthercatAdapterIGH` 默认按 12 个从站配置，逻辑索引 `0-11` 对应 EtherCAT 物理位置 `1-6, 8-13`。
 3. **PDO/对象字典一致性**
    - `include/protocol/ethercat/ethercat_types.hpp` 中 PDO 偏移需与从站 ESI/固件一致。

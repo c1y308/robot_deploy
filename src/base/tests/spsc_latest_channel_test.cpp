@@ -1,4 +1,4 @@
-#include "spsc_latest_value/spsc_latest_value.hpp"
+#include "spsc_latest_channel/spsc_latest_channel.hpp"
 
 #include <array>
 #include <atomic>
@@ -55,7 +55,7 @@ bool frame_is_complete(const TestFrame& frame)
 
 void test_initial_clean()
 {
-    robot_base::SpscLatestValue<TestFrame> channel;
+    robot_base::SpscLatestChannel<TestFrame> channel;
     TestFrame out = make_frame(99);
 
     expect(!channel.try_consume_latest(out),
@@ -66,7 +66,7 @@ void test_initial_clean()
 
 void test_single_publish_consume()
 {
-    robot_base::SpscLatestValue<TestFrame> channel;
+    robot_base::SpscLatestChannel<TestFrame> channel;
     const bool overwritten = channel.publish(make_frame(1));
     TestFrame out;
 
@@ -79,7 +79,7 @@ void test_single_publish_consume()
 
 void test_latest_only()
 {
-    robot_base::SpscLatestValue<TestFrame> channel;
+    robot_base::SpscLatestChannel<TestFrame> channel;
     channel.publish(make_frame(1));
     channel.publish(make_frame(2));
     channel.publish(make_frame(3));
@@ -97,7 +97,7 @@ void test_latest_only()
 
 void test_no_publish_never_reads_old_slot()
 {
-    robot_base::SpscLatestValue<TestFrame> channel;
+    robot_base::SpscLatestChannel<TestFrame> channel;
     channel.publish(make_frame(7));
 
     TestFrame out = make_frame(0);
@@ -116,7 +116,7 @@ void test_no_publish_never_reads_old_slot()
 
 void test_reset_with_value()
 {
-    robot_base::SpscLatestValue<TestFrame> channel;
+    robot_base::SpscLatestChannel<TestFrame> channel;
     channel.reset_with_value(make_frame(42));
 
     TestFrame out;
@@ -132,7 +132,7 @@ void test_fast_producer_slow_consumer()
 {
     constexpr std::uint64_t kTotalFrames = 100000;
 
-    robot_base::SpscLatestValue<TestFrame> channel;
+    robot_base::SpscLatestChannel<TestFrame> channel;
     std::atomic<bool> producer_done{false};
     std::atomic<bool> error{false};
     std::atomic<int> consumed{0};
@@ -197,6 +197,6 @@ int main()
     test_reset_with_value();
     test_fast_producer_slow_consumer();
 
-    std::cout << "spsc_latest_value_test passed\n";
+    std::cout << "spsc_latest_channel_test passed\n";
     return 0;
 }

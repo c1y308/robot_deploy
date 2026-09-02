@@ -1,4 +1,4 @@
-#include "driver/myact/motor_control.hpp"
+#include "driver/myact/myact_motor_controller.hpp"
 #include "driver/myact/myact_debug_printers.hpp"
 #include "driver/myact/motor_units.hpp"
 #include "tool/tool.hpp"
@@ -105,7 +105,7 @@ bool control_ready_for_current_target(const MotorState& motor,
 
 }
 
-MyactControlMode MYACTUA::to_myact_mode(mb::MotorControlMode mode)
+MyactControlMode MyActMotorController::to_myact_mode(mb::MotorControlMode mode)
 {
     switch (mode) {
         case mb::MotorControlMode::NONE:
@@ -122,7 +122,7 @@ MyactControlMode MYACTUA::to_myact_mode(mb::MotorControlMode mode)
     return MyactControlMode::NONE;
 }
 
-mb::MotorControlMode MYACTUA::to_motor_control_mode(MyactControlMode mode)
+mb::MotorControlMode MyActMotorController::to_motor_control_mode(MyactControlMode mode)
 {
     switch (mode) {
         case MyactControlMode::NONE:
@@ -140,12 +140,12 @@ mb::MotorControlMode MYACTUA::to_motor_control_mode(MyactControlMode mode)
 }
 
 /* 电机控制器构造函数 */
-MYACTUA::MYACTUA(std::shared_ptr<EthercatAdapter> adapter, int num_motors)
-    : MYACTUA(std::move(adapter), num_motors, Options())
+MyActMotorController::MyActMotorController(std::shared_ptr<EthercatAdapter> adapter, int num_motors)
+    : MyActMotorController(std::move(adapter), num_motors, Options())
 {
 }
 
-MYACTUA::MYACTUA(std::shared_ptr<EthercatAdapter> adapter,
+MyActMotorController::MyActMotorController(std::shared_ptr<EthercatAdapter> adapter,
                  int num_motors,
                  Options options)
     : mb::MotorControllerBase(checked_motor_count(num_motors), options),
@@ -172,18 +172,18 @@ MYACTUA::MYACTUA(std::shared_ptr<EthercatAdapter> adapter,
     status_monitor_.set_status_provider([this]() { return get_myact_diagnostics(); });
     status_monitor_.set_status_printer(print_myact_status_table);
     
-    _adapter->set_event_sink(this, &MYACTUA::event_sink_trampoline);
+    _adapter->set_event_sink(this, &MyActMotorController::event_sink_trampoline);
 }
 
 /* 析构函数 */
-MYACTUA::~MYACTUA()
+MyActMotorController::~MyActMotorController()
 {
     shutdown();
     _adapter->set_event_sink(nullptr, nullptr);
 }
 
 /* 连接网卡函数 */
-bool MYACTUA::connect_impl(const char* ifname)
+bool MyActMotorController::connect_impl(const char* ifname)
 {
     const char* effective_ifname =
         (ifname && ifname[0] != '\0') ? ifname : kDefaultEthercatIfName;
@@ -194,7 +194,7 @@ bool MYACTUA::connect_impl(const char* ifname)
 /// @brief 阻塞等待所有电机进入 OP（每 1ms 检查一次）
 /// @param timeout_ms 超时时间 (ms)，0 表示仅检查一次
 /// @param poll_ms  日志打印间隔 (ms)
-bool MYACTUA::wait_all_motors_ready(int timeout_ms, int poll_ms) const
+bool MyActMotorController::wait_all_motors_ready(int timeout_ms, int poll_ms) const
 {
     if (timeout_ms < 0) {
         throw std::invalid_argument("timeout_ms must be non-negative");
@@ -256,7 +256,7 @@ bool MYACTUA::wait_all_motors_ready(int timeout_ms, int poll_ms) const
 }
 
 
-bool MYACTUA::realtime_start_callback()
+bool MyActMotorController::realtime_start_callback()
 {
     process_data_fail_count_ = 0;
 
@@ -271,7 +271,7 @@ bool MYACTUA::realtime_start_callback()
 
 
 /* 电机实时控制单周期 */
-void MYACTUA::realtime_cycle_callback()
+void MyActMotorController::realtime_cycle_callback()
 {
     _adapter->receive_physical();
     current_cycle_host_timestamp_ns_ = robot_base::monotonic_now_ns();
@@ -284,7 +284,7 @@ void MYACTUA::realtime_cycle_callback()
 }
 
 
-void MYACTUA::realtime_stop_callback() noexcept
+void MyActMotorController::realtime_stop_callback() noexcept
 {
     status_monitor_.stop();
     diagnostics_channel_.stop();
@@ -293,7 +293,7 @@ void MYACTUA::realtime_stop_callback() noexcept
 
 
 /// @brief 更新 motor.observed，处理通信、故障、模式切换和目标值设置
-void MYACTUA::update()
+void MyActMotorController::update()
 {
     const EthercatBusHealthSnapshot health = _adapter->get_bus_health();
     const bool process_data_ok =
@@ -351,7 +351,7 @@ void MYACTUA::update()
 }
 
 
-void MYACTUA::update_communication_watchdog(
+void MyActMotorController::update_communication_watchdog(
     bool process_data_ok,
     const EthercatBusHealthSnapshot& health)
 {
@@ -374,7 +374,7 @@ void MYACTUA::update_communication_watchdog(
 }
 
 
-void MYACTUA::latch_communication_fault(
+void MyActMotorController::latch_communication_fault(
     MyactCommunicationFaultReason reason,
     const EthercatBusHealthSnapshot& health)
 {
@@ -396,7 +396,7 @@ void MYACTUA::latch_communication_fault(
 }
 
 
-void MYACTUA::apply_whole_body_quick_stop()
+void MyActMotorController::apply_whole_body_quick_stop()
 {
     for (auto& motor : _motors) {
         motor.step = MyactMotorStep::FAULT;
@@ -416,7 +416,7 @@ void MYACTUA::apply_whole_body_quick_stop()
 }
 
 
-void MYACTUA::reset_motor_setpoints_to_feedback(MotorState& motor)
+void MyActMotorController::reset_motor_setpoints_to_feedback(MotorState& motor)
 {
     const double position_rad = motor.observed.position_rad;
 
@@ -435,7 +435,7 @@ void MYACTUA::reset_motor_setpoints_to_feedback(MotorState& motor)
 
 
 /// @brief 处理单个电机的状态机逻辑
-void MYACTUA::process_single_motor(MotorState& motor)
+void MyActMotorController::process_single_motor(MotorState& motor)
 {
     const auto& desired   = motor.desired;
     const uint16_t sw = motor.rx.status_word;
@@ -548,7 +548,7 @@ void MYACTUA::process_single_motor(MotorState& motor)
 
 
 /* 状态机切换电机控制模式 */
-void MYACTUA::handle_mode_switching(MotorState& motor)
+void MyActMotorController::handle_mode_switching(MotorState& motor)
 {
     const auto& desired  = motor.desired;
     const uint16_t sw = motor.rx.status_word;
@@ -643,7 +643,7 @@ void MYACTUA::handle_mode_switching(MotorState& motor)
 }
 
 
-mb::CommandSubmitStatus MYACTUA::validate_command(
+mb::CommandSubmitStatus MyActMotorController::validate_command(
     const mb::ControlCommand& cmd) const
 {
     if (whole_body_fault_latched_.load(std::memory_order_acquire)) {
@@ -718,7 +718,7 @@ mb::CommandSubmitStatus MYACTUA::validate_command(
 }
 
 /// @brief 执行连续目标值命令
-void MYACTUA::apply_setpoint_command_impl(const mb::ControlCommand& cmd)
+void MyActMotorController::apply_setpoint_command_impl(const mb::ControlCommand& cmd)
 {
     const bool whole_body_fault =
         whole_body_fault_latched_.load(std::memory_order_acquire);
@@ -781,7 +781,7 @@ void MYACTUA::apply_setpoint_command_impl(const mb::ControlCommand& cmd)
 
 
 /// @brief 执行电机离散命令队列中的命令
-void MYACTUA::apply_discrete_command_impl(
+void MyActMotorController::apply_discrete_command_impl(
     int motor_index,
     const mb::DiscreteCommand& cmd)
 {
@@ -834,7 +834,7 @@ void MYACTUA::apply_discrete_command_impl(
 }
 
 
-mb::DiscreteCommandEvaluation MYACTUA::evaluate_discrete_command_impl(
+mb::DiscreteCommandEvaluation MyActMotorController::evaluate_discrete_command_impl(
     int motor_index,
     const mb::DiscreteCommand& cmd) const
 {
@@ -883,7 +883,7 @@ mb::DiscreteCommandEvaluation MYACTUA::evaluate_discrete_command_impl(
 }
 
 
-void MYACTUA::discrete_command_failed_callback(
+void MyActMotorController::discrete_command_failed_callback(
     int motor_index,
     const mb::DiscreteCommand& cmd,
     mb::DiscreteFailReason reason)
@@ -899,7 +899,7 @@ void MYACTUA::discrete_command_failed_callback(
 }
 
 
-void MYACTUA::discrete_queue_full_callback(
+void MyActMotorController::discrete_queue_full_callback(
     int motor_index,
     const mb::ControlCommand& cmd)
 {
@@ -913,7 +913,7 @@ void MYACTUA::discrete_queue_full_callback(
 }
 
 
-void MYACTUA::update_realtime_feedback()
+void MyActMotorController::update_realtime_feedback()
 {
     if (_motors.empty()) {
         return;
@@ -946,7 +946,7 @@ void MYACTUA::update_realtime_feedback()
 }
 
 
-void MYACTUA::update_status_snapshot()
+void MyActMotorController::update_status_snapshot()
 {
     if (_motors.empty()) {
         return;
@@ -987,7 +987,7 @@ void MYACTUA::update_status_snapshot()
 }
 
 
-void MYACTUA::update_diagnostics_snapshot()
+void MyActMotorController::update_diagnostics_snapshot()
 {
     if (_motors.empty()) {
         return;
@@ -1008,23 +1008,23 @@ void MYACTUA::update_diagnostics_snapshot()
 }
 
 
-void MYACTUA::set_myact_diagnostics_callback(MyactDiagnosticsCallback cb)
+void MyActMotorController::set_myact_diagnostics_callback(MyactDiagnosticsCallback cb)
 {
     diagnostics_channel_.set_callback(std::move(cb));
 }
 
-std::vector<MotorState> MYACTUA::get_myact_diagnostics()
+std::vector<MotorState> MyActMotorController::get_myact_diagnostics()
 {
     return diagnostics_channel_.get_status();
 }
 
-void MYACTUA::event_sink_trampoline(void* context, const mb::RtEvent& event)
+void MyActMotorController::event_sink_trampoline(void* context, const mb::RtEvent& event)
 {
-    static_cast<MYACTUA*>(context)->push_event(event);
+    static_cast<MyActMotorController*>(context)->push_event(event);
 }
 
 
-void MYACTUA::push_status_channel_busy_event()
+void MyActMotorController::push_status_channel_busy_event()
 {
     const uint64_t count =
         status_channel_busy_count_.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -1042,7 +1042,7 @@ void MYACTUA::push_status_channel_busy_event()
 
 
 /* 配置电机监控打印: 空列表关闭打印，-1 表示全部电机 */
-void MYACTUA::set_print_info(const std::vector<int>& motor_indices)
+void MyActMotorController::set_print_info(const std::vector<int>& motor_indices)
 {
     const bool enabled = status_monitor_.set_print_info(motor_indices);
     if (is_running()) {

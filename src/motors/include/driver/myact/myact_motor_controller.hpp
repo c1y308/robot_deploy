@@ -5,7 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include "motor_base/motor_base.hpp"
+#include "motor_base/motor_controller_base.hpp"
 #include "protocol/ethercat/ethercat_types.hpp"
 #include "protocol/ethercat/ethercat_adapter.hpp"
 #include "motor_base/command_types.hpp"
@@ -20,7 +20,7 @@ namespace myactua{
 
 /// @brief MYACTUA 品牌电机 EtherCAT 控制器（IGH 协议栈）。
 /// 继承 MotorControllerBase，实现 CiA 402 状态机与 PDO 收发。
-class MYACTUA : public motor_base::MotorControllerBase {
+class MyActMotorController : public motor_base::MotorControllerBase {
 public:
     using MyactDiagnosticsCallback = std::function<void(const std::vector<MotorState>&)>;
 
@@ -29,10 +29,10 @@ public:
         ControlWordCommand comm_fault_control_word = CMD_QUICK_STOP;
     };
 
-    MYACTUA(std::shared_ptr<EthercatAdapter> adapter, int num_motors);
-    MYACTUA(std::shared_ptr<EthercatAdapter> adapter, int num_motors, Options options);
+    MyActMotorController(std::shared_ptr<EthercatAdapter> adapter, int num_motors);
+    MyActMotorController(std::shared_ptr<EthercatAdapter> adapter, int num_motors, Options options);
 
-    ~MYACTUA();
+    ~MyActMotorController();
 
     bool wait_all_motors_ready(int timeout_ms = 30000, int poll_ms = 100) const override;
 

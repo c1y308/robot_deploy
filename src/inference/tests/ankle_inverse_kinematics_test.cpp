@@ -306,8 +306,8 @@ int main()
     inference::RobotMotorSession motors(make_motor_config());
 
     std::cout << "[ANKLE_IK_TEST] Initializing motors...\n";
-    if (!motors.initialize_and_start()) {
-        std::cerr << "[ANKLE_IK_TEST] initialize_and_start failed.\n";
+    if (!motors.initialize()) {
+        std::cerr << "[ANKLE_IK_TEST] initialize failed.\n";
         return 1;
     }
 

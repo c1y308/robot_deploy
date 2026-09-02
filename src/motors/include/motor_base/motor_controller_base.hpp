@@ -9,7 +9,7 @@
 #include <thread>
 #include <vector>
 
-#include "spsc_latest_value/spsc_latest_value.hpp"
+#include "spsc_latest_channel/spsc_latest_channel.hpp"
 #include "motor_base/command_channel.hpp"
 #include "motor_base/command_types.hpp"
 #include "motor_base/rt_event_dispatcher.hpp"
@@ -112,8 +112,8 @@ public:
     bool try_consume_policy_feedback(
         std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback);
 
-    /// @brief 获取全部电机关节位置，单位 rad
-    std::vector<double> get_joint_q_rad();
+    /// @brief 获取全部电机位置，单位 rad（按电机顺序）
+    std::vector<double> get_positions_rad();
 
     // ──────────────────── 回调 ────────────────────
 
@@ -132,7 +132,7 @@ public:
 
 
 protected:
-    using StatusWriteToken = MotorStatusChannel::WriteToken;
+    using StatusWriteToken = LatestStatusChannel<MotorStatusSnapshot>::WriteToken;
 
     // ============================================================
     // 派生类可使用的基类能力
@@ -209,21 +209,24 @@ private:
 
     // 每个电机的离散命令队列（stop / restart / set_mode）
     std::vector<DiscreteCommandQueue> discrete_cmd_queues_;
-    // RT setpoint 专通道（仅 policy_command_worker 生产，RT 线程消费）
-    robot_base::SpscLatestValue<ControlCommand> setpoint_channel_;
+
+    // 常规反馈通道（有锁），支持多读者读写缓存
+    LatestStatusChannel<MotorStatusSnapshot> status_channel_;
 
     // RT feedback 双通道 fan-out（同一帧数据，两条独立 SPSC 边）：
-    // command_feedback_channel_ 仅 policy_command_worker 消费；
-    robot_base::SpscLatestValue<
+    // command_feedback_channel_，电机驱动层生产，仅 policy_command_worker 线程脚踝力矩解算消费；
+    robot_base::SpscLatestChannel<
         std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>> command_feedback_channel_;
-    // policy_feedback_channel_ 仅 policy/inference 线程消费。生产者均为 RT 线程。
-    robot_base::SpscLatestValue<
+    // policy_feedback_channel_，电机驱动层生产，仅 policy 线程构建观测帧消费；
+    robot_base::SpscLatestChannel<
         std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>> policy_feedback_channel_;
     
+    // RT setpoint 专通道（仅 policy_command_worker 生产，电机驱动层线程消费）
+    robot_base::SpscLatestChannel<ControlCommand> setpoint_channel_;
+
     // 离散命令队列的全局时钟，单位 tick，1 tick = 1 ms
     uint64_t discrete_cmd_tick_{0};
 
-    MotorStatusChannel status_channel_;
     RtEventDispatcher  rt_event_dispatcher_;
 
     std::thread rt_thread_;

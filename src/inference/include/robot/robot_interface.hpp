@@ -1,5 +1,5 @@
 #pragma once
-#include "spsc_latest_value/spsc_latest_value.hpp"
+#include "spsc_latest_channel/spsc_latest_channel.hpp"
 #include "policy/policy_runtime.hpp"
 #include "recorder/inference_recorder.hpp"
 #include "policy/policy_observation_config.hpp"
@@ -81,8 +81,8 @@ private:
     std::atomic<bool> policy_command_worker_failed_{false};
 
     std::thread policy_command_worker_thread_;
-    robot_base::SpscLatestValue<PolicyTargetState> policy_target_channel_;
-    robot_base::SpscLatestValue<PolicyCommandLogState> policy_command_log_channel_;
+    robot_base::SpscLatestChannel<PolicyTargetState> policy_target_channel_;
+    robot_base::SpscLatestChannel<PolicyCommandLogState> policy_command_log_channel_;
     PolicyCommandLogState policy_command_log_read_cache_;
     std::uint64_t latest_policy_target_sequence_{0};
 

@@ -70,7 +70,6 @@ struct ObservationScaleConfig {
 struct PolicyRuntimeConfig {
     std::string model_path = "model/policy.pt";
     double step_dt = 0.02;
-    double target_interpolation_duration_s = 0.0;
 
     /* 仅 705 观测分支（ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=ON）使用；
        675 编译时该段禁止出现在配置文件中，由加载器检查。 */
