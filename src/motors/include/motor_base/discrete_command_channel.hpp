@@ -12,6 +12,7 @@
 
 namespace motor_base {
 
+// 计算离散命令的目标电机掩码（当前只能按照电机个数）
 inline std::uint32_t discrete_command_target_mask(
     const ControlCommand& cmd,
     std::size_t motor_count)
@@ -22,14 +23,14 @@ inline std::uint32_t discrete_command_target_mask(
     return std::uint32_t{1} << static_cast<std::uint32_t>(cmd.motor_index);
 }
 
-class CommandQueue {
+class DiscreteCommandSubmissionQueue {
 public:
     struct Entry {
         ControlCommand command;
         std::optional<CommandId> command_id;
     };
 
-    explicit CommandQueue(std::size_t capacity)
+    explicit DiscreteCommandSubmissionQueue(std::size_t capacity)
         : buffer_(capacity)
     {
     }
@@ -71,6 +72,7 @@ private:
     std::mutex push_mutex_;
 };
 
+
 class DiscreteCommandQueue {
 public:
     explicit DiscreteCommandQueue(std::size_t capacity)
@@ -99,20 +101,25 @@ private:
     robot_base::RingBuffer<DiscreteCommand> buffer_;
 };
 
+
 class DiscreteCommandResultTracker {
 public:
     void initialize(CommandId id, std::uint32_t target_mask)
     {
         Slot& slot = slots_[slot_index(id)];
+
         slot.target_mask.store(target_mask, std::memory_order_relaxed);
-        slot.done_mask.store(0, std::memory_order_relaxed);
+
+        slot.done_mask.store(  0, std::memory_order_relaxed);
         slot.failed_mask.store(0, std::memory_order_relaxed);
+
         slot.command_id.store(id, std::memory_order_release);
     }
 
     void clear(CommandId id)
     {
         Slot& slot = slots_[slot_index(id)];
+
         if (slot.command_id.load(std::memory_order_acquire) == id) {
             slot.command_id.store(0, std::memory_order_release);
         }
@@ -121,6 +128,7 @@ public:
     void mark_done(CommandId id, int motor_index)
     {
         Slot& slot = slots_[slot_index(id)];
+
         if (slot.command_id.load(std::memory_order_acquire) == id) {
             slot.done_mask.fetch_or(
                 std::uint32_t{1} << static_cast<std::uint32_t>(motor_index),
@@ -131,6 +139,7 @@ public:
     void mark_failed(CommandId id, int motor_index)
     {
         Slot& slot = slots_[slot_index(id)];
+
         if (slot.command_id.load(std::memory_order_acquire) == id) {
             slot.failed_mask.fetch_or(
                 std::uint32_t{1} << static_cast<std::uint32_t>(motor_index),
@@ -166,8 +175,10 @@ private:
     static constexpr std::size_t kCapacity = 64;
 
     struct Slot {
-        std::atomic<CommandId> command_id{0};
+        std::atomic<CommandId>     command_id{0};
+
         std::atomic<std::uint32_t> target_mask{0};
+
         std::atomic<std::uint32_t> done_mask{0};
         std::atomic<std::uint32_t> failed_mask{0};
     };
@@ -180,4 +191,4 @@ private:
     std::array<Slot, kCapacity> slots_{};
 };
 
-} // namespace motor_base
+}  // namespace motor_base

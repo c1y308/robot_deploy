@@ -43,5 +43,6 @@ static_assert(kObservationSize == (kEnableGaitPhase ? 705 : 675),
 namespace inference {
 
 using PolicyObservation = std::array<float, policy_observation::kObservationSize>;
+using PolicyAction = std::array<float, policy_observation::kDof>;
 
 }  // namespace inference

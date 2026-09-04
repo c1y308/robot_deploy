@@ -1,10 +1,14 @@
 #include "policy/policy_runtime.hpp"
-#include "policy/torch_policy_runner.hpp"
+#include "robot/robot_config.hpp"
 #include "tool/tool.hpp"
 
+#include <torch/script.h>
+
 #include <algorithm>
-#include <chrono>
 #include <cmath>
+#include <exception>
+#include <memory>
+#include <sstream>
 #include <utility>
 
 namespace inference {
@@ -16,117 +20,128 @@ std::int64_t policy_runtime_now_ns() noexcept
     return robot_base::monotonic_now_ns();
 }
 
-std::array<float, 2> gait_phase_observation(std::uint64_t episode_length,
-                                            double step_dt,
-                                            double period)
+bool tensor_is_valid_policy_output(const torch::Tensor& tensor,
+                                   std::size_t expected_count,
+                                   std::string& error)
 {
-    constexpr double kTwoPi = 6.28318530717958647692;
-    const double global_phase =
-        std::fmod(static_cast<double>(episode_length) * step_dt, period) / period;
-    return {
-        static_cast<float>(std::sin(global_phase * kTwoPi)),
-        static_cast<float>(std::cos(global_phase * kTwoPi))
-    };
-}
-
-std::array<float, 2> gated_gait_phase_observation(
-    const PolicyObservationTerms& terms,
-    const PolicyRuntimeConfig& policy_config,
-    std::uint64_t episode_length)
-{
-    const double command_norm = std::sqrt(
-        static_cast<double>(terms.velocity_commands[0]) * terms.velocity_commands[0] +
-        static_cast<double>(terms.velocity_commands[1]) * terms.velocity_commands[1] +
-        static_cast<double>(terms.velocity_commands[2]) * terms.velocity_commands[2]);
-
-    double gate = std::clamp(
-        (command_norm - policy_config.gait.stand_threshold) /
-            (policy_config.gait.move_threshold -
-             policy_config.gait.stand_threshold),
-        0.0,
-        1.0);
-    gate = gate * gate * (3.0 - 2.0 * gate);
-
-    const std::array<float, 2> phase =
-        gait_phase_observation(episode_length,
-                               policy_config.step_dt,
-                               policy_config.gait.period);
-    return {
-        static_cast<float>(phase[0] * gate),
-        static_cast<float>(phase[1] * gate)
-    };
-}
-
-template <std::size_t TermSize, std::size_t ObservationSize>
-void fill_term_history(std::array<float, ObservationSize>& history,
-                       std::size_t offset,
-                       std::size_t frame_stack,
-                       const std::array<float, TermSize>& current_term)
-{
-    for (std::size_t frame = 0; frame < frame_stack; ++frame) {
-        std::copy(current_term.begin(),
-                  current_term.end(),
-                  history.begin() + offset + frame * TermSize);
+    if (tensor.scalar_type() != torch::kFloat32) {
+        std::ostringstream oss;
+        oss << "TorchScript policy output must be float32, got scalar_type="
+            << tensor.scalar_type();
+        error = oss.str();
+        return false;
     }
-}
-
-template <std::size_t TermSize, std::size_t ObservationSize>
-void append_term_history(std::array<float, ObservationSize>& history,
-                         std::size_t offset,
-                         std::size_t frame_stack,
-                         const std::array<float, TermSize>& current_term)
-{
-    const std::size_t term_history_size = frame_stack * TermSize;
-    std::copy(history.begin() + offset + TermSize,
-              history.begin() + offset + term_history_size,
-              history.begin() + offset);
-    std::copy(current_term.begin(),
-              current_term.end(),
-              history.begin() + offset + term_history_size - TermSize);
+    if (tensor.numel() != static_cast<int64_t>(expected_count)) {
+        std::ostringstream oss;
+        oss << "TorchScript policy output size mismatch, expected "
+            << expected_count << " got " << tensor.numel();
+        error = oss.str();
+        return false;
+    }
+    return true;
 }
 
 }  // namespace
 
-PolicyRuntime::PolicyRuntime() = default;
-PolicyRuntime::~PolicyRuntime() = default;
+struct PolicyRuntime::Impl {
+    std::unique_ptr<torch::jit::script::Module> module;
+};
+
+PolicyRuntime::PolicyRuntime()
+    : impl_(std::make_unique<Impl>())
+{
+}
+
+PolicyRuntime::~PolicyRuntime()
+{
+    shutdown();
+}
 
 bool PolicyRuntime::load(const PolicyRuntimeConfig& config)
 {
-    shutdown();
-    policy_config_ = config;
+    unload();
     last_error_.clear();
 
-    auto runner = std::make_unique<TorchPolicyRunner>();
-    if (!runner->load(policy_config_.model_path)) {
-        set_error(runner->last_error());
+    try {
+        impl_->module = std::make_unique<torch::jit::script::Module>(
+            torch::jit::load(config.model_path, torch::kCPU));
+        impl_->module->eval();
+        loaded_ = true;
+
+        if (!dry_run_and_validate_output()) {
+            unload();
+            return false;
+        }
+        
+    } catch (const c10::Error& e) {
+        set_error("failed to load TorchScript model: " + std::string(e.what()));
+        unload();
+        return false;
+    } catch (const std::exception& e) {
+        set_error("failed to load TorchScript model: " + std::string(e.what()));
+        unload();
         return false;
     }
 
-    runner_ = std::move(runner);
     return true;
 }
 
 void PolicyRuntime::shutdown()
 {
-    runner_.reset();
-    reset();
+    unload();
 }
 
-void PolicyRuntime::reset()
+void PolicyRuntime::unload()
 {
-    last_action_raw_.fill(0.0F);
-    observation_history_.fill(0.0F);
-    observation_history_ready_ = false;
-    episode_length_ = 0;
-    frame_index_ = 0;
+    if (impl_) {
+        impl_->module.reset();
+    }
+    loaded_ = false;
 }
 
 bool PolicyRuntime::is_loaded() const
 {
-    return runner_ && runner_->is_loaded();
+    return loaded_ && impl_ && impl_->module;
 }
 
-bool PolicyRuntime::infer(const PolicyObservationTerms& terms,
+bool PolicyRuntime::dry_run_and_validate_output()
+{
+    if (!is_loaded()) {
+        set_error("TorchScript policy is not loaded");
+        return false;
+    }
+
+    try {
+        torch::NoGradGuard no_grad;
+        torch::Tensor input = torch::zeros(
+            {1, static_cast<int64_t>(kObservationSize)},
+            torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU));
+
+        torch::jit::IValue output_value = impl_->module->forward({input});
+        if (!output_value.isTensor()) {
+            set_error("TorchScript policy output must be a tensor");
+            return false;
+        }
+
+        std::string output_error;
+        if (!tensor_is_valid_policy_output(output_value.toTensor(),
+                                           kDof,
+                                           output_error)) {
+            set_error(output_error);
+            return false;
+        }
+    } catch (const c10::Error& e) {
+        set_error("TorchScript dry-run failed: " + std::string(e.what()));
+        return false;
+    } catch (const std::exception& e) {
+        set_error("TorchScript dry-run failed: " + std::string(e.what()));
+        return false;
+    }
+
+    return true;
+}
+
+bool PolicyRuntime::infer(const PolicyObservation& observation,
                           PolicyRuntimeStepResult& result)
 {
     if (!is_loaded()) {
@@ -134,16 +149,32 @@ bool PolicyRuntime::infer(const PolicyObservationTerms& terms,
         return false;
     }
 
-    build_observation(terms, result.policy_observation);
-
     result.inference_start_ns = policy_runtime_now_ns();
-    if (!runner_->infer(result.policy_observation, result.raw_action)) {
+    try {
+        torch::NoGradGuard no_grad;
+        torch::Tensor input = torch::from_blob(
+            const_cast<float*>(observation.data()),
+            {1, static_cast<int64_t>(observation.size())},
+            torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU));
+
+        torch::jit::IValue output_value = impl_->module->forward({input});
+        torch::Tensor output = output_value.toTensor();
+
+        output = output.to(torch::kCPU).contiguous();
+        const float* output_data = output.data_ptr<float>();
+        std::copy(output_data, output_data + result.raw_action.size(),
+                  result.raw_action.begin());
+    } catch (const c10::Error& e) {
         result.inference_end_ns = policy_runtime_now_ns();
-        set_error(runner_->last_error());
+        set_error("TorchScript inference failed: " + std::string(e.what()));
+        return false;
+    } catch (const std::exception& e) {
+        result.inference_end_ns = policy_runtime_now_ns();
+        set_error("TorchScript inference failed: " + std::string(e.what()));
         return false;
     }
-    result.inference_end_ns = policy_runtime_now_ns();
 
+    result.inference_end_ns = policy_runtime_now_ns();
     if (!std::all_of(result.raw_action.begin(),
                      result.raw_action.end(),
                      [](float value) { return std::isfinite(value); })) {
@@ -151,102 +182,8 @@ bool PolicyRuntime::infer(const PolicyObservationTerms& terms,
         return false;
     }
 
-    last_action_raw_ = result.raw_action;
     last_error_.clear();
     return true;
-}
-
-void PolicyRuntime::advance_frame() noexcept
-{
-    ++frame_index_;
-}
-
-void PolicyRuntime::advance_episode() noexcept
-{
-    ++episode_length_;
-}
-
-void PolicyRuntime::build_observation(const PolicyObservationTerms& terms,
-                                      ObservationArray& observation)
-{
-    constexpr std::size_t kBaseAngVelOffset = 0;
-    constexpr std::size_t kBaseAngVelHistorySize =
-        policy_observation::kFrameStack * policy_observation::kBaseAngVelSize;
-    constexpr std::size_t kProjectedGravityOffset =
-        kBaseAngVelOffset + kBaseAngVelHistorySize;
-    constexpr std::size_t kProjectedGravityHistorySize =
-        policy_observation::kFrameStack * policy_observation::kProjectedGravitySize;
-    constexpr std::size_t kVelocityCommandsOffset =
-        kProjectedGravityOffset + kProjectedGravityHistorySize;
-    constexpr std::size_t kVelocityCommandsHistorySize =
-        policy_observation::kFrameStack * policy_observation::kVelocityCommandsSize;
-    constexpr std::size_t kGaitPhaseOffset =
-        kVelocityCommandsOffset + kVelocityCommandsHistorySize;
-    constexpr std::size_t kGaitPhaseHistorySize =
-        policy_observation::kEnableGaitPhase
-            ? policy_observation::kFrameStack * policy_observation::kGaitPhaseSize
-            : 0;
-    constexpr std::size_t kJointPosRelOffset =
-        kGaitPhaseOffset + kGaitPhaseHistorySize;
-    constexpr std::size_t kJointPosRelHistorySize =
-        policy_observation::kFrameStack * policy_observation::kJointPosRelSize;
-    constexpr std::size_t kJointVelRelOffset =
-        kJointPosRelOffset + kJointPosRelHistorySize;
-    constexpr std::size_t kJointVelRelHistorySize =
-        policy_observation::kFrameStack * policy_observation::kJointVelRelSize;
-    constexpr std::size_t kLastActionOffset =
-        kJointVelRelOffset + kJointVelRelHistorySize;
-    constexpr std::size_t kObservationEnd =
-        kLastActionOffset + policy_observation::kFrameStack * policy_observation::kLastActionSize;
-    static_assert(kObservationEnd == policy_observation::kObservationSize,
-                  "policy observation offsets must cover the configured input size");
-
-    if (!observation_history_ready_) {
-        fill_term_history(observation_history_, kBaseAngVelOffset,
-                          kFrameStack, terms.base_ang_vel);
-        fill_term_history(observation_history_, kProjectedGravityOffset,
-                          kFrameStack, terms.projected_gravity);
-        fill_term_history(observation_history_, kVelocityCommandsOffset,
-                          kFrameStack, terms.velocity_commands);
-        if constexpr (policy_observation::kEnableGaitPhase) {
-            const std::array<float, 2> gait_phase =
-                gated_gait_phase_observation(terms,
-                                             policy_config_,
-                                             episode_length_);
-            fill_term_history(observation_history_, kGaitPhaseOffset,
-                              kFrameStack, gait_phase);
-        }
-        fill_term_history(observation_history_, kJointPosRelOffset,
-                          kFrameStack, terms.joint_pos_rel);
-        fill_term_history(observation_history_, kJointVelRelOffset,
-                          kFrameStack, terms.joint_vel_rel);
-        fill_term_history(observation_history_, kLastActionOffset,
-                          kFrameStack, terms.last_action);
-        observation_history_ready_ = true;
-    } else {
-        append_term_history(observation_history_, kBaseAngVelOffset,
-                            kFrameStack, terms.base_ang_vel);
-        append_term_history(observation_history_, kProjectedGravityOffset,
-                            kFrameStack, terms.projected_gravity);
-        append_term_history(observation_history_, kVelocityCommandsOffset,
-                            kFrameStack, terms.velocity_commands);
-        if constexpr (policy_observation::kEnableGaitPhase) {
-            const std::array<float, 2> gait_phase =
-                gated_gait_phase_observation(terms,
-                                             policy_config_,
-                                             episode_length_);
-            append_term_history(observation_history_, kGaitPhaseOffset,
-                                kFrameStack, gait_phase);
-        }
-        append_term_history(observation_history_, kJointPosRelOffset,
-                            kFrameStack, terms.joint_pos_rel);
-        append_term_history(observation_history_, kJointVelRelOffset,
-                            kFrameStack, terms.joint_vel_rel);
-        append_term_history(observation_history_, kLastActionOffset,
-                            kFrameStack, terms.last_action);
-    }
-
-    observation = observation_history_;
 }
 
 void PolicyRuntime::set_error(std::string message)

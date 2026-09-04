@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "spsc_latest_channel/spsc_latest_channel.hpp"
-#include "motor_base/command_channel.hpp"
+#include "motor_base/discrete_command_channel.hpp"
 #include "motor_base/command_types.hpp"
 #include "motor_base/rt_event_dispatcher.hpp"
 #include "motor_base/status_channel.hpp"
@@ -29,11 +29,13 @@ namespace motor_base {
 class MotorControllerBase {
 public:
     struct RealtimeOptions {
-        std::size_t command_queue_capacity = 64;
+        std::size_t command_queue_capacity            = 64;
         std::size_t discrete_queue_capacity_per_motor = 16;
-        std::size_t max_commands_per_cycle = 16;
+        std::size_t max_commands_per_cycle            = 16;
+
         long rt_period_ns = 1000000;
-        int rt_priority = 80;
+        int rt_priority   = 80;
+
         std::size_t rt_event_queue_capacity = 256;
         int status_publish_period_ms = 1;
     };
@@ -85,16 +87,24 @@ public:
 
     // ──────────────────── 指令下发 ────────────────────
 
-    /// @brief 异步发送控制命令（stop / restart / set_mode / setpoints）
-    /// @param cmd 控制命令，详见 ControlCommand
-    /// @return 命令提交结果；ACCEPTED 仅表示命令已提交，不保证已执行。
-    ///         离散命令提交成功时携带可查询的 command_id。
-    CommandSubmitResult send_command(const ControlCommand& cmd);
+    /// @brief 异步发送离散控制命令。
+    /// @return 离散命令提交成功时携带可查询的 command_id。
+    CommandSubmitResult send_discrete_command(const ControlCommand& cmd);
 
-    /// @brief 专供单 producer 控制线程使用的 latest-value setpoint 提交通道。
-    CommandSubmitResult send_realtime_setpoint_command(const ControlCommand& cmd);
-
+    /// @brief 查询离散命令的执行结果。
     DiscreteCommandResult get_discrete_command_result(CommandId id) const;
+
+    /// @brief policy_command_worker 专用的 latest-value setpoint 提交入口。
+    ///        仅允许单 producer 调用，底层为 SPSC 通道。
+    CommandSubmitResult send_policy_setpoint(const ControlCommand& cmd);
+
+    /// @brief 测试/手动调试专用的 latest-value setpoint 提交入口。
+    ///        仅允许单 producer 调用，底层为 SPSC 通道。
+    CommandSubmitResult send_debug_setpoint(const ControlCommand& cmd);
+
+    /// @brief 选择 RT 线程当前消费的 SETPOINT 来源。仅在 start() 前生效。
+    void set_active_setpoint_source(SetpointSource source);
+
 
 
     // ──────────────────── 状态反馈（物理量） ────────────────────
@@ -104,12 +114,12 @@ public:
 
     /// @brief 读取 command worker 专属的 RT feedback latest-value 快照；
     ///        无新快照时返回 false。仅限 policy_command_worker 线程消费（SPSC 单消费者）。
-    bool try_consume_command_feedback(
+    bool try_consume_latest_status_command(
         std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback);
 
     /// @brief 读取 policy/inference 线程专属的 RT feedback latest-value 快照；
     ///        无新快照时返回 false。仅限 policy/inference 线程消费（SPSC 单消费者）。
-    bool try_consume_policy_feedback(
+    bool try_consume_latest_status_policy(
         std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback);
 
     /// @brief 获取全部电机位置，单位 rad（按电机顺序）
@@ -145,7 +155,7 @@ protected:
     void publish_status(const StatusWriteToken& token);
     void publish_feedback(
         const std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback);
-    
+
     void push_event(const RtEvent& event);
     void set_event_fallback_printer(RtEventDispatcher::EventPrinter printer);
 
@@ -157,12 +167,13 @@ protected:
     virtual bool connect_impl(const char* interface_name) = 0;
     virtual void realtime_cycle_callback() = 0;
 
-    // 派生类实现具体电机的命令应用与离散命令状态评估。
+    // 派生类实现具体电机的命令应用
     virtual void apply_setpoint_command_impl(const ControlCommand& cmd) = 0;
     virtual void apply_discrete_command_impl(
         int motor_index,
         const DiscreteCommand& cmd) = 0;
-        
+
+    //离散命令状态评估
     virtual DiscreteCommandEvaluation evaluate_discrete_command_impl(
         int motor_index,
         const DiscreteCommand& cmd) const = 0;
@@ -173,7 +184,7 @@ protected:
     // ============================================================
 
     virtual CommandSubmitStatus validate_command(const ControlCommand& cmd) const;
-    
+
     virtual void discrete_queue_full_callback(
         int motor_index,
         const ControlCommand& cmd);
@@ -187,9 +198,9 @@ protected:
     virtual void realtime_stop_callback() noexcept;
 
 private:
-    //  thread_func()中调用，从命令队列中取出命令进行分发
+    //  thread_func()中调用，从命令队列中取出离散命令进行分发
     void process_queued_commands();
-    void process_realtime_setpoint_command();
+    void process_latest_setpoint_commands();
 
     // 直接在process_queued_commands()中调用，将离散命令入各个电机的命令队列
     void enqueue_discrete_command(const ControlCommand& cmd, CommandId command_id);
@@ -201,11 +212,14 @@ private:
     RealtimeOptions rt_options_;
     std::size_t     motor_count_;
 
-    // 电机控制命令队列（stop / restart / set_mode / setpoints）
-    CommandQueue cmd_queue_;
+    // 离散电机控制命令队列（stop / restart / set_mode）
+    DiscreteCommandSubmissionQueue cmd_queue_;
+    // 下一个离散命令的 ID
     std::atomic<CommandId> next_discrete_command_id_{1};
+    // 保护离散命令提交的互斥锁，避免多线程同时提交离散命令导致命令 ID 冲突
+    std::mutex discrete_command_submission_mutex_;
+    // 离散命令的执行结果追踪器
     DiscreteCommandResultTracker discrete_command_results_;
-    std::mutex command_submission_mutex_;
 
     // 每个电机的离散命令队列（stop / restart / set_mode）
     std::vector<DiscreteCommandQueue> discrete_cmd_queues_;
@@ -221,8 +235,12 @@ private:
     robot_base::SpscLatestChannel<
         std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>> policy_feedback_channel_;
     
-    // RT setpoint 专通道（仅 policy_command_worker 生产，电机驱动层线程消费）
-    robot_base::SpscLatestChannel<ControlCommand> setpoint_channel_;
+    // 调试 SETPOINT 专通道（仅测试/手动调试单 producer，电机驱动层线程消费）
+    robot_base::SpscLatestChannel<ControlCommand> setpoint_channel_debug_;
+
+    // policy SETPOINT 专通道（仅 policy_command_worker 生产，电机驱动层线程消费）
+    robot_base::SpscLatestChannel<ControlCommand> setpoint_channel_policy_;
+    SetpointSource active_setpoint_source_{SetpointSource::POLICY};
 
     // 离散命令队列的全局时钟，单位 tick，1 tick = 1 ms
     uint64_t discrete_cmd_tick_{0};

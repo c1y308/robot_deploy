@@ -47,6 +47,7 @@ int main() {
     auto adapter = std::make_shared<myactua::EthercatAdapterIGH>();
     // 实例化控制类，与适配器关联
     myactua::MyActMotorController controller(adapter, motors_nums);
+    controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
     controller.set_print_info({-1});
     controller.set_event_callback([](const motor_base::RtEvent& event) {
         if (event.type == motor_base::RtEventType::STATUS_CHANNEL_BUSY) {
@@ -73,8 +74,7 @@ int main() {
 
     std::cout << "[3/4] 连接成功，正在设置电机 CSP 模式..." << std::endl;
     for(int i = 0; i < motors_nums; ++i) {
-        controller.send_command(
-            motor_base::ControlCommand::set_mode(motor_base::MotorControlMode::POSITION, i));
+        controller.send_discrete_command(motor_base::ControlCommand::set_mode(motor_base::MotorControlMode::POSITION, i));
     }
 
     std::cout << "[4/4] 启动实时控制线程..." << std::endl;
@@ -85,12 +85,12 @@ int main() {
     std::cout << "\n========== 控制流程开始 ==========" << std::endl;
     
     std::cout << "[阶段1] 停止电机，等待 3 秒..." << std::endl;
-    controller.send_command(motor_base::ControlCommand::stop());
+    controller.send_discrete_command(motor_base::ControlCommand::stop());
     std::this_thread::sleep_for(std::chrono::seconds(3));
 
     /********************************************************************************** */
     std::cout << "[阶段2] 重新启动电机，等待 POSITION 模式就绪..." << std::endl;
-    if (controller.send_command(motor_base::ControlCommand::restart()).status !=
+    if (controller.send_discrete_command(motor_base::ControlCommand::restart()).status !=
         motor_base::CommandSubmitStatus::ACCEPTED) {
         std::cerr << "[错误] 电机重新启动命令提交失败。" << std::endl;
         return -1;
@@ -111,7 +111,7 @@ int main() {
     };
 
     std::cout << "[阶段3] 所有电机回到零位..." << std::endl;
-    if (controller.send_command(
+    if (controller.send_debug_setpoint(
             motor_base::ControlCommand::set_position_targets_rad_fixed(
                 zero_positions_rad.data(),
                 zero_positions_rad.size())).status !=
@@ -122,7 +122,7 @@ int main() {
     std::this_thread::sleep_for(std::chrono::seconds(5));
 
     std::cout << "[阶段4] 下发一次目标位置数组..." << std::endl;
-    if (controller.send_command(
+    if (controller.send_debug_setpoint(
             motor_base::ControlCommand::set_position_targets_rad_fixed(
                 target_positions_rad.data(),
                 target_positions_rad.size())).status !=

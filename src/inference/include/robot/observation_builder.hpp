@@ -2,7 +2,7 @@
 
 #include "kinematics/ankle_motor_fk.hpp"
 #include "kinematics/ankle_motor_jacobian.hpp"
-#include "policy/policy_runtime.hpp"
+#include "policy/policy_observation_config.hpp"
 #include "robot/joint_mapping.hpp"
 #include "robot/robot_imu_session.hpp"
 #include "robot/robot_motor_session.hpp"
@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -23,17 +24,21 @@ public:
 
     ObservationBuilder(std::shared_ptr<const JointMapping> mapping,
                        ObservationScaleConfig scales,
-                       std::array<double, policy_observation::kDof> default_joint_pos_rad);
+                       std::array<double, policy_observation::kDof> default_joint_pos_rad,
+                       PolicyRuntimeConfig policy_config);
 
                        
     void reset_runtime_state();
+    void commit_policy_action(const PolicyAction& raw_action) noexcept;
+    void advance_frame() noexcept;
+    void advance_episode() noexcept;
+    std::uint64_t frame_index() const noexcept { return frame_index_; }
 
 
     bool build(const MotorStateSnapshot& motor_state,
                const AhrsStateSnapshot& ahrs_state,
                const std::array<double, 3>& target_velocity,
-               const PolicyAction& last_action,
-               PolicyObservationTerms& terms,
+               PolicyObservation& observation,
                std::string& error);
 
 private:
@@ -68,6 +73,12 @@ private:
     std::shared_ptr<const JointMapping> mapping_;
     ObservationScaleConfig scales_;
     std::array<double, policy_observation::kDof> default_joint_pos_rad_;
+    PolicyRuntimeConfig policy_config_;
+    PolicyAction last_action_raw_{};
+    PolicyObservation observation_history_{};
+    bool observation_history_ready_{false};
+    std::uint64_t episode_length_{0};
+    std::uint64_t frame_index_{0};
 };
 
 }  // namespace inference::robot_detail

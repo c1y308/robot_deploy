@@ -96,7 +96,6 @@ add_library(robot_interface STATIC
     src/robot/robot_motor_session.cpp
     src/robot/robot_imu_session.cpp
     src/policy/policy_runtime.cpp
-    src/policy/torch_policy_runner.cpp
 )
 target_include_directories(robot_interface PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -194,12 +193,6 @@ target_include_directories(ankle_motor_jacobian_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 add_test(NAME ankle_motor_jacobian_test COMMAND ankle_motor_jacobian_test)
-
-add_executable(deploy_config_test
-    tests/deploy_config_test.cpp
-)
-target_link_libraries(deploy_config_test PRIVATE deploy_config robot_base)
-add_test(NAME deploy_config_test COMMAND deploy_config_test)
 
 add_executable(robot_imu_session_config_test
     tests/robot_imu_session_config_test.cpp

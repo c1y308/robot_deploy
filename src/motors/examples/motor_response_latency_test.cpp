@@ -366,7 +366,7 @@ std::vector<motor_base::ImpedanceSetpoint> make_impedance_setpoints(
 void send_impedance_targets(myactua::MyActMotorController& controller,
                             const std::array<double, kNumMotors>& target_rad)
 {
-    controller.send_command(
+    controller.send_debug_setpoint(
         motor_base::ControlCommand::set_impedance_targets(make_impedance_setpoints(target_rad)));
 }
 
@@ -454,7 +454,7 @@ bool wait_all_running(myactua::MyActMotorController& controller,
 void send_mode_all(myactua::MyActMotorController& controller, motor_base::MotorControlMode mode)
 {
     for (int i = 0; i < kNumMotors; ++i) {
-        controller.send_command(motor_base::ControlCommand::set_mode(mode, i));
+        controller.send_discrete_command(motor_base::ControlCommand::set_mode(mode, i));
     }
 }
 
@@ -548,7 +548,7 @@ void safe_stop(myactua::MyActMotorController& controller, bool started)
 {
     g_recorder.set_recording(false);
     if (started) {
-        controller.send_command(motor_base::ControlCommand::stop());
+        controller.send_discrete_command(motor_base::ControlCommand::stop());
         force_sleep_ms(500);
         controller.shutdown();
     }
@@ -681,6 +681,7 @@ int main()
     myactua::MyActMotorController controller(adapter, kNumMotors);
     bool controller_started = false;
 
+    controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
     controller.set_print_info({});
     controller.set_status_callback([](const std::vector<motor_base::MotorStatusSnapshot>& status) {
         g_recorder.record(status);
@@ -707,7 +708,7 @@ int main()
     controller_started = true;
 
     std::cout << "[flow] stop all motors before mode switch\n";
-    controller.send_command(motor_base::ControlCommand::stop());
+    controller.send_discrete_command(motor_base::ControlCommand::stop());
     sleep_ms(kWarmupMs);
 
     std::cout << "[flow] switch all motors to PVT/MIT\n";
@@ -731,7 +732,7 @@ int main()
     sleep_ms(200);
 
     std::cout << "[flow] restart all motors\n";
-    controller.send_command(motor_base::ControlCommand::restart());
+    controller.send_discrete_command(motor_base::ControlCommand::restart());
     sleep_ms(kRestartWaitMs);
     if (!wait_all_running(controller, motor_base::MotorControlMode::IMPEDANCE, 4000)) {
         std::cerr << "[error] not all motors reached operation enabled in PVT/MIT mode\n";
@@ -798,7 +799,7 @@ int main()
     force_sleep_ms(40);
 
     std::cout << "[flow] stop all motors\n";
-    controller.send_command(motor_base::ControlCommand::stop());
+    controller.send_discrete_command(motor_base::ControlCommand::stop());
     force_sleep_ms(500);
     controller.shutdown();
     controller.set_status_callback({});

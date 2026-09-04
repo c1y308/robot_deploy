@@ -60,7 +60,7 @@ public:
                          motor_base::kMaxMotorCommandSetpoints>& setpoints,
         std::size_t count);
 
-    bool try_consume_command_feedback(
+    bool try_consume_latest_status_command(
         std::array<motor_base::MotorStatusSnapshot,
                    motor_base::kMaxMotorCommandSetpoints>& feedback);
 

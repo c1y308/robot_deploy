@@ -45,11 +45,6 @@ public:
 
 
 private:
-    struct PolicyTargetState {
-        std::uint64_t sequence{0};
-        std::array<double, policy_observation::kDof> q_model_rad{};
-    };
-
     struct PolicyCommandLogState {
         std::int64_t timestamp_ns{0};
         std::array<double, policy_observation::kDof> target_pos_rad{};
@@ -70,7 +65,7 @@ private:
 
     PolicyRuntime policy_runtime_;
 
-    mutable std::mutex target_velocity_mutex_;
+    mutable std::mutex    target_velocity_mutex_;
     std::array<double, 3> target_velocity_{0.0, 0.0, 0.0};  // [vx, vy, yaw_rate]
 
     InferenceRecorder inference_recorder_;
@@ -81,13 +76,18 @@ private:
     std::atomic<bool> policy_command_worker_failed_{false};
 
     std::thread policy_command_worker_thread_;
-    robot_base::SpscLatestChannel<PolicyTargetState> policy_target_channel_;
-    robot_base::SpscLatestChannel<PolicyCommandLogState> policy_command_log_channel_;
+    // policy_step() 传递给 policy_command_worker 的最新模型目标关节角
+    robot_base::SpscLatestChannel<std::array<double, policy_observation::kDof>>
+    policy_target_channel_;
+
+    // policy_command_worker 传递给 policy_step() 的生成并实际发送的 motor impedance command
+    robot_base::SpscLatestChannel<PolicyCommandLogState>
+    policy_command_log_channel_;
+
     PolicyCommandLogState policy_command_log_read_cache_;
-    std::uint64_t latest_policy_target_sequence_{0};
 
     mutable std::mutex policy_command_error_mutex_;
-    std::string policy_command_worker_error_;
+    std::string        policy_command_worker_error_;
 
     bool load_policy();
     void unload_policy();
@@ -103,6 +103,7 @@ private:
     bool start_policy_command_worker();
     void stop_policy_command_worker();
     void policy_command_worker_loop();
+    
     void set_latest_policy_target(const std::vector<double>& target_q_model_rad);
     PolicyCommandLogState latest_policy_command_log_state();
     void fail_policy_command_worker(std::string message);

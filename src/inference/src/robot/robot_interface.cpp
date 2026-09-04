@@ -139,7 +139,8 @@ bool RobotInterface::initialize_model_processors() {
     auto observation_builder = std::make_unique<robot_detail::ObservationBuilder>(
         mapping,
         config_.observation_scales,
-        config_.action.default_joint_pos_rad);
+        config_.action.default_joint_pos_rad,
+        config_.policy);
 
     joint_mapping_       = std::move(mapping);
     action_processor_    = std::move(action_processor);
@@ -196,6 +197,7 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
     if (!motor_session_.is_initialized()) {
         return false;
     }
+
     if (!motor_session_.motion_enabled()) {
         std::cerr << "[RobotInterface] apply_action rejected: motors are stopped. "
                   << "Call initialize() first.\n";
@@ -217,6 +219,7 @@ bool RobotInterface::apply_action(const std::vector<double>& target_q_model_rad)
                   << error << "\n";
         return false;
     }
+
     return motor_session_.apply_targets_rad(target_rad);
 }
 
@@ -226,11 +229,13 @@ bool RobotInterface::reset_joints() {
     if (!motor_session_.is_initialized()) {
         return false;
     }
+
     if (!motor_session_.motion_enabled()) {
         std::cerr << "[RobotInterface] reset_joints rejected: motors are stopped. "
                   << "Call initialize() first.\n";
         return false;
     }
+    
     if (!action_processor_) {
         std::cerr << "[RobotInterface] reset_joints rejected: model processors are not initialized. "
                   << "Call initialize() first.\n";
@@ -287,7 +292,6 @@ void RobotInterface::unload_policy() {
 }
 
 void RobotInterface::initialize_policy_runtime_state() {
-    policy_runtime_.reset();
     if (action_processor_) {
         action_processor_->reset_runtime_state();
     }
@@ -324,10 +328,9 @@ bool RobotInterface::start_policy_command_worker()
         return false;
     }
 
-    PolicyTargetState initial_target;
-    initial_target.sequence = ++latest_policy_target_sequence_;
+    std::array<double, policy_observation::kDof> initial_target{};
     for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
-        initial_target.q_model_rad[i] = config_.action.default_joint_pos_rad[i];
+        initial_target[i] = config_.action.default_joint_pos_rad[i];
     }
     policy_target_channel_.reset_with_value(initial_target);
     policy_command_log_channel_.reset_empty();
@@ -375,15 +378,12 @@ void RobotInterface::policy_command_worker_loop()
                std::llround(config_.ankle_torque.filter_dt_s * 1'000'000'000.0))));
 
     auto next_wake = std::chrono::steady_clock::now();
-    std::uint64_t active_target_sequence = 0;
 
-    PolicyTargetState target_state;
-    if (!policy_target_channel_.try_consume_latest(target_state)) {
+    std::array<double, policy_observation::kDof> current_target_q_model_rad{};
+    if (!policy_target_channel_.try_consume_latest(current_target_q_model_rad)) {
         fail_policy_command_worker("policy command target is not initialized");
         return;
     }
-    auto current_target_q_model_rad = target_state.q_model_rad;
-    active_target_sequence = target_state.sequence;
 
     std::array<motor_base::MotorStatusSnapshot,
                motor_base::kMaxMotorCommandSetpoints> motor_feedback;
@@ -395,19 +395,14 @@ void RobotInterface::policy_command_worker_loop()
         while (policy_command_worker_running_.load()) {
             next_wake += period;
 
-            PolicyTargetState latest_target;
-            const bool has_new_target =
-                policy_target_channel_.try_consume_latest(latest_target);
-
-            if (has_new_target &&
-                latest_target.sequence != active_target_sequence) {
-                current_target_q_model_rad = latest_target.q_model_rad;
-                active_target_sequence = latest_target.sequence;
+            std::array<double, policy_observation::kDof> latest_target{};
+            if (policy_target_channel_.try_consume_latest(latest_target)) {
+                current_target_q_model_rad = latest_target;
             }
 
             std::array<motor_base::MotorStatusSnapshot,
                        motor_base::kMaxMotorCommandSetpoints> latest_feedback;
-            if (motor_session_.try_consume_command_feedback(latest_feedback)) {
+            if (motor_session_.try_consume_latest_status_command(latest_feedback)) {
                 motor_feedback = latest_feedback;
                 has_motor_feedback = true;
             }
@@ -464,10 +459,9 @@ void RobotInterface::set_latest_policy_target(const std::vector<double>& target_
         return;
     }
 
-    PolicyTargetState target;
-    target.sequence = ++latest_policy_target_sequence_;
+    std::array<double, policy_observation::kDof> target{};
     for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
-        target.q_model_rad[i] = target_q_model_rad[i];
+        target[i] = target_q_model_rad[i];
     }
     policy_target_channel_.publish(target);
 }
@@ -589,12 +583,9 @@ bool RobotInterface::policy_step() {
             ", imu_motor_skew_us=" + std::to_string(robot_base::ns_to_us(imu_motor_skew_ns)));
     }
     
-    const PolicyAction last_action = policy_runtime_.last_action();
-
-
     // 构建日志观测信息 
     InferenceRecord record;
-    record.frame_index = policy_runtime_.frame_index();
+    record.frame_index = observation_builder_->frame_index();
     fill_record_motor_state(motor_state, motor_count, record);
     record.imu_sample_timestamp_ns  = ahrs_state.sample_timestamp_ns;
     record.imu_receive_timestamp_ns = imu_receive_timestamp_ns;
@@ -602,27 +593,27 @@ bool RobotInterface::policy_step() {
     record.motor_age_us             = robot_base::ns_to_us(motor_age_ns);
 
     // 单次策略闭环：同一份状态快照 -> 帧观测 -> 模型推理 -> 目标关节角 -> 电机下发。
-    PolicyObservationTerms observation_terms;
+    PolicyObservation policy_observation;
     std::string observation_error;
     if (!observation_builder_->build(motor_state,
                                      ahrs_state,
                                      target_velocity,
-                                     last_action,
-                                     observation_terms,
+                                     policy_observation,
                                      observation_error)) {
         return handle_policy_step_failure("failed to build policy observation: " +
                                           observation_error);
     }
 
     PolicyRuntimeStepResult policy_result;
-    if (!policy_runtime_.infer(observation_terms, policy_result)) {
+    if (!policy_runtime_.infer(policy_observation, policy_result)) {
         return handle_policy_step_failure(policy_runtime_.last_error());
     }
+    observation_builder_->commit_policy_action(policy_result.raw_action);
 
     // 记录日志的策略推理时间和原始动作输出
     record.inference_start_ns = policy_result.inference_start_ns;
     record.inference_end_ns   = policy_result.inference_end_ns;
-    record.policy_observation = policy_result.policy_observation;
+    record.policy_observation = policy_observation;
     record.raw_action         = policy_result.raw_action;
 
     std::vector<double> target_q_model_rad(PolicyRuntime::kDof, 0.0);
@@ -667,9 +658,9 @@ bool RobotInterface::policy_step() {
 
     record_inference(record);
 
-    policy_runtime_.advance_frame();
+    observation_builder_->advance_frame();
 
-    policy_runtime_.advance_episode();
+    observation_builder_->advance_episode();
 
     return true;
 }

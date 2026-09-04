@@ -14,12 +14,96 @@ using robot_base::finite_array;
 using robot_base::finite_vector;
 using robot_base::index_in_range;
 
+namespace {
+
+struct ObservationTerms {
+    std::array<float, policy_observation::kBaseAngVelSize> base_ang_vel{};
+    std::array<float, policy_observation::kProjectedGravitySize> projected_gravity{};
+    std::array<float, policy_observation::kVelocityCommandsSize> velocity_commands{};
+    std::array<float, policy_observation::kJointPosRelSize> joint_pos_rel{};
+    std::array<float, policy_observation::kJointVelRelSize> joint_vel_rel{};
+    PolicyAction last_action{};
+};
+
+std::array<float, 2> gait_phase_observation(std::uint64_t episode_length,
+                                            double step_dt,
+                                            double period)
+{
+    constexpr double kTwoPi = 6.28318530717958647692;
+    const double global_phase =
+        std::fmod(static_cast<double>(episode_length) * step_dt, period) / period;
+    return {
+        static_cast<float>(std::sin(global_phase * kTwoPi)),
+        static_cast<float>(std::cos(global_phase * kTwoPi))
+    };
+}
+
+std::array<float, 2> gated_gait_phase_observation(
+    const ObservationTerms& terms,
+    const PolicyRuntimeConfig& policy_config,
+    std::uint64_t episode_length)
+{
+    const double command_norm = std::sqrt(
+        static_cast<double>(terms.velocity_commands[0]) * terms.velocity_commands[0] +
+        static_cast<double>(terms.velocity_commands[1]) * terms.velocity_commands[1] +
+        static_cast<double>(terms.velocity_commands[2]) * terms.velocity_commands[2]);
+
+    double gate = std::clamp(
+        (command_norm - policy_config.gait.stand_threshold) /
+            (policy_config.gait.move_threshold -
+             policy_config.gait.stand_threshold),
+        0.0,
+        1.0);
+    gate = gate * gate * (3.0 - 2.0 * gate);
+
+    const std::array<float, 2> phase =
+        gait_phase_observation(episode_length,
+                               policy_config.step_dt,
+                               policy_config.gait.period);
+    return {
+        static_cast<float>(phase[0] * gate),
+        static_cast<float>(phase[1] * gate)
+    };
+}
+
+template <std::size_t TermSize, std::size_t ObservationSize>
+void fill_term_history(std::array<float, ObservationSize>& history,
+                       std::size_t offset,
+                       std::size_t frame_stack,
+                       const std::array<float, TermSize>& current_term)
+{
+    for (std::size_t frame = 0; frame < frame_stack; ++frame) {
+        std::copy(current_term.begin(),
+                  current_term.end(),
+                  history.begin() + offset + frame * TermSize);
+    }
+}
+
+template <std::size_t TermSize, std::size_t ObservationSize>
+void append_term_history(std::array<float, ObservationSize>& history,
+                         std::size_t offset,
+                         std::size_t frame_stack,
+                         const std::array<float, TermSize>& current_term)
+{
+    const std::size_t term_history_size = frame_stack * TermSize;
+    std::copy(history.begin() + offset + TermSize,
+              history.begin() + offset + term_history_size,
+              history.begin() + offset);
+    std::copy(current_term.begin(),
+              current_term.end(),
+              history.begin() + offset + term_history_size - TermSize);
+}
+
+}  // namespace
+
 ObservationBuilder::ObservationBuilder(std::shared_ptr<const JointMapping> mapping,
                                        ObservationScaleConfig scales,
-                                       std::array<double, policy_observation::kDof> default_joint_pos_rad)
+                                       std::array<double, policy_observation::kDof> default_joint_pos_rad,
+                                       PolicyRuntimeConfig policy_config)
     : mapping_(std::move(mapping)),
       scales_(std::move(scales)),
-      default_joint_pos_rad_(default_joint_pos_rad)
+      default_joint_pos_rad_(default_joint_pos_rad),
+      policy_config_(std::move(policy_config))
 {
     reset_runtime_state();
 }
@@ -37,6 +121,26 @@ void ObservationBuilder::reset_runtime_state()
         left_ankle_fk_.reset();
         right_ankle_fk_.reset();
     }
+    last_action_raw_.fill(0.0F);
+    observation_history_.fill(0.0F);
+    observation_history_ready_ = false;
+    episode_length_ = 0;
+    frame_index_ = 0;
+}
+
+void ObservationBuilder::commit_policy_action(const PolicyAction& raw_action) noexcept
+{
+    last_action_raw_ = raw_action;
+}
+
+void ObservationBuilder::advance_frame() noexcept
+{
+    ++frame_index_;
+}
+
+void ObservationBuilder::advance_episode() noexcept
+{
+    ++episode_length_;
 }
 
 // 从default_joint_pos_rad_中获取roll和pitch值，调用ankle_fk的reset函数，重置ankle_fk
@@ -65,8 +169,7 @@ bool ObservationBuilder::build(
     const MotorStateSnapshot&    motor_state,       // 电机快照
     const AhrsStateSnapshot&     ahrs_state,        // AHRS快照
     const std::array<double, 3>& target_velocity,   // 目标速度
-    const PolicyAction&          last_action,       // 上一次的策略动作(array<float, kDof>)
-    PolicyObservationTerms&      terms,             // 当前观测帧的引用(array构成的结构体)
+    PolicyObservation&           observation,       // 完整策略观测历史
     std::string& error)
 {
     if (motor_state.position_rad.size() != kDof || motor_state.velocity_rad_s.size() != kDof) {
@@ -92,7 +195,7 @@ bool ObservationBuilder::build(
     }
 
     // 使用当前数据构建下一观测帧
-    PolicyObservationTerms current_terms;
+    ObservationTerms current_terms;
     current_terms.velocity_commands = {
         static_cast<float>(target_velocity[0] * scales_.command_scale[0]),
         static_cast<float>(target_velocity[1] * scales_.command_scale[1]),
@@ -105,7 +208,7 @@ bool ObservationBuilder::build(
             static_cast<float>(ahrs_state.projected_gravity[i]);
     }
     
-    current_terms.last_action = last_action;
+    current_terms.last_action = last_action_raw_;
 
 
     MotorStateArray q_motor_rad{};
@@ -127,7 +230,84 @@ bool ObservationBuilder::build(
         return false;
     }
 
-    terms = current_terms;
+    constexpr std::size_t kBaseAngVelOffset = 0;
+    constexpr std::size_t kBaseAngVelHistorySize =
+        policy_observation::kFrameStack * policy_observation::kBaseAngVelSize;
+    constexpr std::size_t kProjectedGravityOffset =
+        kBaseAngVelOffset + kBaseAngVelHistorySize;
+    constexpr std::size_t kProjectedGravityHistorySize =
+        policy_observation::kFrameStack * policy_observation::kProjectedGravitySize;
+    constexpr std::size_t kVelocityCommandsOffset =
+        kProjectedGravityOffset + kProjectedGravityHistorySize;
+    constexpr std::size_t kVelocityCommandsHistorySize =
+        policy_observation::kFrameStack * policy_observation::kVelocityCommandsSize;
+    constexpr std::size_t kGaitPhaseOffset =
+        kVelocityCommandsOffset + kVelocityCommandsHistorySize;
+    constexpr std::size_t kGaitPhaseHistorySize =
+        policy_observation::kEnableGaitPhase
+            ? policy_observation::kFrameStack * policy_observation::kGaitPhaseSize
+            : 0;
+    constexpr std::size_t kJointPosRelOffset =
+        kGaitPhaseOffset + kGaitPhaseHistorySize;
+    constexpr std::size_t kJointPosRelHistorySize =
+        policy_observation::kFrameStack * policy_observation::kJointPosRelSize;
+    constexpr std::size_t kJointVelRelOffset =
+        kJointPosRelOffset + kJointPosRelHistorySize;
+    constexpr std::size_t kJointVelRelHistorySize =
+        policy_observation::kFrameStack * policy_observation::kJointVelRelSize;
+    constexpr std::size_t kLastActionOffset =
+        kJointVelRelOffset + kJointVelRelHistorySize;
+    constexpr std::size_t kObservationEnd =
+        kLastActionOffset + policy_observation::kFrameStack * policy_observation::kLastActionSize;
+    static_assert(kObservationEnd == policy_observation::kObservationSize,
+                  "policy observation offsets must cover the configured input size");
+
+    if (!observation_history_ready_) {
+        fill_term_history(observation_history_, kBaseAngVelOffset,
+                          policy_observation::kFrameStack, current_terms.base_ang_vel);
+        fill_term_history(observation_history_, kProjectedGravityOffset,
+                          policy_observation::kFrameStack, current_terms.projected_gravity);
+        fill_term_history(observation_history_, kVelocityCommandsOffset,
+                          policy_observation::kFrameStack, current_terms.velocity_commands);
+        if constexpr (policy_observation::kEnableGaitPhase) {
+            const std::array<float, 2> gait_phase =
+                gated_gait_phase_observation(current_terms,
+                                             policy_config_,
+                                             episode_length_);
+            fill_term_history(observation_history_, kGaitPhaseOffset,
+                              policy_observation::kFrameStack, gait_phase);
+        }
+        fill_term_history(observation_history_, kJointPosRelOffset,
+                          policy_observation::kFrameStack, current_terms.joint_pos_rel);
+        fill_term_history(observation_history_, kJointVelRelOffset,
+                          policy_observation::kFrameStack, current_terms.joint_vel_rel);
+        fill_term_history(observation_history_, kLastActionOffset,
+                          policy_observation::kFrameStack, current_terms.last_action);
+        observation_history_ready_ = true;
+    } else {
+        append_term_history(observation_history_, kBaseAngVelOffset,
+                            policy_observation::kFrameStack, current_terms.base_ang_vel);
+        append_term_history(observation_history_, kProjectedGravityOffset,
+                            policy_observation::kFrameStack, current_terms.projected_gravity);
+        append_term_history(observation_history_, kVelocityCommandsOffset,
+                            policy_observation::kFrameStack, current_terms.velocity_commands);
+        if constexpr (policy_observation::kEnableGaitPhase) {
+            const std::array<float, 2> gait_phase =
+                gated_gait_phase_observation(current_terms,
+                                             policy_config_,
+                                             episode_length_);
+            append_term_history(observation_history_, kGaitPhaseOffset,
+                                policy_observation::kFrameStack, gait_phase);
+        }
+        append_term_history(observation_history_, kJointPosRelOffset,
+                            policy_observation::kFrameStack, current_terms.joint_pos_rel);
+        append_term_history(observation_history_, kJointVelRelOffset,
+                            policy_observation::kFrameStack, current_terms.joint_vel_rel);
+        append_term_history(observation_history_, kLastActionOffset,
+                            policy_observation::kFrameStack, current_terms.last_action);
+    }
+
+    observation = observation_history_;
     error.clear();
     return true;
 }

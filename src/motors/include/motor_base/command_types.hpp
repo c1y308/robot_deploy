@@ -61,12 +61,18 @@ enum class CommandSubmitStatus {
     ACCEPTED,
     QUEUE_FULL,
     INVALID_COMMAND,
-    INVALID_PAYLOAD
+    INVALID_PAYLOAD,
+    SOURCE_INACTIVE
 };
 
 struct CommandSubmitResult {
     CommandSubmitStatus status;
     std::optional<CommandId> command_id;
+};
+
+enum class SetpointSource {
+    POLICY,
+    DEBUG
 };
 
 enum class DiscreteCommandResult {

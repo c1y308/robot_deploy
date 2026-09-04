@@ -231,6 +231,99 @@ bool expect_start(myactua::MyActMotorController& controller, const char* message
     return true;
 }
 
+class RecordingMotorController : public motor_base::MotorControllerBase {
+public:
+    explicit RecordingMotorController(
+        const motor_base::MotorControllerBase::RealtimeOptions& options)
+        : MotorControllerBase(1, options)
+    {
+    }
+
+    bool wait_all_motors_ready(int, int) const override { return true; }
+
+    void set_print_info(const std::vector<int>&) override {}
+
+    bool wait_for_cycles(std::uint64_t target_cycles,
+                         std::chrono::milliseconds timeout)
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return cv_.wait_for(lock, timeout, [this, target_cycles]() {
+            return cycles_ >= target_cycles;
+        });
+    }
+
+    bool wait_for_applied_count(std::size_t target_count,
+                                std::chrono::milliseconds timeout)
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return cv_.wait_for(lock, timeout, [this, target_count]() {
+            return applied_setpoints_.size() >= target_count;
+        });
+    }
+
+    std::uint64_t cycles() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return cycles_;
+    }
+
+    std::vector<motor_base::ControlCommand> applied_setpoints() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return applied_setpoints_;
+    }
+
+protected:
+    bool connect_impl(const char*) override { return true; }
+
+    void realtime_cycle_callback() override
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++cycles_;
+        cv_.notify_all();
+    }
+
+    void apply_setpoint_command_impl(
+        const motor_base::ControlCommand& cmd) override
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        applied_setpoints_.push_back(cmd);
+        cv_.notify_all();
+    }
+
+    void apply_discrete_command_impl(
+        int,
+        const motor_base::DiscreteCommand&) override
+    {
+    }
+
+    motor_base::DiscreteCommandEvaluation evaluate_discrete_command_impl(
+        int,
+        const motor_base::DiscreteCommand&) const override
+    {
+        return motor_base::DiscreteCommandEvaluation::SATISFIED;
+    }
+
+private:
+    mutable std::mutex mutex_;
+    std::condition_variable cv_;
+    std::uint64_t cycles_{0};
+    std::vector<motor_base::ControlCommand> applied_setpoints_;
+};
+
+motor_base::MotorControllerBase::RealtimeOptions latest_channel_test_options()
+{
+    motor_base::MotorControllerBase::RealtimeOptions options;
+    options.command_queue_capacity = 4;
+    options.discrete_queue_capacity_per_motor = 4;
+    options.max_commands_per_cycle = 4;
+    options.rt_period_ns = 50000000;
+    options.rt_priority = 0;
+    options.rt_event_queue_capacity = 16;
+    options.status_publish_period_ms = 1;
+    return options;
+}
+
 } // namespace
 
 int main()
@@ -246,9 +339,31 @@ int main()
     auto adapter = std::make_shared<FakeAdapter>(1);
     myactua::MyActMotorController controller(adapter, 1, options);
 
+    const motor_base::CommandSubmitResult setpoint_as_discrete_result =
+        controller.send_discrete_command(
+            motor_base::ControlCommand::set_velocity_targets_rad_s({0.0}));
+    if (!expect(
+            setpoint_as_discrete_result.status ==
+                motor_base::CommandSubmitStatus::INVALID_COMMAND,
+            "discrete command API should reject setpoint commands")) {
+        return 1;
+    }
+
+    const motor_base::CommandSubmitResult inactive_debug_result =
+        controller.send_debug_setpoint(
+            motor_base::ControlCommand::set_velocity_targets_rad_s({0.0}));
+    if (!expect(
+            inactive_debug_result.status ==
+                motor_base::CommandSubmitStatus::SOURCE_INACTIVE,
+            "debug setpoint should be rejected while policy source is active")) {
+        return 1;
+    }
+
+    controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
+
     std::vector<double> too_many(motor_base::kMaxMotorCommandSetpoints + 1, 0.0);
     const motor_base::CommandSubmitResult invalid_setpoint_result =
-        controller.send_command(
+        controller.send_debug_setpoint(
             motor_base::ControlCommand::set_position_targets_rad(too_many));
     if (!expect(
             invalid_setpoint_result.status ==
@@ -262,7 +377,7 @@ int main()
     }
 
     const motor_base::CommandSubmitResult setpoint_result =
-        controller.send_command(
+        controller.send_debug_setpoint(
             motor_base::ControlCommand::set_velocity_targets_rad_s({0.0}));
     if (!expect(
             setpoint_result.status == motor_base::CommandSubmitStatus::ACCEPTED,
@@ -275,7 +390,7 @@ int main()
     }
 
     const motor_base::CommandSubmitResult stop_result =
-        controller.send_command(motor_base::ControlCommand::stop());
+        controller.send_discrete_command(motor_base::ControlCommand::stop());
     if (!expect(
             stop_result.status == motor_base::CommandSubmitStatus::ACCEPTED,
             "first command should be accepted")) {
@@ -287,7 +402,7 @@ int main()
     }
 
     const motor_base::CommandSubmitResult restart_result =
-        controller.send_command(motor_base::ControlCommand::restart());
+        controller.send_discrete_command(motor_base::ControlCommand::restart());
     if (!expect(
             restart_result.status == motor_base::CommandSubmitStatus::ACCEPTED,
             "second command should be accepted")) {
@@ -310,14 +425,26 @@ int main()
         return 1;
     }
 
-    const motor_base::CommandSubmitResult queue_full_result =
-        controller.send_command(
-            motor_base::ControlCommand::set_mode(
+    const motor_base::CommandSubmitResult set_mode_result =
+        controller.send_discrete_command(motor_base::ControlCommand::set_mode(
                 motor_base::MotorControlMode::POSITION));
+    if (!expect(
+            set_mode_result.status == motor_base::CommandSubmitStatus::ACCEPTED,
+            "third discrete command should fill the bounded command queue")) {
+        return 1;
+    }
+    if (!expect(set_mode_result.command_id.has_value(),
+                "accepted SET_MODE should carry command_id")) {
+        return 1;
+    }
+
+    const motor_base::CommandSubmitResult queue_full_result =
+        controller.send_discrete_command(motor_base::ControlCommand::set_mode(
+                motor_base::MotorControlMode::VELOCITY));
     if (!expect(
             queue_full_result.status ==
                 motor_base::CommandSubmitStatus::QUEUE_FULL,
-            "bounded command queue should report full")) {
+            "bounded discrete command queue should report full")) {
         return 1;
     }
     if (!expect(!queue_full_result.command_id.has_value(),
@@ -385,7 +512,7 @@ int main()
     }
     std::array<motor_base::MotorStatusSnapshot,
                motor_base::kMaxMotorCommandSetpoints> policy_feedback;
-    if (!expect(controller.try_consume_policy_feedback(policy_feedback),
+    if (!expect(controller.try_consume_latest_status_policy(policy_feedback),
                 "policy feedback should be available")) {
         controller.shutdown();
         return 1;
@@ -436,13 +563,179 @@ int main()
     controller.shutdown();
 
     {
+        RecordingMotorController policy_controller(latest_channel_test_options());
+        if (!expect(
+                policy_controller.send_debug_setpoint(
+                    motor_base::ControlCommand::set_position_targets_rad(
+                        {1.0})).status ==
+                    motor_base::CommandSubmitStatus::SOURCE_INACTIVE,
+                "debug setpoint should be inactive when policy source is selected")) {
+            return 1;
+        }
+        if (!expect(policy_controller.start(),
+                    "default policy setpoint controller should start")) {
+            return 1;
+        }
+        if (!expect(policy_controller.wait_for_cycles(1, std::chrono::seconds(1)),
+                    "default policy controller should complete initial cycle")) {
+            policy_controller.shutdown();
+            return 1;
+        }
+        if (!expect(
+                policy_controller.send_policy_setpoint(
+                    motor_base::ControlCommand::set_position_targets_rad(
+                        {2.0})).status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED,
+                "policy setpoint should publish when policy source is active")) {
+            policy_controller.shutdown();
+            return 1;
+        }
+        if (!expect(policy_controller.wait_for_applied_count(
+                        1,
+                        std::chrono::seconds(1)),
+                    "policy setpoint should be consumed by default")) {
+            policy_controller.shutdown();
+            return 1;
+        }
+        policy_controller.shutdown();
+
+        const std::vector<motor_base::ControlCommand> applied =
+            policy_controller.applied_setpoints();
+        if (!expect(applied.size() == 1 && applied[0].setpoints[0] == 2.0,
+                    "default source should consume only policy setpoints")) {
+            return 1;
+        }
+    }
+
+    {
+        RecordingMotorController debug_controller(latest_channel_test_options());
+        debug_controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
+        if (!expect(
+                debug_controller.send_debug_setpoint(
+                    motor_base::ControlCommand::set_position_targets_rad(
+                        {5.0})).status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED,
+                "debug setpoint before start should publish to debug channel")) {
+            return 1;
+        }
+        if (!expect(debug_controller.start(),
+                    "debug setpoint controller should start")) {
+            return 1;
+        }
+        if (!expect(debug_controller.wait_for_cycles(2, std::chrono::seconds(1)),
+                    "debug controller should run after start reset")) {
+            debug_controller.shutdown();
+            return 1;
+        }
+        if (!expect(debug_controller.applied_setpoints().empty(),
+                    "start should clear stale debug setpoint data")) {
+            debug_controller.shutdown();
+            return 1;
+        }
+
+        debug_controller.set_active_setpoint_source(motor_base::SetpointSource::POLICY);
+        if (!expect(
+                debug_controller.send_policy_setpoint(
+                    motor_base::ControlCommand::set_position_targets_rad(
+                        {6.0})).status ==
+                    motor_base::CommandSubmitStatus::SOURCE_INACTIVE,
+                "running setpoint source switch should not activate policy source")) {
+            debug_controller.shutdown();
+            return 1;
+        }
+        if (!expect(
+                debug_controller.send_debug_setpoint(
+                    motor_base::ControlCommand::set_position_targets_rad(
+                        {7.0})).status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED,
+                "debug setpoint should remain active after ignored runtime switch")) {
+            debug_controller.shutdown();
+            return 1;
+        }
+        if (!expect(
+                debug_controller.send_debug_setpoint(
+                    motor_base::ControlCommand::set_position_targets_rad(
+                        {8.0})).status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED,
+                "newer debug setpoint should overwrite older debug setpoint")) {
+            debug_controller.shutdown();
+            return 1;
+        }
+        if (!expect(debug_controller.wait_for_applied_count(
+                        1,
+                        std::chrono::seconds(1)),
+                    "debug latest setpoint should be consumed")) {
+            debug_controller.shutdown();
+            return 1;
+        }
+        if (!expect(debug_controller.wait_for_cycles(
+                        debug_controller.cycles() + 2,
+                        std::chrono::seconds(1)),
+                    "debug latest setpoint should not repeat without new data")) {
+            debug_controller.shutdown();
+            return 1;
+        }
+        debug_controller.shutdown();
+
+        const std::vector<motor_base::ControlCommand> applied =
+            debug_controller.applied_setpoints();
+        if (!expect(applied.size() == 1 && applied[0].setpoints[0] == 8.0,
+                    "debug channel should apply only the latest active-source command")) {
+            return 1;
+        }
+    }
+
+    {
+        RecordingMotorController debug_only_controller(latest_channel_test_options());
+        debug_only_controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
+        if (!expect(debug_only_controller.start(),
+                    "debug-only setpoint controller should start")) {
+            return 1;
+        }
+
+        if (!expect(
+                debug_only_controller.send_policy_setpoint(
+                    motor_base::ControlCommand::set_position_targets_rad(
+                        {3.0})).status ==
+                    motor_base::CommandSubmitStatus::SOURCE_INACTIVE,
+                "policy setpoint should be inactive when debug source is selected")) {
+            debug_only_controller.shutdown();
+            return 1;
+        }
+        if (!expect(
+                debug_only_controller.send_debug_setpoint(
+                    motor_base::ControlCommand::set_position_targets_rad(
+                        {4.0})).status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED,
+                "debug setpoint should publish when debug source is active")) {
+            debug_only_controller.shutdown();
+            return 1;
+        }
+        if (!expect(debug_only_controller.wait_for_applied_count(
+                        1,
+                        std::chrono::seconds(1)),
+                    "only debug source should be consumed")) {
+            debug_only_controller.shutdown();
+            return 1;
+        }
+        debug_only_controller.shutdown();
+
+        const std::vector<motor_base::ControlCommand> applied =
+            debug_only_controller.applied_setpoints();
+        if (!expect(applied.size() == 1 && applied[0].setpoints[0] == 4.0,
+                    "selected debug source should be the only applied setpoint")) {
+            return 1;
+        }
+    }
+
+    {
         myactua::MyActMotorController::Options wrap_options = test_options();
         wrap_options.command_queue_capacity = 70;
         auto wrap_adapter = std::make_shared<FakeAdapter>(1);
         myactua::MyActMotorController wrap_controller(wrap_adapter, 1, wrap_options);
 
         const motor_base::CommandSubmitResult first_result =
-            wrap_controller.send_command(motor_base::ControlCommand::stop());
+            wrap_controller.send_discrete_command(motor_base::ControlCommand::stop());
         if (!expect(
                 first_result.status == motor_base::CommandSubmitStatus::ACCEPTED &&
                     first_result.command_id.has_value(),
@@ -452,7 +745,7 @@ int main()
 
         for (int i = 0; i < 64; ++i) {
             const motor_base::CommandSubmitResult result =
-                wrap_controller.send_command(motor_base::ControlCommand::stop());
+                wrap_controller.send_discrete_command(motor_base::ControlCommand::stop());
             if (!expect(
                     result.status == motor_base::CommandSubmitStatus::ACCEPTED &&
                         result.command_id.has_value(),
@@ -480,6 +773,7 @@ int main()
 
         auto failing_adapter = std::make_shared<FakeAdapter>(1);
         myactua::MyActMotorController failing_controller(failing_adapter, 1, failing_options);
+        failing_controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
         if (!expect(!failing_controller.start(),
                     "invalid realtime priority should make start return false")) {
             failing_controller.shutdown();
@@ -496,15 +790,14 @@ int main()
             return 1;
         }
         if (!expect(
-                failing_controller.send_command(
-                    motor_base::ControlCommand::restart()).status ==
+                failing_controller.send_discrete_command(motor_base::ControlCommand::restart()).status ==
                     motor_base::CommandSubmitStatus::INVALID_COMMAND,
                 "RESTART should be rejected when required RT scheduling is inactive")) {
             failing_controller.shutdown();
             return 1;
         }
         if (!expect(
-                failing_controller.send_command(
+                failing_controller.send_debug_setpoint(
                     motor_base::ControlCommand::set_position_targets_rad({0.0})).status ==
                     motor_base::CommandSubmitStatus::INVALID_COMMAND,
                 "setpoint should be rejected when required RT scheduling is inactive")) {
@@ -512,16 +805,14 @@ int main()
             return 1;
         }
         if (!expect(
-                failing_controller.send_command(
-                    motor_base::ControlCommand::stop()).status ==
+                failing_controller.send_discrete_command(motor_base::ControlCommand::stop()).status ==
                     motor_base::CommandSubmitStatus::ACCEPTED,
                 "STOP should remain accepted when RT scheduling is inactive")) {
             failing_controller.shutdown();
             return 1;
         }
         if (!expect(
-                failing_controller.send_command(
-                    motor_base::ControlCommand::set_mode(
+                failing_controller.send_discrete_command(motor_base::ControlCommand::set_mode(
                         motor_base::MotorControlMode::POSITION)).status ==
                     motor_base::CommandSubmitStatus::ACCEPTED,
                 "SET_MODE should remain accepted when RT scheduling is inactive")) {
@@ -537,6 +828,7 @@ int main()
         adapter->set_rx_mode(0, myactua::MyactControlMode::CSP);
 
         myactua::MyActMotorController mode_controller(adapter, 1, test_options());
+        mode_controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
         std::atomic<int> reject_events{0};
         std::atomic<int> reject_motor{-2};
         std::atomic<int> reject_reason{0};
@@ -558,8 +850,7 @@ int main()
             return 1;
         }
         if (!expect(
-                mode_controller.send_command(
-                    motor_base::ControlCommand::set_mode(
+                mode_controller.send_discrete_command(motor_base::ControlCommand::set_mode(
                         motor_base::MotorControlMode::IMPEDANCE)).status ==
                     motor_base::CommandSubmitStatus::ACCEPTED,
                 "SET_MODE should be accepted before confirmed-mode test")) {
@@ -581,10 +872,10 @@ int main()
             10.0,
             1.0);
         if (!expect(
-                mode_controller.send_command(
+                mode_controller.send_debug_setpoint(
                     motor_base::ControlCommand::set_impedance_targets(setpoints)).status ==
                     motor_base::CommandSubmitStatus::ACCEPTED,
-                "setpoint should enqueue for RT confirmed-mode validation")) {
+                "setpoint should publish for RT confirmed-mode validation")) {
             mode_controller.shutdown();
             return 1;
         }
@@ -622,6 +913,7 @@ int main()
         adapter->set_rx_mode(0, myactua::MyactControlMode::CSP);
 
         myactua::MyActMotorController stopped_controller(adapter, 1, test_options());
+        stopped_controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
         std::atomic<int> reject_events{0};
         stopped_controller.set_event_callback(
             [&reject_events](const motor_base::RtEvent& event) {
@@ -643,11 +935,11 @@ int main()
 
         constexpr int32_t target_raw = 3333;
         if (!expect(
-                stopped_controller.send_command(
+                stopped_controller.send_debug_setpoint(
                     motor_base::ControlCommand::set_position_targets_rad(
                         {static_cast<double>(target_raw) * myactua::kRawPosToRad})).status ==
                     motor_base::CommandSubmitStatus::ACCEPTED,
-                "setpoint should enqueue when observed mode matches but motor is not running")) {
+                "setpoint should publish when observed mode matches but motor is not running")) {
             stopped_controller.shutdown();
             return 1;
         }
@@ -674,6 +966,7 @@ int main()
         adapter->set_rx_mode(0, myactua::MyactControlMode::CSP);
 
         myactua::MyActMotorController running_controller(adapter, 1, test_options());
+        running_controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
         std::atomic<int> reject_events{0};
         running_controller.set_event_callback(
             [&reject_events](const motor_base::RtEvent& event) {
@@ -688,7 +981,7 @@ int main()
             return 1;
         }
         const motor_base::CommandSubmitResult restart_submit =
-            running_controller.send_command(motor_base::ControlCommand::restart());
+            running_controller.send_discrete_command(motor_base::ControlCommand::restart());
         if (!expect(
                 restart_submit.status == motor_base::CommandSubmitStatus::ACCEPTED &&
                     restart_submit.command_id.has_value(),
@@ -718,11 +1011,11 @@ int main()
 
         constexpr int32_t target_raw = 4444;
         if (!expect(
-                running_controller.send_command(
+                running_controller.send_debug_setpoint(
                     motor_base::ControlCommand::set_position_targets_rad(
                         {static_cast<double>(target_raw) * myactua::kRawPosToRad})).status ==
                     motor_base::CommandSubmitStatus::ACCEPTED,
-                "setpoint should enqueue when all motors are confirmed running")) {
+                "setpoint should publish when all motors are confirmed running")) {
             running_controller.shutdown();
             return 1;
         }
@@ -757,7 +1050,7 @@ int main()
             return 1;
         }
         const motor_base::CommandSubmitResult restart_submit =
-            all_ready_controller.send_command(motor_base::ControlCommand::restart());
+            all_ready_controller.send_discrete_command(motor_base::ControlCommand::restart());
         if (!expect(
                 restart_submit.status == motor_base::CommandSubmitStatus::ACCEPTED &&
                     restart_submit.command_id.has_value(),
@@ -789,6 +1082,7 @@ int main()
         adapter->set_rx_mode(1, myactua::MyactControlMode::CSP);
 
         myactua::MyActMotorController partial_controller(adapter, 2, test_options());
+        partial_controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
         std::atomic<int> reject_events{0};
         std::atomic<int> reject_motor{-2};
         partial_controller.set_event_callback(
@@ -805,7 +1099,7 @@ int main()
             return 1;
         }
         const motor_base::CommandSubmitResult partial_restart_submit =
-            partial_controller.send_command(motor_base::ControlCommand::restart());
+            partial_controller.send_discrete_command(motor_base::ControlCommand::restart());
         if (!expect(
                 partial_restart_submit.status ==
                     motor_base::CommandSubmitStatus::ACCEPTED &&
@@ -831,12 +1125,12 @@ int main()
         constexpr int32_t target0_raw = 5555;
         constexpr int32_t target1_raw = 6666;
         if (!expect(
-                partial_controller.send_command(
+                partial_controller.send_debug_setpoint(
                     motor_base::ControlCommand::set_position_targets_rad(
                         {static_cast<double>(target0_raw) * myactua::kRawPosToRad,
                          static_cast<double>(target1_raw) * myactua::kRawPosToRad})).status ==
                     motor_base::CommandSubmitStatus::ACCEPTED,
-                "partial-frame setpoint should enqueue for RT validation")) {
+                "partial-frame setpoint should publish for RT validation")) {
             partial_controller.shutdown();
             return 1;
         }
@@ -866,6 +1160,7 @@ int main()
           adapter->set_health_script(script);
 
           myactua::MyActMotorController watchdog_controller(adapter, 1, test_options());
+          watchdog_controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
           std::atomic<int> fault_events{0};
           watchdog_controller.set_event_callback(
               [&fault_events](const motor_base::RtEvent& event) {
@@ -898,6 +1193,7 @@ int main()
           adapter->set_health_script(script);
 
           myactua::MyActMotorController watchdog_controller(adapter, 1, test_options());
+          watchdog_controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
           std::atomic<int> fault_events{0};
           watchdog_controller.set_event_callback(
               [&fault_events](const motor_base::RtEvent& event) {
@@ -928,6 +1224,7 @@ int main()
           adapter->set_health_script(script);
 
           myactua::MyActMotorController watchdog_controller(adapter, 1, test_options());
+          watchdog_controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
           std::atomic<int> fault_events{0};
           std::atomic<int> last_reason{0};
           watchdog_controller.set_event_callback(
@@ -948,7 +1245,7 @@ int main()
               return 1;
           }
           if (!expect(
-                  watchdog_controller.send_command(
+                  watchdog_controller.send_debug_setpoint(
                       motor_base::ControlCommand::set_position_targets_rad({0.0})).status ==
                       motor_base::CommandSubmitStatus::INVALID_COMMAND,
                   "setpoint commands should be rejected while communication fault is latched")) {
@@ -956,8 +1253,7 @@ int main()
               return 1;
           }
           if (!expect(
-                  watchdog_controller.send_command(
-                      motor_base::ControlCommand::set_mode(
+                  watchdog_controller.send_discrete_command(motor_base::ControlCommand::set_mode(
                           motor_base::MotorControlMode::POSITION)).status ==
                       motor_base::CommandSubmitStatus::INVALID_COMMAND,
                   "SET_MODE should be rejected while communication fault is latched")) {
@@ -1034,7 +1330,7 @@ int main()
               return 1;
           }
           const motor_base::CommandSubmitResult restart_submit =
-              watchdog_controller.send_command(motor_base::ControlCommand::restart(0));
+              watchdog_controller.send_discrete_command(motor_base::ControlCommand::restart(0));
           if (!expect(
                   restart_submit.status == motor_base::CommandSubmitStatus::ACCEPTED &&
                       restart_submit.command_id.has_value(),
@@ -1090,7 +1386,7 @@ int main()
           std::vector<myactua::EthercatBusHealthSnapshot> recovery_script;
           append_health(recovery_script, 20, health(true, EC_WC_COMPLETE, 1));
           adapter->set_health_script(recovery_script);
-          watchdog_controller.send_command(motor_base::ControlCommand::restart());
+          watchdog_controller.send_discrete_command(motor_base::ControlCommand::restart());
           if (!expect(adapter->wait_for_cycles(28, std::chrono::seconds(1)),
                       "healthy cycles after RESTART(-1) should continue running")) {
               watchdog_controller.shutdown();

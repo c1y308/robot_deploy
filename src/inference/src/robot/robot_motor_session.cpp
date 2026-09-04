@@ -42,6 +42,7 @@ const char* command_submit_status_name(motor_base::CommandSubmitStatus status)
         case motor_base::CommandSubmitStatus::QUEUE_FULL: return "QUEUE_FULL";
         case motor_base::CommandSubmitStatus::INVALID_COMMAND: return "INVALID_COMMAND";
         case motor_base::CommandSubmitStatus::INVALID_PAYLOAD: return "INVALID_PAYLOAD";
+        case motor_base::CommandSubmitStatus::SOURCE_INACTIVE: return "SOURCE_INACTIVE";
     }
     return "UNKNOWN";
 }
@@ -161,7 +162,6 @@ void RobotMotorSession::deinitialize()
     motion_enabled_.store(false);
 }
 
-
 bool RobotMotorSession::stop(int motor_index)
 {
     if (!initialized_.load() || !controller_) {
@@ -199,8 +199,11 @@ bool RobotMotorSession::restart(int motor_index)
         return false;
     }
 
+
+    // 向电机发送 restart 命令
     const motor_base::CommandSubmitResult submit_result =
-        controller_->send_command(motor_base::ControlCommand::restart(motor_index));
+        controller_->send_discrete_command(
+            motor_base::ControlCommand::restart(motor_index));
     if (submit_result.status != motor_base::CommandSubmitStatus::ACCEPTED) {
         std::cerr << "[RobotMotorSession] restart command rejected: "
                   << command_submit_status_name(submit_result.status) << "\n";
@@ -208,6 +211,7 @@ bool RobotMotorSession::restart(int motor_index)
         return false;
     }
 
+    // 有命令 ID 需要确认是否执行成功
     if (!submit_result.command_id.has_value()) {
         std::cerr << "[RobotMotorSession] restart command missing command_id\n";
         motion_enabled_.store(false);
@@ -215,13 +219,18 @@ bool RobotMotorSession::restart(int motor_index)
     }
 
     const motor_base::CommandId command_id = *submit_result.command_id;
+
+    // 获取命令的超时时刻
     const auto deadline =
         std::chrono::steady_clock::now() +
-        std::chrono::milliseconds(config_.control_ready_timeout_ms);
+        std::chrono::milliseconds(config_.discrete_command_completion_timeout_ms);
 
     while (true) {
+
+        // 检查命令执行结果
         const motor_base::DiscreteCommandResult command_result =
             controller_->get_discrete_command_result(command_id);
+
         switch (command_result) {
             case motor_base::DiscreteCommandResult::SUCCEEDED:
                 if (motor_index < 0 || config_.num_motors == 1) {
@@ -286,9 +295,13 @@ bool RobotMotorSession::apply_targets_rad(const std::vector<double>& target_moto
         return false;
     }
 
-    if (!submit_command(
-            motor_base::ControlCommand::set_position_targets_rad(target_motor_rad),
-            "apply_targets_rad_position")) {
+    const motor_base::ControlCommand command =
+        motor_base::ControlCommand::set_position_targets_rad(target_motor_rad);
+    const motor_base::CommandSubmitResult result =
+        controller_->send_policy_setpoint(command);
+    if (result.status != motor_base::CommandSubmitStatus::ACCEPTED) {
+        std::cerr << "[RobotMotorSession] apply_targets_rad_position command rejected: "
+                  << command_submit_status_name(result.status) << "\n";
         return false;
     }
     return true;
@@ -318,12 +331,17 @@ bool RobotMotorSession::apply_impedance_setpoints(
         return false;
     }
 
-    if (!submit_command(
-            motor_base::ControlCommand::set_impedance_targets(setpoints),
-            "apply_impedance_setpoints")) {
-        return false;
+    const motor_base::ControlCommand command =
+        motor_base::ControlCommand::set_impedance_targets(setpoints);
+    const motor_base::CommandSubmitResult result =
+        controller_->send_policy_setpoint(command);
+    if (result.status == motor_base::CommandSubmitStatus::ACCEPTED) {
+        return true;
     }
-    return true;
+
+    std::cerr << "[RobotMotorSession] apply_impedance_setpoints command rejected: "
+              << command_submit_status_name(result.status) << "\n";
+    return false;
 }
 
 bool RobotMotorSession::apply_impedance_setpoints_realtime(
@@ -336,7 +354,7 @@ bool RobotMotorSession::apply_impedance_setpoints_realtime(
             setpoints.data(),
             count);
     const motor_base::CommandSubmitResult result =
-        controller_->send_realtime_setpoint_command(command);
+        controller_->send_policy_setpoint(command);
     if (result.status == motor_base::CommandSubmitStatus::ACCEPTED) {
         return true;
     }
@@ -346,21 +364,22 @@ bool RobotMotorSession::apply_impedance_setpoints_realtime(
     return false;
 }
 
-bool RobotMotorSession::try_consume_command_feedback(
+bool RobotMotorSession::try_consume_latest_status_command(
     std::array<motor_base::MotorStatusSnapshot,
                motor_base::kMaxMotorCommandSetpoints>& feedback)
 {
     if (!initialized_.load() || !controller_) {
         return false;
     }
-    return controller_->try_consume_command_feedback(feedback);
+    return controller_->try_consume_latest_status_command(feedback);
 }
 
 
 bool RobotMotorSession::submit_command(const motor_base::ControlCommand& command,
                                        const char* context)
 {
-    const motor_base::CommandSubmitResult result = controller_->send_command(command);
+    const motor_base::CommandSubmitResult result =
+        controller_->send_discrete_command(command);
     if (result.status == motor_base::CommandSubmitStatus::ACCEPTED) {
         return true;
     }
@@ -391,7 +410,7 @@ MotorStateSnapshot RobotMotorSession::get_motor_snapshot() const
     // 启动窗口内尚未收到任何反馈帧时退回公共状态通道，保持旧行为。
     std::array<motor_base::MotorStatusSnapshot,
                motor_base::kMaxMotorCommandSetpoints> latest_feedback;
-    if (controller_->try_consume_policy_feedback(latest_feedback)) {
+    if (controller_->try_consume_latest_status_policy(latest_feedback)) {
         latest_feedback_ = latest_feedback;
         has_policy_feedback_ = true;
     }

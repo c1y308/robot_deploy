@@ -112,7 +112,7 @@ void ActionProcessor::reset_runtime_state()
 
 bool ActionProcessor::build_motor_targets(
     const std::vector<double>& target_q_model_rad,  // 模型计算出的关节目标角
-    std::vector<double>&       target_motor_rad,    // 电机目标角(引用)
+    std::vector<double>&       target_motor_rad,    // 电机目标角(引用传递)
     std::string& error)
 {
     if (!mapping_) {
@@ -129,6 +129,7 @@ bool ActionProcessor::build_motor_targets(
     target_motor_rad.assign(static_cast<std::size_t>(count), 0.0);
 
     for (int model_index = 0; model_index < count; ++model_index) {
+        
         if (mapping_->is_parallel_model_dof(model_index)) {
             continue;
         }
