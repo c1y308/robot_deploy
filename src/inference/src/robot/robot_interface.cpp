@@ -321,6 +321,14 @@ void RobotInterface::record_inference(const InferenceRecord& record) {
     }
 }
 
+void RobotInterface::record_latest_completed_policy_frame()
+{
+    InferenceRecord record;
+    if (completed_policy_record_channel_.try_consume_latest(record)) {
+        record_inference(record);
+    }
+}
+
 bool RobotInterface::start_policy_command_worker()
 {
     if (policy_command_worker_running_.load()) {
@@ -337,8 +345,7 @@ bool RobotInterface::start_policy_command_worker()
 
     next_policy_seq_ = 1;
     policy_target_channel_.reset_empty();
-    policy_command_log_channel_.reset_empty();
-    policy_command_log_read_cache_ = PolicyCommandLogState{};
+    completed_policy_record_channel_.reset_empty();
     {
         std::lock_guard<std::mutex> lock(policy_command_error_mutex_);
         policy_command_worker_error_.clear();
@@ -378,6 +385,7 @@ void RobotInterface::stop_policy_command_worker()
         policy_command_worker_thread_.get_id() != std::this_thread::get_id()) {
         policy_command_worker_thread_.join();
     }
+    record_latest_completed_policy_frame();
 }
 
 void RobotInterface::policy_command_worker_loop()
@@ -398,6 +406,7 @@ void RobotInterface::policy_command_worker_loop()
     bool has_motor_feedback = false;
     robot_detail::ActionProcessor::FixedPolicyMotorCommand command;
     std::string error;
+    std::uint64_t last_logged_policy_seq = 0;
 
     try {
         while (policy_command_worker_running_.load()) {
@@ -477,22 +486,25 @@ void RobotInterface::policy_command_worker_loop()
                     command.setpoint_count,
                     timing);
 
-            PolicyCommandLogState log_state;
-            log_state.timestamp_ns = produced_at_ns;
-            log_state.policy_seq = current_target.policy_seq;
-            log_state.observation_time_ns = current_target.observation_time_ns;
-            log_state.policy_valid_until_ns = current_target.valid_until_ns;
-            log_state.command_produced_at_ns = produced_at_ns;
-            log_state.command_valid_until_ns = timing.valid_until_ns;
-            for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
-                log_state.target_pos_rad[i] = command.setpoints[i].position_rad;
-                log_state.target_effort_permille[i] = command.target_effort_permille[i];
-            }
-            policy_command_log_channel_.publish(log_state);
-
             if (!applied) {
                 fail_policy_command_worker("failed to apply policy impedance command");
                 break;
+            }
+
+            if (current_target.policy_seq != last_logged_policy_seq) {
+                InferenceRecord completed_record = current_target.inference_record;
+                completed_record.command_timestamp_ns = produced_at_ns;
+                completed_record.command_produced_at_ns = produced_at_ns;
+                completed_record.command_valid_until_ns = timing.valid_until_ns;
+                completed_record.command_applied = true;
+                for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
+                    completed_record.target_pos_rad[i] =
+                        command.setpoints[i].position_rad;
+                    completed_record.target_effort_permille[i] =
+                        command.target_effort_permille[i];
+                }
+                completed_policy_record_channel_.publish(completed_record);
+                last_logged_policy_seq = current_target.policy_seq;
             }
 
             std::this_thread::sleep_until(next_wake);
@@ -507,16 +519,6 @@ void RobotInterface::policy_command_worker_loop()
     } catch (...) {
         fail_policy_command_worker("policy command worker exception");
     }
-}
-
-RobotInterface::PolicyCommandLogState
-RobotInterface::latest_policy_command_log_state()
-{
-    PolicyCommandLogState latest;
-    if (policy_command_log_channel_.try_consume_latest(latest)) {
-        policy_command_log_read_cache_ = latest;
-    }
-    return policy_command_log_read_cache_;
 }
 
 void RobotInterface::fail_policy_command_worker(std::string message)
@@ -557,6 +559,8 @@ bool RobotInterface::policy_command_worker_healthy(std::string& error) const
 
 /* 执行一次策略闭环：使用保存的目标速度构建观测、模型推理并下发目标关节角。 */
 bool RobotInterface::policy_step() {
+
+    record_latest_completed_policy_frame();
 
     const std::array<double, 3> target_velocity = get_target_velocity();
 
@@ -699,10 +703,6 @@ bool RobotInterface::policy_step() {
             policy_target.target_q_model_rad[model_index];
     }
 
-    // 发布到 SPSC 通道
-    policy_target_channel_.publish(policy_target);
-
-
     // 记录日志的策略推理时间和原始动作输出
     record.inference_start_ns = policy_result.inference_start_ns;
     record.inference_end_ns   = policy_result.inference_end_ns;
@@ -712,29 +712,9 @@ bool RobotInterface::policy_step() {
     record.policy_observation = policy_observation;
     record.raw_action         = policy_result.raw_action;
 
-    // 获取最新的策略命令日志状态，保存到日志记录中
-    const PolicyCommandLogState command_log_state = latest_policy_command_log_state();
-    for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
-        record.target_pos_rad[i] = command_log_state.target_pos_rad[i];
-        record.target_effort_permille[i] = command_log_state.target_effort_permille[i];
-    }
-    if (command_log_state.policy_seq != 0) {
-        record.policy_seq = command_log_state.policy_seq;
-        record.policy_observation_time_ns = command_log_state.observation_time_ns;
-        record.policy_valid_until_ns = command_log_state.policy_valid_until_ns;
-    }
-    record.command_produced_at_ns = command_log_state.command_produced_at_ns;
-    record.command_valid_until_ns = command_log_state.command_valid_until_ns;
-
-    // 构建日志的观测信息
-    record.command_applied =
-         policy_command_worker_running_.load() &&
-        !policy_command_worker_failed_.load();
-
-    record.command_timestamp_ns =
-        command_log_state.timestamp_ns != 0 ? command_log_state.timestamp_ns : steady_now_ns();
-
-    record_inference(record);
+    // 将本轮策略日志快照随目标发布，worker 成功提交首条命令后再补齐命令字段。
+    policy_target.inference_record = record;
+    policy_target_channel_.publish(policy_target);
 
     observation_builder_->advance_frame();
 

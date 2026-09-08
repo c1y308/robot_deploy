@@ -50,17 +50,7 @@ private:
         std::uint64_t policy_seq{0};
         std::int64_t  observation_time_ns{0};
         std::int64_t  valid_until_ns{0};
-    };
-
-    struct PolicyCommandLogState {
-        std::int64_t timestamp_ns{0};
-        std::uint64_t policy_seq{0};
-        std::int64_t observation_time_ns{0};
-        std::int64_t policy_valid_until_ns{0};
-        std::int64_t command_produced_at_ns{0};
-        std::int64_t command_valid_until_ns{0};
-        std::array<double, policy_observation::kDof> target_pos_rad{};
-        std::array<double, policy_observation::kDof> target_effort_permille{};
+        InferenceRecord inference_record{};
     };
 
     /* 机器人接口配置 */
@@ -97,11 +87,9 @@ private:
     robot_base::SpscLatestChannel<PolicyTargetFrame>
     policy_target_channel_;
 
-    // policy_command_worker 传递给 policy_step() 的生成并实际发送的 motor impedance command
-    robot_base::SpscLatestChannel<PolicyCommandLogState>
-    policy_command_log_channel_;
-
-    PolicyCommandLogState policy_command_log_read_cache_;
+    // worker 补齐首条成功提交的命令后，将同一策略帧的完整日志传回控制线程。
+    robot_base::SpscLatestChannel<InferenceRecord>
+    completed_policy_record_channel_;
 
     mutable std::mutex policy_command_error_mutex_;
     std::string        policy_command_worker_error_;
@@ -121,7 +109,7 @@ private:
     void stop_policy_command_worker();
     void policy_command_worker_loop();
 
-    PolicyCommandLogState latest_policy_command_log_state();
+    void record_latest_completed_policy_frame();
     void fail_policy_command_worker(std::string message);
     bool policy_command_worker_healthy(std::string& error) const;
 };
