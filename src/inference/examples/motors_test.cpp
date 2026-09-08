@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
         cfg.ethercat_ifname = ifname_override;
     }
 
-    inference::RobotMotorSession motors(cfg);
+    inference::RobotMotorSession motors(cfg, robot_cfg.safety);
 
     std::cout << "[MOTORS_TEST] 1/4 initialize()" << std::endl;
     if (!motors.initialize()) {

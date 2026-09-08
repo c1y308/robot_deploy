@@ -44,7 +44,7 @@ void fill_record_motor_state(const MotorStateSnapshot& motor_state,
 /* 保存外部传入的接口配置，后续由初始化函数按模块使用。 */
 RobotInterface::RobotInterface(RobotInterfaceConfig config)
     : config_(std::move(config)),
-      motor_session_(config_.motor),    // 构造 motor_session_
+      motor_session_(config_.motor, config_.safety),    // 构造 motor_session_
       imu_session_(config_.imu)         // 构造 imu_session_
 {
 }
@@ -259,7 +259,11 @@ bool RobotInterface::reset_joints() {
     }
 
     const int ramp_steps = 100;
-    const auto dt = std::chrono::milliseconds(20);
+    const auto reset_period_us = std::max<std::int64_t>(
+        1,
+        static_cast<std::int64_t>(std::llround(
+            config_.safety.control_command_timeout_ms * 500.0)));
+    const auto dt = std::chrono::microseconds(reset_period_us);
     std::vector<double> target_rad;
 
     for (int k = 1; k <= ramp_steps; ++k) {
@@ -328,11 +332,8 @@ bool RobotInterface::start_policy_command_worker()
         return false;
     }
 
-    std::array<double, policy_observation::kDof> initial_target{};
-    for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
-        initial_target[i] = config_.action.default_joint_pos_rad[i];
-    }
-    policy_target_channel_.reset_with_value(initial_target);
+    next_policy_seq_ = 1;
+    policy_target_channel_.reset_empty();
     policy_command_log_channel_.reset_empty();
     policy_command_log_read_cache_ = PolicyCommandLogState{};
     {
@@ -379,11 +380,8 @@ void RobotInterface::policy_command_worker_loop()
 
     auto next_wake = std::chrono::steady_clock::now();
 
-    std::array<double, policy_observation::kDof> current_target_q_model_rad{};
-    if (!policy_target_channel_.try_consume_latest(current_target_q_model_rad)) {
-        fail_policy_command_worker("policy command target is not initialized");
-        return;
-    }
+    PolicyTargetFrame current_target;
+    bool has_current_target = false;
 
     std::array<motor_base::MotorStatusSnapshot,
                motor_base::kMaxMotorCommandSetpoints> motor_feedback;
@@ -395,9 +393,30 @@ void RobotInterface::policy_command_worker_loop()
         while (policy_command_worker_running_.load()) {
             next_wake += period;
 
-            std::array<double, policy_observation::kDof> latest_target{};
+            PolicyTargetFrame latest_target;
             if (policy_target_channel_.try_consume_latest(latest_target)) {
-                current_target_q_model_rad = latest_target;
+                current_target = latest_target;
+                has_current_target = true;
+            }
+
+            if (!has_current_target) {
+                std::this_thread::sleep_until(next_wake);
+                const auto now = std::chrono::steady_clock::now();
+                if (now > next_wake + period) {
+                    next_wake = now;
+                }
+                continue;
+            }
+
+            if (current_target.policy_seq == 0) {
+                fail_policy_command_worker("policy target sequence is missing");
+                break;
+            }
+
+            const std::int64_t now_ns = robot_base::monotonic_now_ns();
+            if (current_target.valid_until_ns <= now_ns) {
+                fail_policy_command_worker("policy target deadline expired");
+                break;
             }
 
             std::array<motor_base::MotorStatusSnapshot,
@@ -413,7 +432,7 @@ void RobotInterface::policy_command_worker_loop()
 
             error.clear();
             if (!action_processor_->build_policy_impedance_command(
-                    current_target_q_model_rad,
+                    current_target.target_q_model_rad,
                     motor_feedback,
                     command,
                     error)) {
@@ -421,13 +440,33 @@ void RobotInterface::policy_command_worker_loop()
                 break;
             }
 
+            const std::int64_t produced_at_ns = robot_base::monotonic_now_ns();
+            if (current_target.valid_until_ns <= produced_at_ns) {
+                fail_policy_command_worker("policy target deadline expired");
+                break;
+            }
+            const std::int64_t command_deadline = produced_at_ns +
+                robot_base::seconds_to_ns(
+                    config_.safety.control_command_timeout_ms / 1000.0);
+            motor_base::CommandTiming timing;
+            timing.source_policy_seq = current_target.policy_seq;
+            timing.produced_at_ns = produced_at_ns;
+            timing.valid_until_ns = std::min(current_target.valid_until_ns,
+                                             command_deadline);
+
             const bool applied =
                 motor_session_.apply_impedance_setpoints_realtime(
                     command.setpoints,
-                    command.setpoint_count);
+                    command.setpoint_count,
+                    timing);
 
             PolicyCommandLogState log_state;
-            log_state.timestamp_ns = steady_now_ns();
+            log_state.timestamp_ns = produced_at_ns;
+            log_state.policy_seq = current_target.policy_seq;
+            log_state.observation_time_ns = current_target.observation_time_ns;
+            log_state.policy_valid_until_ns = current_target.valid_until_ns;
+            log_state.command_produced_at_ns = produced_at_ns;
+            log_state.command_valid_until_ns = timing.valid_until_ns;
             for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
                 log_state.target_pos_rad[i] = command.setpoints[i].position_rad;
                 log_state.target_effort_permille[i] = command.target_effort_permille[i];
@@ -453,16 +492,23 @@ void RobotInterface::policy_command_worker_loop()
     }
 }
 
-void RobotInterface::set_latest_policy_target(const std::vector<double>& target_q_model_rad)
+void RobotInterface::set_latest_policy_target(
+    const std::vector<double>& target_q_model_rad,
+    std::uint64_t policy_seq,
+    std::int64_t observation_time_ns,
+    std::int64_t valid_until_ns)
 {
     if (target_q_model_rad.size() != PolicyRuntime::kDof) {
         return;
     }
 
-    std::array<double, policy_observation::kDof> target{};
+    PolicyTargetFrame target;
     for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
-        target[i] = target_q_model_rad[i];
+        target.target_q_model_rad[i] = target_q_model_rad[i];
     }
+    target.policy_seq = policy_seq;
+    target.observation_time_ns = observation_time_ns;
+    target.valid_until_ns = valid_until_ns;
     policy_target_channel_.publish(target);
 }
 
@@ -490,7 +536,6 @@ void RobotInterface::fail_policy_command_worker(std::string message)
     if (!already_failed) {
         std::cerr << "[RobotInterface] policy command worker failed: "
                   << printable_message << "\n";
-        motor_session_.stop(-1);
     }
 }
 
@@ -608,11 +653,32 @@ bool RobotInterface::policy_step() {
     if (!policy_runtime_.infer(policy_observation, policy_result)) {
         return handle_policy_step_failure(policy_runtime_.last_error());
     }
+
+    std::int64_t observation_time_ns = motor_state.timestamp_ns;
+    if (has_imu_receive_timestamp) {
+        observation_time_ns = std::min(observation_time_ns,
+                                       imu_receive_timestamp_ns);
+    }
+    if (observation_time_ns <= 0) {
+        observation_time_ns = timing_now_ns;
+    }
+    const std::int64_t policy_valid_until_ns = observation_time_ns +
+        robot_base::seconds_to_ns(
+            config_.safety.policy_target_timeout_ms / 1000.0);
+    if (robot_base::monotonic_now_ns() >= policy_valid_until_ns) {
+        return handle_policy_step_failure(
+            "policy inference result exceeded policy target deadline");
+    }
+
+    const std::uint64_t policy_seq = next_policy_seq_++;
     observation_builder_->commit_policy_action(policy_result.raw_action);
 
     // 记录日志的策略推理时间和原始动作输出
     record.inference_start_ns = policy_result.inference_start_ns;
     record.inference_end_ns   = policy_result.inference_end_ns;
+    record.policy_seq = policy_seq;
+    record.policy_observation_time_ns = observation_time_ns;
+    record.policy_valid_until_ns = policy_valid_until_ns;
     record.policy_observation = policy_observation;
     record.raw_action         = policy_result.raw_action;
 
@@ -637,8 +703,11 @@ bool RobotInterface::policy_step() {
         record.target_q_model_rad[model_index] = target_q_model_rad[model_index];
     }
 
-    // 把处理后的模型目标值传递给policy_target_channel_，调用publish函数
-    set_latest_policy_target(target_q_model_rad);
+    // 把处理后的模型目标值及其不可续租的截止期传递给 command worker。
+    set_latest_policy_target(target_q_model_rad,
+                             policy_seq,
+                             observation_time_ns,
+                             policy_valid_until_ns);
 
     // 获取最新的策略命令日志状态，保存到日志记录中
     const PolicyCommandLogState command_log_state = latest_policy_command_log_state();
@@ -646,6 +715,13 @@ bool RobotInterface::policy_step() {
         record.target_pos_rad[i] = command_log_state.target_pos_rad[i];
         record.target_effort_permille[i] = command_log_state.target_effort_permille[i];
     }
+    if (command_log_state.policy_seq != 0) {
+        record.policy_seq = command_log_state.policy_seq;
+        record.policy_observation_time_ns = command_log_state.observation_time_ns;
+        record.policy_valid_until_ns = command_log_state.policy_valid_until_ns;
+    }
+    record.command_produced_at_ns = command_log_state.command_produced_at_ns;
+    record.command_valid_until_ns = command_log_state.command_valid_until_ns;
 
 
     // 构建日志的观测信息
@@ -665,13 +741,11 @@ bool RobotInterface::policy_step() {
     return true;
 }
 
-/* 处理策略执行失败：打印错误并停止全部电机。 */
+/* 处理策略执行失败：打印错误并停止生产者；保护动作由 RT 基类执行。 */
 bool RobotInterface::handle_policy_step_failure(const std::string& message) {
     std::cerr << "[RobotInterface] policy_step failed: " << message << "\n";
-    // 策略链路任何一步失败都停机，避免继续执行上一周期的目标。
     initialized_.store(false);
     stop_policy_command_worker();
-    motor_session_.stop(-1);
     return false;
 }
 

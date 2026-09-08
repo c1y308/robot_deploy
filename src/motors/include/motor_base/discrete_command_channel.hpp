@@ -65,6 +65,13 @@ public:
         tail_.store(tail + 1, std::memory_order_release);
     }
 
+    void clear()
+    {
+        std::lock_guard<std::mutex> lock(push_mutex_);
+        const std::size_t head = head_.load(std::memory_order_acquire);
+        tail_.store(head, std::memory_order_release);
+    }
+
 private:
     robot_base::RingBuffer<Entry> buffer_;
     std::atomic<std::size_t> head_{0};
@@ -95,6 +102,13 @@ public:
     void pop_front()
     {
         buffer_.pop_front();
+    }
+
+    void clear()
+    {
+        while (!buffer_.empty()) {
+            buffer_.pop_front();
+        }
     }
 
 private:

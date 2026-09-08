@@ -29,10 +29,15 @@ struct InferenceRecord {
     std::int64_t inference_start_ns{0};
     std::int64_t inference_end_ns{0};
     
-    std::int64_t command_timestamp_ns{0};
-    std::int64_t imu_receive_timestamp_ns{0};
+    std::int64_t  command_timestamp_ns{0};
+    std::uint64_t policy_seq{0};
+    std::int64_t policy_observation_time_ns{0};
+    std::int64_t policy_valid_until_ns{0};
+    std::int64_t command_produced_at_ns{0};
+    std::int64_t command_valid_until_ns{0};
+    std::int64_t  imu_receive_timestamp_ns{0};
     std::uint64_t imu_sample_timestamp_ns{0};
-    std::int64_t motor_age_us{0};
+    std::int64_t  motor_age_us{0};
 
     PolicyObservation policy_observation{};                     // 真正送入 TorchScript 的 flatten policy 输入
     std::array<float,  kInferenceDof> raw_action{};             // 模型输出的原始动作向量

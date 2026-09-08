@@ -89,6 +89,12 @@ struct SensorGuardConfig {
     double max_sensor_state_skew_s = 0.030; // IMU 与电机状态的时间戳差值最大允许值，超过该值视为不同步
 };
 
+/* 策略帧和 RT 连续命令的独立新鲜度预算。单位 ms。 */
+struct SafetyConfig {
+    double policy_target_timeout_ms = 40.0;
+    double control_command_timeout_ms = 10.0;
+};
+
 /* 脚踝物理电机的行程限位。
    顺序: left upper, left lower, right upper, right lower。 */
 struct AnkleMotorLimitConfig {
@@ -110,6 +116,7 @@ struct RobotInterfaceConfig {
     MotorConfig motor;
     ImuConfig   imu;
     SensorGuardConfig sensor_guard;
+    SafetyConfig safety;
 
     JointMappingConfig joint_mapping;
     ActionConfig action;

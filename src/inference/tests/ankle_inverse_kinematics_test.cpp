@@ -303,7 +303,8 @@ int main()
         return 0;
     }
 
-    inference::RobotMotorSession motors(make_motor_config());
+    inference::RobotMotorSession motors(make_motor_config(),
+                                        inference::SafetyConfig{});
 
     std::cout << "[ANKLE_IK_TEST] Initializing motors...\n";
     if (!motors.initialize()) {

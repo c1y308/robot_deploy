@@ -36,6 +36,9 @@ public:
         long rt_period_ns = 1000000;
         int rt_priority   = 80;
 
+        // Used to stamp legacy debug setpoints at the controller boundary.
+        std::int64_t setpoint_timeout_ns = 10'000'000;
+
         std::size_t rt_event_queue_capacity = 256;
         int status_publish_period_ms = 1;
     };
@@ -79,6 +82,14 @@ public:
 
     /// @brief 实时控制线程是否正在运行
     bool is_running() const;
+    bool safety_stop_latched() const noexcept
+    {
+        return safety_stop_latched_.load(std::memory_order_acquire);
+    }
+
+    // Explicit recovery operation.  It is deliberately unavailable while the
+    // RT thread is running, so a producer cannot clear its own safety latch.
+    bool clear_safety_stop_latch();
     bool is_realtime_scheduling_ready() const noexcept
     {
         return rt_scheduling_ready_.load(std::memory_order_acquire);
@@ -95,7 +106,8 @@ public:
     DiscreteCommandResult get_discrete_command_result(CommandId id) const;
 
     /// @brief policy_command_worker 专用的 latest-value setpoint 提交入口。
-    ///        仅允许单 producer 调用，底层为 SPSC 通道。
+    ///        仅允许单 producer 调用，底层为 SPSC 通道；策略流启动前
+    ///        的 setup 命令可使用序号 0。
     CommandSubmitResult send_policy_setpoint(const ControlCommand& cmd);
 
     /// @brief 测试/手动调试专用的 latest-value setpoint 提交入口。
@@ -201,6 +213,11 @@ private:
     //  thread_func()中调用，从命令队列中取出离散命令进行分发
     void process_queued_commands();
     void process_latest_setpoint_commands();
+    void apply_safety_stop();
+    void latch_safety_stop(int reason, std::uint64_t policy_seq);
+    bool validate_setpoint_timing(const ControlCommand& cmd,
+                                  std::int64_t now_ns,
+                                  int& reason) const noexcept;
 
     // 直接在process_queued_commands()中调用，将离散命令入各个电机的命令队列
     void enqueue_discrete_command(const ControlCommand& cmd, CommandId command_id);
@@ -250,6 +267,14 @@ private:
     std::thread rt_thread_;
     std::atomic<bool> running_{false};
     std::atomic<bool> rt_scheduling_ready_{false};
+    std::atomic<bool> safety_stop_latched_{false};
+    // Startup/setup setpoints may use sequence zero until the first policy
+    // frame has been accepted; policy traffic thereafter must be sequenced.
+    std::atomic<bool> policy_sequence_started_{false};
+    bool has_active_setpoint_{false};
+    ControlCommand active_setpoint_{};
+    std::uint64_t last_policy_seq_{0};
+    std::int64_t last_produced_at_ns_{0};
     mutable std::mutex lifecycle_mutex_;
 };
 

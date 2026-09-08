@@ -64,7 +64,9 @@ void write_header(std::ostream& stream)
 {
     stream << "frame_index,elapsed_us,motor_sample_timestamp_ns,inference_start_ns,"
            << "inference_end_ns,inference_duration_us,command_timestamp_ns,"
-           << "command_applied";
+           << "command_applied,policy_seq,policy_observation_time_ns,"
+           << "policy_valid_until_ns,command_produced_at_ns,"
+           << "command_valid_until_ns";
     append_indexed_columns(stream, "policy_obs", policy_observation::kObservationSize);
     append_indexed_columns(stream, "raw_action", kInferenceDof);
     append_indexed_columns(stream, "target_q_model_rad", kInferenceDof);
@@ -126,7 +128,12 @@ void write_record(std::ostream&          stream,
            << record.inference_end_ns << ','
            << inference_duration_us_for_record(record) << ','
            << record.command_timestamp_ns << ','
-           << (record.command_applied ? 1 : 0);
+           << (record.command_applied ? 1 : 0) << ','
+           << record.policy_seq << ','
+           << record.policy_observation_time_ns << ','
+           << record.policy_valid_until_ns << ','
+           << record.command_produced_at_ns << ','
+           << record.command_valid_until_ns;
 
     append_values(stream, record.policy_observation);
     append_values(stream, record.raw_action);

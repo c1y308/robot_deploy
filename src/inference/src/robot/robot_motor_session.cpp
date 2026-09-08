@@ -75,8 +75,8 @@ void fill_motor_snapshot_from_range(MotorStateSnapshot& snapshot,
 
 }  // namespace
 
-RobotMotorSession::RobotMotorSession(MotorConfig config)
-    : config_(std::move(config)) {}
+RobotMotorSession::RobotMotorSession(MotorConfig config, SafetyConfig safety)
+    : config_(std::move(config)), safety_(std::move(safety)) {}
 
 RobotMotorSession::~RobotMotorSession()
 {
@@ -90,8 +90,13 @@ bool RobotMotorSession::initialize()
         return true;
     }
 
-    adapter_    = std::make_shared<myactua::EthercatAdapterIGH>();
-    controller_ = std::make_unique<myactua::MyActMotorController>(adapter_, config_.num_motors);
+    adapter_ = std::make_shared<myactua::EthercatAdapterIGH>();
+    myactua::MyActMotorController::Options controller_options;
+    controller_options.setpoint_timeout_ns =
+        static_cast<std::int64_t>(std::llround(
+            safety_.control_command_timeout_ms * 1'000'000.0));
+    controller_ = std::make_unique<myactua::MyActMotorController>(
+        adapter_, config_.num_motors, controller_options);
 
     std::cout << "[RobotMotorSession] Connecting EtherCAT on "
               << config_.ethercat_ifname << "...\n";
@@ -262,6 +267,14 @@ bool RobotMotorSession::restart(int motor_index)
     }
 }
 
+bool RobotMotorSession::clear_safety_stop_latch()
+{
+    if (!controller_) {
+        return false;
+    }
+    return controller_->clear_safety_stop_latch();
+}
+
 
 bool RobotMotorSession::apply_targets_rad(const std::vector<double>& target_motor_rad)
 {
@@ -295,8 +308,14 @@ bool RobotMotorSession::apply_targets_rad(const std::vector<double>& target_moto
         return false;
     }
 
-    const motor_base::ControlCommand command =
+    motor_base::ControlCommand command =
         motor_base::ControlCommand::set_position_targets_rad(target_motor_rad);
+    const std::int64_t produced_at_ns = robot_base::monotonic_now_ns();
+    command.timing.source_policy_seq = 0;
+    command.timing.produced_at_ns = produced_at_ns;
+    command.timing.valid_until_ns = produced_at_ns +
+        static_cast<std::int64_t>(std::llround(
+            safety_.control_command_timeout_ms * 1'000'000.0));
     const motor_base::CommandSubmitResult result =
         controller_->send_policy_setpoint(command);
     if (result.status != motor_base::CommandSubmitStatus::ACCEPTED) {
@@ -331,8 +350,14 @@ bool RobotMotorSession::apply_impedance_setpoints(
         return false;
     }
 
-    const motor_base::ControlCommand command =
+    motor_base::ControlCommand command =
         motor_base::ControlCommand::set_impedance_targets(setpoints);
+    const std::int64_t produced_at_ns = robot_base::monotonic_now_ns();
+    command.timing.source_policy_seq = 0;
+    command.timing.produced_at_ns = produced_at_ns;
+    command.timing.valid_until_ns = produced_at_ns +
+        static_cast<std::int64_t>(std::llround(
+            safety_.control_command_timeout_ms * 1'000'000.0));
     const motor_base::CommandSubmitResult result =
         controller_->send_policy_setpoint(command);
     if (result.status == motor_base::CommandSubmitStatus::ACCEPTED) {
@@ -349,10 +374,27 @@ bool RobotMotorSession::apply_impedance_setpoints_realtime(
                      motor_base::kMaxMotorCommandSetpoints>& setpoints,
     std::size_t count)
 {
-    const motor_base::ControlCommand command =
+    const std::int64_t produced_at_ns = robot_base::monotonic_now_ns();
+    const std::int64_t valid_until_ns = produced_at_ns +
+        static_cast<std::int64_t>(std::llround(
+            safety_.control_command_timeout_ms * 1'000'000.0));
+    motor_base::CommandTiming timing;
+    timing.produced_at_ns = produced_at_ns;
+    timing.valid_until_ns = valid_until_ns;
+    return apply_impedance_setpoints_realtime(setpoints, count, timing);
+}
+
+bool RobotMotorSession::apply_impedance_setpoints_realtime(
+    const std::array<motor_base::ImpedanceSetpoint,
+                     motor_base::kMaxMotorCommandSetpoints>& setpoints,
+    std::size_t count,
+    const motor_base::CommandTiming& timing)
+{
+    motor_base::ControlCommand command =
         motor_base::ControlCommand::set_impedance_targets_fixed(
             setpoints.data(),
             count);
+    command.timing = timing;
     const motor_base::CommandSubmitResult result =
         controller_->send_policy_setpoint(command);
     if (result.status == motor_base::CommandSubmitStatus::ACCEPTED) {

@@ -57,6 +57,28 @@ enum class DiscreteCommandType {
 
 using CommandId = std::uint64_t;
 
+/*
+ * Timing/provenance carried with every continuous setpoint once it enters the
+ * realtime controller.  All timestamps use CLOCK_MONOTONIC nanoseconds.
+ * valid_until_ns is the final deadline for applying the command.
+ */
+struct CommandTiming {
+    std::uint64_t source_policy_seq{0};
+    std::int64_t produced_at_ns{0};
+    std::int64_t valid_until_ns{0};
+
+    bool is_unset() const noexcept
+    {
+        return source_policy_seq == 0 && produced_at_ns == 0 &&
+               valid_until_ns == 0;
+    }
+
+    bool is_well_formed() const noexcept
+    {
+        return produced_at_ns > 0 && valid_until_ns > produced_at_ns;
+    }
+};
+
 enum class CommandSubmitStatus {
     ACCEPTED,
     QUEUE_FULL,
@@ -108,6 +130,7 @@ struct ControlCommand {
     MotorControlMode mode; // 目标电机模式，仅 SET_MODE 使用
 
     bool payload_valid;
+    CommandTiming timing;
 
     ControlCommand()
         : kind(ControlCommandKind::DISCRETE),
@@ -118,7 +141,8 @@ struct ControlCommand {
           impedance_setpoints(),
           payload_size(0),
           mode(MotorControlMode::NONE),
-          payload_valid(true) {}
+          payload_valid(true),
+          timing() {}
 
 
     static ControlCommand stop(int motor_index = kAllMotors) {

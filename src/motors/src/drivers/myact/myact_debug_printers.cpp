@@ -216,6 +216,13 @@ void print_myact_event(const mb::RtEvent& event)
                              static_cast<mb::SetpointRejectReason>(event.reason))
                       << "\n";
             break;
+
+        case mb::RtEventType::SETPOINT_TIMEOUT_FAULT:
+            std::cerr << "[MYACTUA] setpoint freshness fault latched, cycle="
+                      << event.tick
+                      << ", reason=" << event.reason
+                      << ", policy_seq=" << event.value << "\n";
+            break;
     }
 }
 

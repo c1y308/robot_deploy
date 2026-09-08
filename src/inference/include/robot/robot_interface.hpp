@@ -45,8 +45,20 @@ public:
 
 
 private:
+    struct PolicyTargetFrame {
+        std::array<double, policy_observation::kDof> target_q_model_rad{};
+        std::uint64_t policy_seq{0};
+        std::int64_t observation_time_ns{0};
+        std::int64_t valid_until_ns{0};
+    };
+
     struct PolicyCommandLogState {
         std::int64_t timestamp_ns{0};
+        std::uint64_t policy_seq{0};
+        std::int64_t observation_time_ns{0};
+        std::int64_t policy_valid_until_ns{0};
+        std::int64_t command_produced_at_ns{0};
+        std::int64_t command_valid_until_ns{0};
         std::array<double, policy_observation::kDof> target_pos_rad{};
         std::array<double, policy_observation::kDof> target_effort_permille{};
     };
@@ -74,10 +86,11 @@ private:
     std::atomic<bool> initialized_{false};
     std::atomic<bool> policy_command_worker_running_{false};
     std::atomic<bool> policy_command_worker_failed_{false};
+    std::uint64_t next_policy_seq_{1};
 
     std::thread policy_command_worker_thread_;
-    // policy_step() 传递给 policy_command_worker 的最新模型目标关节角
-    robot_base::SpscLatestChannel<std::array<double, policy_observation::kDof>>
+    // policy_step() 传递给 policy_command_worker 的最新目标及其不可续租截止期
+    robot_base::SpscLatestChannel<PolicyTargetFrame>
     policy_target_channel_;
 
     // policy_command_worker 传递给 policy_step() 的生成并实际发送的 motor impedance command
@@ -104,7 +117,10 @@ private:
     void stop_policy_command_worker();
     void policy_command_worker_loop();
     
-    void set_latest_policy_target(const std::vector<double>& target_q_model_rad);
+    void set_latest_policy_target(const std::vector<double>& target_q_model_rad,
+                                  std::uint64_t policy_seq,
+                                  std::int64_t observation_time_ns,
+                                  std::int64_t valid_until_ns);
     PolicyCommandLogState latest_policy_command_log_state();
     void fail_policy_command_worker(std::string message);
     bool policy_command_worker_healthy(std::string& error) const;

@@ -2,6 +2,7 @@
 #include "protocol/ethercat/ethercat_adapter.hpp"
 #include "driver/myact/myact_motor_controller.hpp"
 #include "driver/myact/motor_units.hpp"
+#include "tool/tool.hpp"
 
 #include <array>
 #include <atomic>
@@ -16,6 +17,18 @@
 #include <vector>
 
 namespace {
+
+motor_base::ControlCommand timed_policy_position(double position,
+                                                  std::uint64_t policy_seq = 1)
+{
+    motor_base::ControlCommand command =
+        motor_base::ControlCommand::set_position_targets_rad({position});
+    const std::int64_t now_ns = robot_base::monotonic_now_ns();
+    command.timing.source_policy_seq = policy_seq;
+    command.timing.produced_at_ns = now_ns;
+    command.timing.valid_until_ns = now_ns + 1'000'000'000LL;
+    return command;
+}
 
 class FakeAdapter : public myactua::EthercatAdapter {
 public:
@@ -219,6 +232,7 @@ myactua::MyActMotorController::Options test_options()
     options.status_publish_period_ms = 1;
     options.rt_priority = 0;
     options.rt_period_ns = 1000000;
+    options.setpoint_timeout_ns = 1'000'000'000;
     return options;
 }
 
@@ -273,6 +287,12 @@ public:
         return applied_setpoints_;
     }
 
+    std::size_t safety_stop_count() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return safety_stop_count_;
+    }
+
 protected:
     bool connect_impl(const char*) override { return true; }
 
@@ -293,8 +313,13 @@ protected:
 
     void apply_discrete_command_impl(
         int,
-        const motor_base::DiscreteCommand&) override
+        const motor_base::DiscreteCommand& cmd) override
     {
+        if (cmd.type == motor_base::DiscreteCommandType::STOP) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++safety_stop_count_;
+            cv_.notify_all();
+        }
     }
 
     motor_base::DiscreteCommandEvaluation evaluate_discrete_command_impl(
@@ -309,6 +334,7 @@ private:
     std::condition_variable cv_;
     std::uint64_t cycles_{0};
     std::vector<motor_base::ControlCommand> applied_setpoints_;
+    std::size_t safety_stop_count_{0};
 };
 
 motor_base::MotorControllerBase::RealtimeOptions latest_channel_test_options()
@@ -319,6 +345,7 @@ motor_base::MotorControllerBase::RealtimeOptions latest_channel_test_options()
     options.max_commands_per_cycle = 4;
     options.rt_period_ns = 50000000;
     options.rt_priority = 0;
+    options.setpoint_timeout_ns = 200'000'000;
     options.rt_event_queue_capacity = 16;
     options.status_publish_period_ms = 1;
     return options;
@@ -584,7 +611,15 @@ int main()
         if (!expect(
                 policy_controller.send_policy_setpoint(
                     motor_base::ControlCommand::set_position_targets_rad(
-                        {2.0})).status ==
+                        {1.5})).status ==
+                    motor_base::CommandSubmitStatus::INVALID_COMMAND,
+                "policy setpoint without freshness metadata should be rejected")) {
+            policy_controller.shutdown();
+            return 1;
+        }
+        if (!expect(
+                policy_controller.send_policy_setpoint(
+                    timed_policy_position(2.0)).status ==
                     motor_base::CommandSubmitStatus::ACCEPTED,
                 "policy setpoint should publish when policy source is active")) {
             policy_controller.shutdown();
@@ -1432,6 +1467,127 @@ int main()
           const myactua::TxPDO tx = adapter->last_tx(0);
           if (!expect(tx.control_word == myactua::CMD_QUICK_STOP,
                       "RT thread restart should not clear communication latch")) {
+              return 1;
+          }
+      }
+
+      {
+          auto timing_options = latest_channel_test_options();
+          timing_options.rt_period_ns = 1'000'000;
+          timing_options.setpoint_timeout_ns = 5'000'000;
+          RecordingMotorController timing_controller(timing_options);
+          std::atomic<int> timeout_events{0};
+          timing_controller.set_event_callback(
+              [&timeout_events](const motor_base::RtEvent& event) {
+                  if (event.type == motor_base::RtEventType::SETPOINT_TIMEOUT_FAULT) {
+                      timeout_events.fetch_add(1, std::memory_order_relaxed);
+                  }
+              });
+          if (!expect(timing_controller.start(),
+                      "freshness controller should start")) {
+              return 1;
+          }
+
+          motor_base::ControlCommand command = timed_policy_position(2.5, 6);
+          const std::int64_t now_ns = robot_base::monotonic_now_ns();
+          command.timing.produced_at_ns = now_ns + 20'000'000;
+          command.timing.valid_until_ns = now_ns + 100'000'000;
+          if (!expect(timing_controller.send_policy_setpoint(command).status ==
+                          motor_base::CommandSubmitStatus::ACCEPTED,
+                      "future freshness command should be accepted at submission")) {
+              timing_controller.shutdown();
+              return 1;
+          }
+          if (!expect(timing_controller.wait_for_cycles(3,
+                                                         std::chrono::seconds(1)),
+                      "freshness controller should continue its RT cycles")) {
+              timing_controller.shutdown();
+              return 1;
+          }
+
+          if (!expect(!timing_controller.safety_stop_latched() &&
+                          timing_controller.safety_stop_count() == 0,
+                      "invalid incoming metadata should be rejected without latching")) {
+              timing_controller.shutdown();
+              return 1;
+          }
+
+          command = timed_policy_position(2.5, 7);
+          const std::int64_t valid_now_ns = robot_base::monotonic_now_ns();
+          command.timing.produced_at_ns = valid_now_ns;
+          command.timing.valid_until_ns = valid_now_ns + 20'000'000;
+          if (!expect(timing_controller.send_policy_setpoint(command).status ==
+                          motor_base::CommandSubmitStatus::ACCEPTED,
+                      "freshness command should be accepted")) {
+              timing_controller.shutdown();
+              return 1;
+          }
+          if (!expect(timing_controller.wait_for_applied_count(
+                          1, std::chrono::seconds(1)),
+                      "valid command should be applied after metadata rejection")) {
+              timing_controller.shutdown();
+              return 1;
+          }
+          if (!expect(timing_controller.send_policy_setpoint(
+                          timed_policy_position(2.6, 0)).status ==
+                          motor_base::CommandSubmitStatus::INVALID_COMMAND,
+                      "policy sequence zero should be rejected after startup")) {
+              timing_controller.shutdown();
+              return 1;
+          }
+
+          motor_base::ControlCommand rollback = timed_policy_position(2.7, 8);
+          rollback.timing.produced_at_ns = valid_now_ns - 1'000'000;
+          rollback.timing.valid_until_ns = valid_now_ns + 20'000'000;
+          if (!expect(timing_controller.send_policy_setpoint(rollback).status ==
+                          motor_base::CommandSubmitStatus::ACCEPTED,
+                      "timestamp rollback should reach the RT validator")) {
+              timing_controller.shutdown();
+              return 1;
+          }
+          const std::uint64_t rollback_target_cycle =
+              timing_controller.cycles() + 3;
+          if (!expect(timing_controller.wait_for_cycles(rollback_target_cycle,
+                                                         std::chrono::seconds(1)),
+                      "timestamp rollback should be processed")) {
+              timing_controller.shutdown();
+              return 1;
+          }
+          if (!expect(!timing_controller.safety_stop_latched(),
+                      "timestamp rollback should not latch the safety stop")) {
+              timing_controller.shutdown();
+              return 1;
+          }
+
+          if (!expect(timing_controller.wait_for_cycles(60,
+                                                         std::chrono::seconds(1)),
+                      "freshness controller should continue its RT cycles")) {
+              timing_controller.shutdown();
+              return 1;
+          }
+          timing_controller.shutdown();
+
+          if (!expect(timing_controller.safety_stop_latched(),
+                      "expired command should latch the safety stop")) {
+              return 1;
+          }
+          if (!expect(timing_controller.safety_stop_count() > 0 &&
+                          timeout_events.load(std::memory_order_relaxed) >= 3,
+                      "expired command should directly apply STOP and emit freshness events")) {
+              return 1;
+          }
+          if (!expect(timing_controller.send_policy_setpoint(
+                          timed_policy_position(3.0, 8)).status ==
+                          motor_base::CommandSubmitStatus::INVALID_COMMAND,
+                      "fresh producer must not clear a latched safety stop")) {
+              return 1;
+          }
+          if (!expect(timing_controller.clear_safety_stop_latch(),
+                      "safety latch should require explicit stopped-state clear")) {
+              return 1;
+          }
+          if (!expect(!timing_controller.safety_stop_latched(),
+                      "explicit clear should remove the safety latch")) {
               return 1;
           }
       }

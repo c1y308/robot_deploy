@@ -37,7 +37,7 @@ struct MotorStateSnapshot {
 
 class RobotMotorSession {
 public:
-    explicit RobotMotorSession(MotorConfig config);
+    RobotMotorSession(MotorConfig config, SafetyConfig safety);
     ~RobotMotorSession();
 
     RobotMotorSession(const RobotMotorSession&) = delete;
@@ -46,6 +46,7 @@ public:
     bool initialize();
     bool stop(int motor_index = -1);
     bool restart(int motor_index = -1);
+    bool clear_safety_stop_latch();
     void deinitialize();
 
     bool is_initialized() const noexcept { return initialized_.load(); }
@@ -59,6 +60,11 @@ public:
         const std::array<motor_base::ImpedanceSetpoint,
                          motor_base::kMaxMotorCommandSetpoints>& setpoints,
         std::size_t count);
+    bool apply_impedance_setpoints_realtime(
+        const std::array<motor_base::ImpedanceSetpoint,
+                         motor_base::kMaxMotorCommandSetpoints>& setpoints,
+        std::size_t count,
+        const motor_base::CommandTiming& timing);
 
     bool try_consume_latest_status_command(
         std::array<motor_base::MotorStatusSnapshot,
@@ -72,6 +78,7 @@ private:
                         const char* context);
 
     MotorConfig config_;
+    SafetyConfig safety_;
 
     std::shared_ptr<myactua::EthercatAdapterIGH>     adapter_;
     std::unique_ptr<motor_base::MotorControllerBase> controller_;

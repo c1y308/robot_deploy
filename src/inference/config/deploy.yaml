@@ -2,39 +2,46 @@ joint_ids_map: [0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11]
 step_dt: 0.02
 stiffness: [180.0, 180.0, 180.0, 180.0, 187.0, 187.0, 180.0, 180.0, 180.0, 180.0,
   187.0, 187.0]
-damping: [10.0, 10.0, 10.0, 10.0, 9.07, 9.07, 10.0, 10.0, 10.0, 10.0, 9.07, 9.07]
-default_joint_pos: [0.0, 0.0, -0.2, -0.2, 0.0, 0.0, 0.2, 0.2, -0.05, -0.05, 0.0, 0.0]
+damping: [10.0, 10.0, 10.0, 10.0, 9.07, 9.07, 10.0, 10.0, 10.0, 10.0, 9.07,
+  9.07]
+default_joint_pos: [0.0, 0.0, -0.2, -0.2, 0.0, 0.0, 0.2, 0.2, -0.05, -0.05,
+  0.0, 0.0]
+
 commands:
   base_velocity:
     ranges:
-      lin_vel_x: [-0.45, 0.55]
-      lin_vel_y: [-0.3, 0.3]
-      ang_vel_z: [-0.6, 0.6]
+      lin_vel_x: [0.0, 0.0]
+      lin_vel_y: [0.0, 0.0]
+      ang_vel_z: [0.0, 0.0]
       heading: null
+
 actions:
   JointPositionAction:
     clip:
-    - [-0.22, 0.22]
-    - [-0.22, 0.22]
-    - [-0.28, 0.35]
-    - [-0.28, 0.35]
-    - [-0.16, 0.16]
-    - [-0.16, 0.16]
-    - [-0.22, 0.38]
-    - [-0.22, 0.38]
-    - [-0.14, 0.2]
-    - [-0.14, 0.2]
-    - [-0.12, 0.12]
-    - [-0.12, 0.12]
+      - [-0.12, 0.12]
+      - [-0.12, 0.12]
+      - [-0.55, 0.4]
+      - [-0.55, 0.4]
+      - [-0.12, 0.12]
+      - [-0.12, 0.12]
+      - [-0.3, 1.1]
+      - [-0.3, 1.1]
+      - [-0.45, 0.4]
+      - [-0.45, 0.4]
+      - [-0.1, 0.1]
+      - [-0.1, 0.1]
     joint_names: [.*]
-    scale: [0.16, 0.16, 0.32, 0.32, 0.1, 0.1, 0.36, 0.36, 0.18, 0.18, 0.1, 0.1]
-    offset: [0.0, 0.0, -0.2, -0.2, 0.0, 0.0, 0.2, 0.2, -0.05, -0.05, 0.0, 0.0]
+    scale: [0.1, 0.1, 0.45, 0.45, 0.08, 0.08, 0.9, 0.9, 0.35, 0.35, 0.08,
+      0.08]
+    offset: [0.0, 0.0, -0.2, -0.2, 0.0, 0.0, 0.2, 0.2, -0.05, -0.05, 0.0,
+      0.0]
     raw_action_clip: 1.0
     min_inference_delay: 0
     max_inference_delay: 1
     min_communication_delay: 0
     max_communication_delay: 1
     joint_ids: null
+
 observations:
   base_ang_vel:
     params: {}
@@ -51,11 +58,6 @@ observations:
     clip: null
     scale: [1.0, 1.0, 1.0]
     history_length: 15
-  # gait_phase:
-  #   params: {period: 0.74, command_name: base_velocity, gate_by_command: true}
-  #   clip: null
-  #   scale: [1.0, 1.0]
-  #   history_length: 15
   joint_pos_rel:
     params: {}
     clip: null
@@ -64,7 +66,8 @@ observations:
   joint_vel_rel:
     params: {}
     clip: null
-    scale: [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05]
+    scale: [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05,
+      0.05, 0.05]
     history_length: 15
   last_action:
     params: {}
