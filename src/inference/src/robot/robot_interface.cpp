@@ -244,7 +244,7 @@ bool RobotInterface::reset_joints() {
 
     const std::vector<double> target_model_q(
         config_.action.default_joint_pos_rad.begin(),
-        config_.action.default_joint_pos_rad.end());
+         config_.action.default_joint_pos_rad.end());
 
     const std::vector<double> current_motor_q = motor_session_.get_joint_q();
     std::vector<double> start_model_q;
@@ -280,9 +280,12 @@ bool RobotInterface::reset_joints() {
         if (!motor_session_.apply_targets_rad(target_rad)) {
             return false;
         }
-        std::this_thread::sleep_for(dt);
+        if (k < ramp_steps) {
+            std::this_thread::sleep_for(dt);
+        }
     }
 
+    startup_hold_target_motor_rad_ = target_rad;
     return true;
 }
 
@@ -339,6 +342,13 @@ bool RobotInterface::start_policy_command_worker()
     {
         std::lock_guard<std::mutex> lock(policy_command_error_mutex_);
         policy_command_worker_error_.clear();
+    }
+
+    // 在线程接管前刷新一次复位命令，为首次 worker 调度保留完整有效期。
+    if (!motor_session_.apply_targets_rad(startup_hold_target_motor_rad_)) {
+        std::cerr << "[RobotInterface] policy command worker rejected: "
+                     "failed to refresh startup reset pose\n";
+        return false;
     }
 
     policy_command_worker_failed_.store(false);
@@ -400,6 +410,13 @@ void RobotInterface::policy_command_worker_loop()
             }
 
             if (!has_current_target) {
+                // 首个正式策略帧到达前，持续刷新最后一次复位命令。
+                if (!motor_session_.apply_targets_rad(
+                        startup_hold_target_motor_rad_)) {
+                    fail_policy_command_worker(
+                        "failed to refresh startup reset pose");
+                    break;
+                }
                 std::this_thread::sleep_until(next_wake);
                 const auto now = std::chrono::steady_clock::now();
                 if (now > next_wake + period) {
@@ -490,26 +507,6 @@ void RobotInterface::policy_command_worker_loop()
     } catch (...) {
         fail_policy_command_worker("policy command worker exception");
     }
-}
-
-void RobotInterface::set_latest_policy_target(
-    const std::vector<double>& target_q_model_rad,
-    std::uint64_t policy_seq,
-    std::int64_t observation_time_ns,
-    std::int64_t valid_until_ns)
-{
-    if (target_q_model_rad.size() != PolicyRuntime::kDof) {
-        return;
-    }
-
-    PolicyTargetFrame target;
-    for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
-        target.target_q_model_rad[i] = target_q_model_rad[i];
-    }
-    target.policy_seq = policy_seq;
-    target.observation_time_ns = observation_time_ns;
-    target.valid_until_ns = valid_until_ns;
-    policy_target_channel_.publish(target);
 }
 
 RobotInterface::PolicyCommandLogState
@@ -662,6 +659,8 @@ bool RobotInterface::policy_step() {
     if (observation_time_ns <= 0) {
         observation_time_ns = timing_now_ns;
     }
+
+    // 计算策略结果是否符合时效性，超过该时刻视为过期。
     const std::int64_t policy_valid_until_ns = observation_time_ns +
         robot_base::seconds_to_ns(
             config_.safety.policy_target_timeout_ms / 1000.0);
@@ -673,16 +672,11 @@ bool RobotInterface::policy_step() {
     const std::uint64_t policy_seq = next_policy_seq_++;
     observation_builder_->commit_policy_action(policy_result.raw_action);
 
-    // 记录日志的策略推理时间和原始动作输出
-    record.inference_start_ns = policy_result.inference_start_ns;
-    record.inference_end_ns   = policy_result.inference_end_ns;
-    record.policy_seq = policy_seq;
-    record.policy_observation_time_ns = observation_time_ns;
-    record.policy_valid_until_ns = policy_valid_until_ns;
-    record.policy_observation = policy_observation;
-    record.raw_action         = policy_result.raw_action;
-
-    std::vector<double> target_q_model_rad(PolicyRuntime::kDof, 0.0);
+    // 构建控制命令帧
+    PolicyTargetFrame policy_target;
+    policy_target.policy_seq = policy_seq;
+    policy_target.observation_time_ns = observation_time_ns;
+    policy_target.valid_until_ns = policy_valid_until_ns;
     for (std::size_t model_index = 0; model_index < PolicyRuntime::kDof; ++model_index) {
 
         // 对模型原始输出截断[-1, 1]
@@ -698,16 +692,25 @@ bool RobotInterface::policy_step() {
             std::max(action_clip[0], std::min(action_clip[1], scaled_action));
 
         // 叠加模型顺序的站立姿态，得到模型顺序的目标关节角
-        target_q_model_rad[model_index]        = config_.action.default_joint_pos_rad[model_index] +
-                                                 clipped_action_offset;
-        record.target_q_model_rad[model_index] = target_q_model_rad[model_index];
+        policy_target.target_q_model_rad[model_index] =
+            config_.action.default_joint_pos_rad[model_index] +
+            clipped_action_offset;
+        record.target_q_model_rad[model_index] =
+            policy_target.target_q_model_rad[model_index];
     }
 
-    // 把处理后的模型目标值及其不可续租的截止期传递给 command worker。
-    set_latest_policy_target(target_q_model_rad,
-                             policy_seq,
-                             observation_time_ns,
-                             policy_valid_until_ns);
+    // 发布到 SPSC 通道
+    policy_target_channel_.publish(policy_target);
+
+
+    // 记录日志的策略推理时间和原始动作输出
+    record.inference_start_ns = policy_result.inference_start_ns;
+    record.inference_end_ns   = policy_result.inference_end_ns;
+    record.policy_seq = policy_seq;
+    record.policy_observation_time_ns = observation_time_ns;
+    record.policy_valid_until_ns      = policy_valid_until_ns;
+    record.policy_observation = policy_observation;
+    record.raw_action         = policy_result.raw_action;
 
     // 获取最新的策略命令日志状态，保存到日志记录中
     const PolicyCommandLogState command_log_state = latest_policy_command_log_state();
@@ -723,10 +726,9 @@ bool RobotInterface::policy_step() {
     record.command_produced_at_ns = command_log_state.command_produced_at_ns;
     record.command_valid_until_ns = command_log_state.command_valid_until_ns;
 
-
     // 构建日志的观测信息
     record.command_applied =
-        policy_command_worker_running_.load() &&
+         policy_command_worker_running_.load() &&
         !policy_command_worker_failed_.load();
 
     record.command_timestamp_ns =

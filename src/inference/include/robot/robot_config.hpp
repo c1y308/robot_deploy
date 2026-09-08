@@ -91,8 +91,8 @@ struct SensorGuardConfig {
 
 /* 策略帧和 RT 连续命令的独立新鲜度预算。单位 ms。 */
 struct SafetyConfig {
-    double policy_target_timeout_ms = 40.0;
-    double control_command_timeout_ms = 10.0;
+    double policy_target_timeout_ms   = 60.0;  // 最老的数据时刻 + 此值 之后视为过期（防止推理超时）
+    double control_command_timeout_ms = 10.0;  // 控制命令的独立新鲜度预算，超过该值视为过期
 };
 
 /* 脚踝物理电机的行程限位。

@@ -1472,6 +1472,133 @@ int main()
       }
 
       {
+          auto setup_options = test_options();
+          setup_options.setpoint_timeout_ns = 10'000'000;
+
+          auto adapter = std::make_shared<FakeAdapter>(1);
+          adapter->set_rx_status_word(0, operation_enabled_status_word());
+          adapter->set_rx_mode(0, myactua::MyactControlMode::PVT);
+
+          myactua::MyActMotorController setup_controller(
+              adapter, 1, setup_options);
+          std::atomic<int> timeout_events{0};
+          std::atomic<int> timeout_reason{0};
+          std::atomic<std::uint32_t> timeout_policy_seq{1};
+          setup_controller.set_event_callback(
+              [&timeout_events, &timeout_reason, &timeout_policy_seq](
+                  const motor_base::RtEvent& event) {
+                  if (event.type ==
+                      motor_base::RtEventType::SETPOINT_TIMEOUT_FAULT) {
+                      timeout_events.fetch_add(1, std::memory_order_relaxed);
+                      timeout_reason.store(event.reason, std::memory_order_relaxed);
+                      timeout_policy_seq.store(event.value,
+                                               std::memory_order_relaxed);
+                  }
+              });
+
+          if (!expect_start(setup_controller,
+                            "startup hold controller should start")) {
+              return 1;
+          }
+          const motor_base::CommandSubmitResult mode_submit =
+              setup_controller.send_discrete_command(
+                  motor_base::ControlCommand::set_mode(
+                      motor_base::MotorControlMode::IMPEDANCE));
+          const motor_base::CommandSubmitResult restart_submit =
+              setup_controller.send_discrete_command(
+                  motor_base::ControlCommand::restart());
+          if (!expect(
+                  mode_submit.status ==
+                          motor_base::CommandSubmitStatus::ACCEPTED &&
+                      restart_submit.status ==
+                          motor_base::CommandSubmitStatus::ACCEPTED,
+                  "startup hold controller should accept mode and restart")) {
+              setup_controller.shutdown();
+              return 1;
+          }
+          if (!expect(adapter->wait_for_cycles(60, std::chrono::seconds(1)),
+                      "startup hold controller should reach running state")) {
+              setup_controller.shutdown();
+              return 1;
+          }
+
+          constexpr int32_t hold_target_raw = 2468;
+          constexpr int32_t hold_kp_raw = 9000;
+          constexpr int32_t hold_kd_raw = 700;
+          const std::vector<motor_base::ImpedanceSetpoint> hold_setpoints = {
+              motor_base::ImpedanceSetpoint(
+                  static_cast<double>(hold_target_raw) *
+                      myactua::kRawPosToRad,
+                  0.0,
+                  0.0,
+                  static_cast<double>(hold_kp_raw) / 1000.0,
+                  static_cast<double>(hold_kd_raw) / 1000.0)};
+
+          for (int i = 0; i < 12; ++i) {
+              motor_base::ControlCommand hold_command =
+                  motor_base::ControlCommand::set_impedance_targets(
+                      hold_setpoints);
+              const std::int64_t produced_at_ns =
+                  robot_base::monotonic_now_ns();
+              hold_command.timing.source_policy_seq = 0;
+              hold_command.timing.produced_at_ns = produced_at_ns;
+              hold_command.timing.valid_until_ns =
+                  produced_at_ns + 10'000'000;
+              if (!expect(
+                      setup_controller.send_policy_setpoint(hold_command).status ==
+                          motor_base::CommandSubmitStatus::ACCEPTED,
+                      "fresh startup hold command should be accepted")) {
+                  setup_controller.shutdown();
+                  return 1;
+              }
+              if (!expect(
+                      adapter->wait_for_cycles(adapter->cycles() + 2,
+                                               std::chrono::seconds(1)),
+                      "startup hold command should be refreshed before expiry")) {
+                  setup_controller.shutdown();
+                  return 1;
+              }
+          }
+
+          const myactua::TxPDO hold_tx = adapter->last_tx(0);
+          if (!expect(!setup_controller.safety_stop_latched() &&
+                          timeout_events.load(std::memory_order_relaxed) == 0,
+                      "refreshed startup hold must not latch STOP")) {
+              setup_controller.shutdown();
+              return 1;
+          }
+          if (!expect(hold_tx.target_pos == hold_target_raw &&
+                          hold_tx.target_torque == 0 &&
+                          hold_tx.pvt_kp == hold_kp_raw &&
+                          hold_tx.pvt_kd == hold_kd_raw,
+                      "startup hold refresh must preserve the reset command")) {
+              setup_controller.shutdown();
+              return 1;
+          }
+
+          if (!expect(adapter->wait_for_cycles(adapter->cycles() + 15,
+                                               std::chrono::seconds(1)),
+                      "stopped startup hold producer should reach timeout")) {
+              setup_controller.shutdown();
+              return 1;
+          }
+          setup_controller.shutdown();
+
+          if (!expect(setup_controller.safety_stop_latched() &&
+                          timeout_events.load(std::memory_order_relaxed) == 1 &&
+                          timeout_reason.load(std::memory_order_relaxed) == 1 &&
+                          timeout_policy_seq.load(std::memory_order_relaxed) == 0,
+                      "expired startup hold should latch reason=1, policy_seq=0")) {
+              return 1;
+          }
+          if (!expect(adapter->last_tx(0).control_word ==
+                          myactua::CMD_DISABLE_OPERATION,
+                      "expired startup hold should apply STOP output")) {
+              return 1;
+          }
+      }
+
+      {
           auto timing_options = latest_channel_test_options();
           timing_options.rt_period_ns = 1'000'000;
           timing_options.setpoint_timeout_ns = 5'000'000;

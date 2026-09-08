@@ -48,8 +48,8 @@ private:
     struct PolicyTargetFrame {
         std::array<double, policy_observation::kDof> target_q_model_rad{};
         std::uint64_t policy_seq{0};
-        std::int64_t observation_time_ns{0};
-        std::int64_t valid_until_ns{0};
+        std::int64_t  observation_time_ns{0};
+        std::int64_t  valid_until_ns{0};
     };
 
     struct PolicyCommandLogState {
@@ -86,7 +86,11 @@ private:
     std::atomic<bool> initialized_{false};
     std::atomic<bool> policy_command_worker_running_{false};
     std::atomic<bool> policy_command_worker_failed_{false};
-    std::uint64_t next_policy_seq_{1};
+
+    std::uint64_t next_policy_seq_{1};  // 策略帧序号，1 起始，0 保留为无效值
+
+    // reset_joints() 最后一次成功下发的电机目标，供首个策略帧前保持姿态。
+    std::vector<double> startup_hold_target_motor_rad_;
 
     std::thread policy_command_worker_thread_;
     // policy_step() 传递给 policy_command_worker 的最新目标及其不可续租截止期
@@ -116,11 +120,7 @@ private:
     bool start_policy_command_worker();
     void stop_policy_command_worker();
     void policy_command_worker_loop();
-    
-    void set_latest_policy_target(const std::vector<double>& target_q_model_rad,
-                                  std::uint64_t policy_seq,
-                                  std::int64_t observation_time_ns,
-                                  std::int64_t valid_until_ns);
+
     PolicyCommandLogState latest_policy_command_log_state();
     void fail_policy_command_worker(std::string message);
     bool policy_command_worker_healthy(std::string& error) const;
