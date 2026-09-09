@@ -38,7 +38,8 @@ public:
     bool reset_joints();  /* 复位到模型 DOF 顺序配置的 action.default_joint_pos_rad，单位为 rad */
     bool policy_step();
     bool apply_action(const std::vector<double>& target_q_model_rad);  // 模型 DOF 顺序目标角(rad)
-    void shutdown();
+    // False retains RT and resources; destruction waits until stop is confirmed.
+    bool shutdown();
 
     void set_target_velocity(double vx, double vy, double yaw_rate);
     std::array<double, 3> get_target_velocity() const;

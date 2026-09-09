@@ -162,6 +162,9 @@ MotorControllerBase::MotorControllerBase(
       status_channel_(),
       rt_event_dispatcher_(rt_options_.rt_event_queue_capacity)
 {
+    if (motor_count_ > kMaxMotors) {
+        throw std::invalid_argument("motor_count exceeds fixed realtime capacity");
+    }
     if (rt_options_.max_commands_per_cycle == 0) {
         throw std::invalid_argument(
             "RealtimeOptions max_commands_per_cycle must be positive");
@@ -311,11 +314,16 @@ void MotorControllerBase::thread_func()
     clock_gettime(kClockToUse, &next_period);
 
     while (running_.load(std::memory_order_acquire)) {
+        ++discrete_cmd_tick_;
+        service_stop_requests(true);
         // 进行离散命令分发：离散命令入各个电机的离散命令队列。
         process_queued_commands();
         // 处理各个电机的离散命令队列（状态机）
         service_discrete_commands();
         process_latest_setpoint_commands();
+
+        // Catch a STOP published during ordinary command/setpoint processing.
+        service_stop_requests(false);
 
         realtime_cycle_callback();
 
@@ -350,6 +358,19 @@ CommandSubmitResult MotorControllerBase::send_discrete_command(
         return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
     }
 
+    // 停机命令，直接调用 submit_stop()，不入队列。
+    if (cmd.discrete_type == DiscreteCommandType::STOP) {
+        return submit_stop(cmd.motor_index);
+    }
+
+    // 目前没看懂这里的作用
+    for (std::size_t i = 0; i < motor_count_; ++i) {
+        if ((cmd.motor_index < 0 || cmd.motor_index == static_cast<int>(i)) &&
+            stop_pending(i)) {
+            return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
+        }
+    }
+
     // 如果需要实时检查实时调度是否可用
     const bool realtime_required = rt_options_.rt_priority > 0;
     const bool realtime_ready    = rt_scheduling_ready_.load(std::memory_order_acquire);
@@ -361,6 +382,8 @@ CommandSubmitResult MotorControllerBase::send_discrete_command(
         }
     }
 
+
+    // 这里可以删除
     const CommandSubmitStatus driver_validation = validate_command(cmd);
     if (driver_validation != CommandSubmitStatus::ACCEPTED) {
         return {driver_validation, std::nullopt};
@@ -370,6 +393,8 @@ CommandSubmitResult MotorControllerBase::send_discrete_command(
     std::lock_guard<std::mutex> lock(discrete_command_submission_mutex_);
     const CommandId command_id =
         next_discrete_command_id_.fetch_add(1, std::memory_order_relaxed);
+
+    // 初始化追踪这个离散命令的槽位
     discrete_command_results_.initialize(
         command_id,
         discrete_command_target_mask(cmd, motor_count_));
@@ -382,6 +407,35 @@ CommandSubmitResult MotorControllerBase::send_discrete_command(
 
     return {CommandSubmitStatus::ACCEPTED, command_id};
 }
+
+
+// 提交 stop 命令给对应的 STOP 的命令槽
+CommandSubmitResult MotorControllerBase::submit_stop(int motor_index)
+{
+    auto& request = stop_requests_[motor_index < 0 ? kMaxMotors : motor_index];
+    
+    // 查询这个轴之前是否已经有 stop 请求
+    CommandId previous = request.requested.load(std::memory_order_acquire);
+
+    // for循环避免多线程提交的 CAS 竞争（无锁设计）
+    for (;;) {
+        // 如果有并且还没有完成，则复用之前的 command_id，不产生新的命令
+        if (previous != 0 &&
+            request.confirmed.load(std::memory_order_acquire) < previous) {
+            return {CommandSubmitStatus::ACCEPTED, previous};
+        }
+
+        // 如果没有，则产生新的 command_id 并尝试提交
+        const CommandId id = next_discrete_command_id_.fetch_add(
+            1, std::memory_order_relaxed);
+
+        if (request.requested.compare_exchange_weak(
+                previous, id, std::memory_order_acq_rel, std::memory_order_acquire)) {
+            return {CommandSubmitStatus::ACCEPTED, id};
+        }
+    }
+}
+
 
 CommandSubmitResult MotorControllerBase::send_policy_setpoint(
     const ControlCommand& cmd)
@@ -552,8 +606,122 @@ std::vector<MotorStatusSnapshot> MotorControllerBase::get_status()
 DiscreteCommandResult MotorControllerBase::get_discrete_command_result(
     CommandId id) const
 {
+    if (id != 0) {
+        for (const auto& request : stop_requests_) {
+            if (request.requested.load(std::memory_order_acquire) == id) {
+                return request.confirmed.load(std::memory_order_acquire) >= id
+                    ? DiscreteCommandResult::SUCCEEDED
+                    : DiscreteCommandResult::PENDING;
+            }
+        }
+    }
     return discrete_command_results_.get(id);
 }
+
+
+bool MotorControllerBase::stop_pending(std::size_t motor_index) const
+{
+    // An all-axis request gates every target until the entire request is
+    // confirmed; an early ACK from one axis must not permit partial RESTART.
+    for (const auto target : {motor_index, kMaxMotors}) {
+        const auto& request = stop_requests_[target];
+        const auto id = request.requested.load(std::memory_order_acquire);
+        if (request.confirmed.load(std::memory_order_acquire) < id) return true;
+    }
+    return false;
+}
+
+
+void MotorControllerBase::service_stop_requests(bool verify)
+{
+    // 遍历所有电机 ID
+    for (std::size_t i = 0; i < motor_count_; ++i) {
+
+        // 查询这个电机 ID 对应的槽是否有已经发布的 STOP 命令
+        const CommandId id = latest_stop_id(i);
+
+        // 获取这个电机 ID 对应的 STOP 命令状态
+        auto& axis = stop_axes_[i];
+
+        if (id == 0 || id <= axis.released) continue;
+
+        // 依据之前提交 STOP 命令需求时产生的命令 ID，构建一个 STOP 命令对象
+        DiscreteCommand stop(DiscreteCommandType::STOP, MotorControlMode::NONE, id);
+
+        // 电机 ID 的 STOP 命令还没有被应用，则应用它
+        if (axis.applied != id) {
+            axis.applied  = id;
+            axis.stable_success_cycles = 0;
+            axis.next_verify_tick = discrete_cmd_tick_ + kDiscreteVerifyIntervalTicks;
+        }
+
+        apply_discrete_command_impl(static_cast<int>(i), stop);
+
+        
+        if (verify) {
+            // 进行执行验证
+            const auto evaluation = evaluate_discrete_command_impl(static_cast<int>(i), stop);
+
+            if (evaluation != DiscreteCommandEvaluation::SATISFIED) {
+                axis.stable_success_cycles = 0;
+                // Do not combine an obsolete axis ACK with a later ACK from
+                // another axis to complete an outstanding all-axis request.
+                axis.confirmed = 0;
+            }
+
+            // 进行稳定性验证
+            if (discrete_cmd_tick_ >= axis.next_verify_tick) {
+                if (evaluation == DiscreteCommandEvaluation::SATISFIED) {
+                    axis.stable_success_cycles = std::min(
+                        axis.stable_success_cycles + 1, kDiscreteSuccessStableTicks);
+                }
+                // 计算下一次验证的时间
+                axis.next_verify_tick = discrete_cmd_tick_ + kDiscreteVerifyIntervalTicks;
+
+                // 如果连续成功的周期数达到阈值，则确认这个 STOP 命令已经被执行
+                if (axis.stable_success_cycles >= kDiscreteSuccessStableTicks) {
+                    axis.confirmed = id;
+                }
+            }
+        }
+    }
+
+    // 遍历请求槽
+    for (std::size_t target = 0; target < stop_requests_.size(); ++target) {
+
+        // 获取请求槽
+        auto& request = stop_requests_[target];
+
+        // 获取请求槽的命令 ID
+        const CommandId id = request.requested.load(std::memory_order_acquire);
+
+        if (id == 0) continue;
+
+        bool confirmed = true;
+
+        // 遍历电机
+        for (std::size_t i = 0; i < motor_count_; ++i) {
+
+            if ((target == kMaxMotors || target == i) &&
+                (stop_axes_[i].confirmed < id))  // STOP 命令还没有被确认
+            {
+                confirmed = false;
+                break;
+            }
+
+        }
+        if (confirmed) request.confirmed.store(id, std::memory_order_release);
+    }
+}
+
+// 感觉可以直接展开
+/// @brief 获取指定电机的最新 STOP 命令 ID（如果有全轴停机则返回全轴停机命令 ID）
+CommandId MotorControllerBase::latest_stop_id(std::size_t motor_index) const
+{
+    return std::max(stop_requests_[motor_index].requested.load(std::memory_order_acquire),
+                    stop_requests_[kMaxMotors].requested.load(std::memory_order_acquire));
+}
+
 
 bool MotorControllerBase::try_consume_latest_status_command(
     std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback)
@@ -659,6 +827,21 @@ void MotorControllerBase::process_latest_setpoint_commands()
                 received = true;
             }
             break;
+    }
+
+    // A deliberate all-axis STOP retires the previous motion command. Drain
+    // queued targets while stopped, so an ordinary STOP can be followed by an
+    // explicit RESTART without the retired command creating a freshness fault.
+    // Existing/expired safety faults above remain latched; partial STOP leaves
+    // freshness monitoring active for the axes that are still running.
+    bool all_stopped = motor_count_ != 0;
+    for (std::size_t i = 0; i < motor_count_; ++i) {
+        const auto& axis = stop_axes_[i];
+        all_stopped = all_stopped && axis.applied != 0 && axis.applied > axis.released;
+    }
+    if (all_stopped) {
+        has_active_setpoint_ = false;
+        return;
     }
 
     if (received) {
@@ -775,6 +958,11 @@ void MotorControllerBase::enqueue_discrete_command(
             return;
         }
 
+        if (command_id <= latest_stop_id(idx) || stop_pending(idx)) {
+            discrete_command_results_.mark_failed(command_id, idx);
+            return;
+        }
+
         DiscreteCommand pending(cmd.discrete_type, cmd.mode, command_id);
         pending.phase = DiscretePhase::QUEUED;
         pending.from_all_motors =
@@ -816,8 +1004,6 @@ void MotorControllerBase::discrete_queue_full_callback(
 // thread_func()中调用，处理各个电机的离散命令队列（状态机）
 void MotorControllerBase::service_discrete_commands()
 {
-    ++discrete_cmd_tick_;
-
     /* 遍历每个电机的离散命令队列 */
     for (std::size_t i = 0; i < discrete_cmd_queues_.size(); ++i) {
         auto& queue = discrete_cmd_queues_[i];
@@ -830,6 +1016,13 @@ void MotorControllerBase::service_discrete_commands()
         /* 取出命令 */
         auto& cmd = queue.front();
         const int motor_index = static_cast<int>(i);
+
+        const CommandId stop_id = latest_stop_id(i);
+        if (cmd.command_id <= stop_id || stop_pending(i)) {
+            discrete_command_results_.mark_failed(cmd.command_id, motor_index);
+            queue.pop_front();
+            continue;
+        }
 
         /* 检查命令状态机 */
         if (cmd.phase == DiscretePhase::DONE) {
@@ -866,6 +1059,9 @@ void MotorControllerBase::service_discrete_commands()
 
             // 到达再次重试时间
             if (discrete_cmd_tick_ >= cmd.next_retry_tick) {
+                if (cmd.type == DiscreteCommandType::RESTART) {
+                    stop_axes_[i].released = stop_id;
+                }
                 apply_discrete_command_impl(motor_index, cmd);
                 cmd.cur_retry += 1;
                 cmd.next_retry_tick  = discrete_cmd_tick_ + kDiscreteRetryTicks;

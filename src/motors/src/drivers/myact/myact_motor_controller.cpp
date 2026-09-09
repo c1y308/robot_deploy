@@ -298,6 +298,7 @@ void MyActMotorController::update()
     const EthercatBusHealthSnapshot health = _adapter->get_bus_health();
     const bool process_data_ok =
         health.master_link_up && health.wc_state == EC_WC_COMPLETE;
+    process_data_ok_ = process_data_ok;
 
     /* 接受电机回传数据，并记录当前周期通信状态 */
     for (size_t i = 0; i < _motors.size(); i++)
@@ -843,13 +844,17 @@ mb::DiscreteCommandEvaluation MyActMotorController::evaluate_discrete_command_im
     }
 
     const MotorState& motor = _motors[static_cast<std::size_t>(motor_index)];
-    const bool whole_body_fault =
-        whole_body_fault_latched_.load(std::memory_order_acquire);
+
+    if (cmd.type == mb::DiscreteCommandType::STOP) {
+        return process_data_ok_ && motor.comm_ok && !motor.observed.operation_enabled
+            ? mb::DiscreteCommandEvaluation::SATISFIED
+            : mb::DiscreteCommandEvaluation::PENDING;
+    }
+
+    const bool whole_body_fault = whole_body_fault_latched_.load(std::memory_order_acquire);
+
     if (whole_body_fault) {
         switch (cmd.type) {
-            case mb::DiscreteCommandType::STOP:
-                return mb::DiscreteCommandEvaluation::SATISFIED;
-
             case mb::DiscreteCommandType::RESTART:
                 return mb::DiscreteCommandEvaluation::FAILED;
 
@@ -868,9 +873,6 @@ mb::DiscreteCommandEvaluation MyActMotorController::evaluate_discrete_command_im
 
     bool satisfied = false;
     switch (cmd.type) {
-        case mb::DiscreteCommandType::STOP:
-            satisfied = !motor.observed.operation_enabled;
-            break;
         case mb::DiscreteCommandType::RESTART:
             satisfied = control_ready_for_current_target(motor, whole_body_fault);
             break;

@@ -55,6 +55,7 @@ private:
     uint32_t process_data_fail_count_{0};
     MyactCommunicationFaultReason fault_reason_{MyactCommunicationFaultReason::None};
     std::int64_t current_cycle_host_timestamp_ns_{0};
+    bool process_data_ok_{false}; // Most recent received cycle, RT thread only.
 
     bool connect_impl(const char* ifname) override;
 

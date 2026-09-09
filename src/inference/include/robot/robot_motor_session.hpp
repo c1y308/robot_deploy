@@ -44,22 +44,18 @@ public:
     RobotMotorSession& operator=(const RobotMotorSession&) = delete;
 
     bool initialize();
+    motor_base::CommandSubmitResult request_stop(int motor_index = -1);
     bool stop(int motor_index = -1);
     bool restart(int motor_index = -1);
     bool clear_safety_stop_latch();
-    void deinitialize();
+    // False retains the running controller for another confirmation attempt.
+    bool deinitialize();
 
     bool is_initialized() const noexcept { return initialized_.load(); }
     bool motion_enabled() const noexcept { return motion_enabled_.load(); }
 
     // 依据当前电机模式下发位置指令
     bool apply_targets_rad(const std::vector<double>& target_motor_rad);
-    // 通过MIT模式下发阻抗指令
-    bool apply_impedance_setpoints(const std::vector<motor_base::ImpedanceSetpoint>& setpoints);
-    bool apply_impedance_setpoints_realtime(
-        const std::array<motor_base::ImpedanceSetpoint,
-                         motor_base::kMaxMotorCommandSetpoints>& setpoints,
-        std::size_t count);
     bool apply_impedance_setpoints_realtime(
         const std::array<motor_base::ImpedanceSetpoint,
                          motor_base::kMaxMotorCommandSetpoints>& setpoints,
@@ -74,6 +70,9 @@ public:
     std::vector<double> get_joint_q() const;
 
 private:
+    friend class RobotInterface;
+    bool wait_for_stop(const motor_base::CommandSubmitResult& request);
+    void release_stopped_controller();
     bool submit_command(const motor_base::ControlCommand& command,
                         const char* context);
 
@@ -85,6 +84,7 @@ private:
 
     std::atomic<bool> initialized_{false};
     std::atomic<bool> motion_enabled_{false};
+    bool rt_started_{false}; // Owner thread; also covers incomplete initialization.
 
     // policy/inference 线程专属 RT feedback 通道的缓存帧：
     // 仅 get_motor_snapshot()（policy 线程）读写，无新帧时保留上一帧有效反馈

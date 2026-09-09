@@ -314,21 +314,30 @@ int main()
 
     std::cout << "[ANKLE_IK_TEST] Restarting motors...\n";
     if (!motors.restart(-1)) {
+        if (!motors.deinitialize()) {
+            std::cerr << "Stop not confirmed; RT retained. Destruction will keep waiting.\n";
+            return 1;
+        }
         std::cerr << "[ANKLE_IK_TEST] restart failed.\n";
-        motors.deinitialize();
         return 1;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     std::vector<double> target_motor_rad;
     if (!read_current_motor_targets(motors, target_motor_rad)) {
-        motors.deinitialize();
+        if (!motors.deinitialize()) {
+            std::cerr << "Stop not confirmed; RT retained. Destruction will keep waiting.\n";
+            return 1;
+        }
         return 1;
     }
 
     std::cout << "[ANKLE_IK_TEST] Hold non-ankle motors M0-M3/M6-M9 at 0 rad.\n";
     if (!send_initial_non_ankle_zero(motors, target_motor_rad)) {
-        motors.deinitialize();
+        if (!motors.deinitialize()) {
+            std::cerr << "Stop not confirmed; RT retained. Destruction will keep waiting.\n";
+            return 1;
+        }
         return 1;
     }
 
@@ -410,8 +419,10 @@ int main()
                             target_motor_rad);
     }
 
-    std::cout << "[ANKLE_IK_TEST] Stopping motors and releasing hardware...\n";
-    motors.deinitialize();
+    if (!motors.deinitialize()) {
+        std::cerr << "Stop not confirmed; RT retained. Destruction will keep waiting.\n";
+        return 1;
+    }
 
     if (g_stop_requested.load()) {
         std::cout << "[ANKLE_IK_TEST] Interrupted.\n";

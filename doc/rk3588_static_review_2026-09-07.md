@@ -43,6 +43,8 @@ if (policy_target_channel_.try_consume_latest(latest_target)) {
 
 **B2 — Blocker：STOP 走普通队列且未确认完成；停机还依赖日志／线程退出（已复现队列丢停）**
 
+2026-09-09：复核曾在默认容量 16 下确认普通 STOP 丢失；随后已实施独立 STOP 状态、有效回读确认及先停机后清理的修复，motors 2/2、inference 10/10 测试通过。确认超时保留 RT，析构持续等待。以下为修复前历史记录；修复行为、测试及实机验收边界见 [B2 复核记录](b2_stop_recheck_2026-09-09.md)。
+
 证据：[提交成功仅表示入队](/home/cat/robot_deploy/src/motors/src/motor_base/motor_controller_base.cpp:340)、[单轴队列满后标记失败](/home/cat/robot_deploy/src/motors/src/motor_base/motor_controller_base.cpp:608)、[仅服务队头](/home/cat/robot_deploy/src/motors/src/motor_base/motor_controller_base.cpp:645)、[stop 返回逻辑](/home/cat/robot_deploy/src/inference/src/robot/robot_motor_session.cpp:165)、[整机 shutdown 顺序](/home/cat/robot_deploy/src/inference/src/robot/robot_interface.cpp:108)。
 
 ```cpp

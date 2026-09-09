@@ -100,9 +100,11 @@ public:
 
     /// @brief 异步发送离散控制命令。
     /// @return 离散命令提交成功时携带可查询的 command_id。
+    /// STOP 绕过普通队列；同目标未完成的 STOP 复用 ID，确认前禁止重启。
     CommandSubmitResult send_discrete_command(const ControlCommand& cmd);
 
     /// @brief 查询离散命令的执行结果。
+    /// STOP 每个目标保留最新一次请求；未完成请求不会被普通命令覆盖。
     DiscreteCommandResult get_discrete_command_result(CommandId id) const;
 
     /// @brief policy_command_worker 专用的 latest-value setpoint 提交入口。
@@ -210,6 +212,30 @@ protected:
     virtual void realtime_stop_callback() noexcept;
 
 private:
+    // One mailbox per single-axis target plus one all-axis target. Pending
+    // requests are coalesced; ordinary command history cannot evict them.
+    struct StopRequest {
+        std::atomic<CommandId> requested{0};
+        std::atomic<CommandId> confirmed{0};
+    };
+
+    static_assert(std::atomic<CommandId>::is_always_lock_free,
+                  "STOP mailboxes require lock-free command IDs");
+
+    struct StopAxisState {
+        CommandId applied{0};           // 已应用的 STOP 命令 ID
+        CommandId released{0};          // 这个轴上的 STOP 命令 ID是否被之后的 RESTART解除
+        CommandId confirmed{0};         // 最近一次有效确认的 STOP 命令 ID
+
+        uint64_t next_verify_tick{0};   // 下一次检查的时间
+        int stable_success_cycles{0};   // 连续成功的周期数
+    };
+
+    CommandSubmitResult submit_stop(int motor_index);
+    CommandId latest_stop_id(std::size_t motor_index) const;
+    bool stop_pending(std::size_t motor_index) const;
+    void service_stop_requests(bool verify);
+
     //  thread_func()中调用，从命令队列中取出离散命令进行分发
     void process_queued_commands();
     void process_latest_setpoint_commands();
@@ -229,16 +255,23 @@ private:
     RealtimeOptions rt_options_;
     std::size_t     motor_count_;
 
-    // 离散电机控制命令队列（stop / restart / set_mode）
+    // 普通离散命令队列（restart / set_mode）；STOP 使用独立 mailbox。
     DiscreteCommandSubmissionQueue cmd_queue_;
     // 下一个离散命令的 ID
     std::atomic<CommandId> next_discrete_command_id_{1};
     // 保护离散命令提交的互斥锁，避免多线程同时提交离散命令导致命令 ID 冲突
     std::mutex discrete_command_submission_mutex_;
-    // 离散命令的执行结果追踪器
-    DiscreteCommandResultTracker discrete_command_results_;
 
-    // 每个电机的离散命令队列（stop / restart / set_mode）
+    // 离散命令执行结果追踪器
+    DiscreteCommandResultTracker discrete_command_results_;
+    
+    // STOP 请求的电机序号
+    std::array<StopRequest, kMaxMotors + 1> stop_requests_{};
+    // STOP 请求的电机状态机
+    std::array<StopAxisState, kMaxMotors> stop_axes_{}; // RT thread only
+
+
+    // 每个电机的普通离散命令队列（restart / set_mode）
     std::vector<DiscreteCommandQueue> discrete_cmd_queues_;
 
     // 常规反馈通道（有锁），支持多读者读写缓存

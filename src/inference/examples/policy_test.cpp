@@ -50,24 +50,14 @@ void print_config_summary(const inference::RobotInterfaceConfig& cfg)
 }
 
 
-void send_zero_velocity(inference::RobotInterface& robot)
+bool safe_shutdown(inference::RobotInterface& robot)
 {
-    robot.set_target_velocity(0.0, 0.0, 0.0);
-    if (!robot.policy_step()) {
-        std::cerr << "[WARN] Failed to send one final zero-velocity policy step.\n";
+    if (!robot.shutdown()) {
+        std::cerr << "[ERROR] Stop not confirmed; RT retained. Destruction will keep waiting.\n";
+        return false;
     }
-}
-
-void safe_shutdown(inference::RobotInterface& robot, bool send_zero)
-{
-    if (send_zero) {
-        send_zero_velocity(robot);
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-
-    std::cout << "[INFO] Stopping motors and releasing hardware...\n";
-    robot.shutdown();
     std::cout << "[INFO] Shutdown complete.\n";
+    return true;
 }
 
 }  // namespace
@@ -105,15 +95,15 @@ int main(int argc, char** argv)
 
     std::cout << "[INFO] Initializing robot runtime...\n";
     if (!robot.initialize()) {
+        safe_shutdown(robot);
         std::cerr << "[ERROR] robot.initialize() failed.\n";
-        safe_shutdown(robot, false);
         return 1;
     }
 
     std::cout << "[INFO] Starting Xbox polling thread...\n";
     if (!controller.start_polling(std::chrono::milliseconds(20))) {
+        safe_shutdown(robot);
         std::cerr << "[ERROR] " << controller.last_error() << "\n";
-        safe_shutdown(robot, true);
         return 1;
     }
 
@@ -135,9 +125,9 @@ int main(int argc, char** argv)
         next_tick += period;
 
         if (!controller.latest_command(command)) {
+            safe_shutdown(robot);
             std::cerr << "[ERROR] " << controller.last_error() << "\n";
             controller.stop_polling();
-            safe_shutdown(robot, true);
             return 1;
         }
         // robot.set_target_velocity(0.0, 0.0, 0.0);
@@ -146,9 +136,9 @@ int main(int argc, char** argv)
 
         const auto step_start = Clock::now();
         if (!robot.policy_step()) {
+            safe_shutdown(robot);
             std::cerr << "[ERROR] policy_step() failed at step " << steps << ".\n";
             controller.stop_polling();
-            safe_shutdown(robot, false);
             return 1;
         }
         const auto step_end = Clock::now();
@@ -179,9 +169,8 @@ int main(int argc, char** argv)
         }
     }
 
-    std::cout << "[INFO] Exiting policy loop. total_steps=" << steps << "\n";
-
+    const bool stopped = safe_shutdown(robot);
     controller.stop_polling();
-    safe_shutdown(robot, true);
-    return 0;
+    std::cout << "[INFO] Exiting policy loop. total_steps=" << steps << "\n";
+    return stopped ? 0 : 1;
 }

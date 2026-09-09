@@ -64,16 +64,22 @@ int main(int argc, char** argv) {
 
     std::cout << "[MOTORS_TEST] 2/4 restart motors" << std::endl;
     if (!motors.restart(-1)) {
+        if (!motors.deinitialize()) {
+            std::cerr << "Stop not confirmed; RT retained. Destruction will keep waiting.\n";
+            return 1;
+        }
         std::cerr << "[MOTORS_TEST] restart failed." << std::endl;
-        motors.deinitialize();
         return -1;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     std::cout << "[MOTORS_TEST] 3/4 send zero-position command in rad" << std::endl;
     if (!motors.apply_targets_rad(std::vector<double>(cfg.num_motors, 0.0))) {
+        if (!motors.deinitialize()) {
+            std::cerr << "Stop not confirmed; RT retained. Destruction will keep waiting.\n";
+            return 1;
+        }
         std::cerr << "[MOTORS_TEST] apply_targets_rad failed." << std::endl;
-        motors.deinitialize();
         return -1;
     }
     const auto state = motors.get_motor_snapshot();
@@ -84,7 +90,10 @@ int main(int argc, char** argv) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
-    motors.deinitialize();
+    if (!motors.deinitialize()) {
+        std::cerr << "Stop not confirmed; RT retained. Destruction will keep waiting.\n";
+        return 1;
+    }
     std::cout << "[MOTORS_TEST] shutdown complete." << std::endl;
     return 0;
 }

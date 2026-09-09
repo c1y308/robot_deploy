@@ -416,15 +416,16 @@ int main()
         return 1;
     }
 
-    const motor_base::CommandSubmitResult stop_result =
-        controller.send_discrete_command(motor_base::ControlCommand::stop());
+    const motor_base::CommandSubmitResult initial_mode_result =
+        controller.send_discrete_command(motor_base::ControlCommand::set_mode(
+            motor_base::MotorControlMode::POSITION));
     if (!expect(
-            stop_result.status == motor_base::CommandSubmitStatus::ACCEPTED,
+            initial_mode_result.status == motor_base::CommandSubmitStatus::ACCEPTED,
             "first command should be accepted")) {
         return 1;
     }
-    if (!expect(stop_result.command_id.has_value(),
-                "accepted STOP should carry command_id")) {
+    if (!expect(initial_mode_result.command_id.has_value(),
+                "accepted SET_MODE should carry command_id")) {
         return 1;
     }
 
@@ -770,7 +771,8 @@ int main()
         myactua::MyActMotorController wrap_controller(wrap_adapter, 1, wrap_options);
 
         const motor_base::CommandSubmitResult first_result =
-            wrap_controller.send_discrete_command(motor_base::ControlCommand::stop());
+            wrap_controller.send_discrete_command(motor_base::ControlCommand::set_mode(
+                    motor_base::MotorControlMode::POSITION));
         if (!expect(
                 first_result.status == motor_base::CommandSubmitStatus::ACCEPTED &&
                     first_result.command_id.has_value(),
@@ -780,7 +782,8 @@ int main()
 
         for (int i = 0; i < 64; ++i) {
             const motor_base::CommandSubmitResult result =
-                wrap_controller.send_discrete_command(motor_base::ControlCommand::stop());
+                wrap_controller.send_discrete_command(motor_base::ControlCommand::set_mode(
+                    motor_base::MotorControlMode::POSITION));
             if (!expect(
                     result.status == motor_base::CommandSubmitStatus::ACCEPTED &&
                         result.command_id.has_value(),
@@ -849,8 +852,8 @@ int main()
         if (!expect(
                 failing_controller.send_discrete_command(motor_base::ControlCommand::set_mode(
                         motor_base::MotorControlMode::POSITION)).status ==
-                    motor_base::CommandSubmitStatus::ACCEPTED,
-                "SET_MODE should remain accepted when RT scheduling is inactive")) {
+                    motor_base::CommandSubmitStatus::INVALID_COMMAND,
+                "SET_MODE must wait for outstanding STOP confirmation")) {
             failing_controller.shutdown();
             return 1;
         }

@@ -5,7 +5,6 @@
 #include "protocol/ethercat/ethercat_adapter_igh.hpp"
 #include "motor_base/motor_controller_base.hpp"
 
-#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -17,18 +16,6 @@
 namespace inference {
 
 namespace {
-
-bool finite_impedance_setpoints(
-    const std::vector<motor_base::ImpedanceSetpoint>& setpoints)
-{
-    return std::all_of(setpoints.begin(), setpoints.end(), [](const auto& value) {
-        return std::isfinite(value.position_rad) &&
-               std::isfinite(value.velocity_rad_s) &&
-               std::isfinite(value.effort_ff) &&
-               std::isfinite(value.kp) &&
-               std::isfinite(value.kd);
-    });
-}
 
 bool is_mit_mode(motor_base::MotorControlMode mode)
 {
@@ -80,7 +67,9 @@ RobotMotorSession::RobotMotorSession(MotorConfig config, SafetyConfig safety)
 
 RobotMotorSession::~RobotMotorSession()
 {
-    deinitialize();
+    while (!deinitialize()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
 }
 
 
@@ -89,6 +78,8 @@ bool RobotMotorSession::initialize()
     if (initialized_.load()) {
         return true;
     }
+    // A failed stop/initialization may still own an active RT controller.
+    if (controller_) return false;
 
     adapter_ = std::make_shared<myactua::EthercatAdapterIGH>();
     myactua::MyActMotorController::Options controller_options;
@@ -116,16 +107,6 @@ bool RobotMotorSession::initialize()
         return false;
     }
 
-    for (int i = 0; i < config_.num_motors; ++i) {
-        if (!submit_command(
-                motor_base::ControlCommand::set_mode(config_.control_mode, i),
-                "set_mode")) {
-            controller_.reset();
-            adapter_.reset();
-            return false;
-        }
-    }
-
     if (config_.print_motors_info) {
         controller_->set_print_info(config_.print_motor_ids);
     } else {
@@ -141,10 +122,14 @@ bool RobotMotorSession::initialize()
         return false;
     }
 
-    if (!submit_command(motor_base::ControlCommand::stop(), "initial_stop")) {
-        controller_.reset();
-        adapter_.reset();
-        return false;
+    rt_started_ = true;
+    if (!stop()) return false;
+
+    // STOP invalidates earlier mode commands, so configure only after its ACK.
+    for (int i = 0; i < config_.num_motors; ++i) {
+        if (!submit_command(
+                motor_base::ControlCommand::set_mode(config_.control_mode, i),
+                "set_mode")) return false;
     }
     initialized_.store(true);
     motion_enabled_.store(false);
@@ -153,38 +138,57 @@ bool RobotMotorSession::initialize()
 }
 
 
-void RobotMotorSession::deinitialize()
+bool RobotMotorSession::deinitialize()
 {
-    if (initialized_.load() && controller_) {
-        stop(-1);
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        controller_->shutdown();
+    if (rt_started_ && !stop()) {
+        initialized_.store(false);
+        return false;
     }
+    release_stopped_controller();
+    return true;
+}
 
+void RobotMotorSession::release_stopped_controller()
+{
+    if (controller_) controller_->shutdown();
     controller_.reset();
     adapter_.reset();
+    rt_started_ = false;
     initialized_.store(false);
     motion_enabled_.store(false);
 }
 
-bool RobotMotorSession::stop(int motor_index)
+motor_base::CommandSubmitResult RobotMotorSession::request_stop(int motor_index)
 {
-    if (!initialized_.load() || !controller_) {
-        return false;
+    if (!controller_) {
+        return {motor_base::CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
     }
-    if (motor_index >= config_.num_motors) {
-        std::cerr << "[RobotMotorSession] stop invalid motor_index="
-                  << motor_index << "\n";
-        return false;
-    }
-
-    if (!submit_command(motor_base::ControlCommand::stop(motor_index), "stop")) {
-        return false;
-    }
-    if (motor_index < 0) {
+    const auto request = controller_->send_discrete_command(
+        motor_base::ControlCommand::stop(motor_index));
+    if (request.status == motor_base::CommandSubmitStatus::ACCEPTED && motor_index < 0) {
         motion_enabled_.store(false);
     }
-    return true;
+    return request;
+}
+
+bool RobotMotorSession::stop(int motor_index)
+{
+    return wait_for_stop(request_stop(motor_index));
+}
+
+bool RobotMotorSession::wait_for_stop(const motor_base::CommandSubmitResult& request)
+{
+    if (request.status != motor_base::CommandSubmitStatus::ACCEPTED ||
+        !request.command_id) return false;
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(config_.discrete_command_completion_timeout_ms);
+    for (;;) {
+        const auto result = controller_->get_discrete_command_result(*request.command_id);
+        if (result == motor_base::DiscreteCommandResult::SUCCEEDED) return true;
+        if (result != motor_base::DiscreteCommandResult::PENDING ||
+            std::chrono::steady_clock::now() >= deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
 }
 
 
@@ -291,6 +295,7 @@ bool RobotMotorSession::apply_targets_rad(const std::vector<double>& target_moto
         return false;
     }
 
+    motor_base::ControlCommand command;
     if (is_mit_mode(config_.control_mode)) {
         std::vector<motor_base::ImpedanceSetpoint> impedance_setpoints(config_.num_motors);
         for (int i = 0; i < config_.num_motors; ++i) {
@@ -300,16 +305,15 @@ bool RobotMotorSession::apply_targets_rad(const std::vector<double>& target_moto
                                                                    config_.mit_kp[i],
                                                                    config_.mit_kd[i]);
         }
-        return apply_impedance_setpoints(impedance_setpoints);
-    }
-
-    if (config_.control_mode != motor_base::MotorControlMode::POSITION) {
+        command = motor_base::ControlCommand::set_impedance_targets(
+            std::move(impedance_setpoints));
+    } else if (config_.control_mode == motor_base::MotorControlMode::POSITION) {
+        command = motor_base::ControlCommand::set_position_targets_rad(target_motor_rad);
+    } else {
         std::cerr << "[RobotMotorSession] apply_targets_rad supports only impedance or position mode\n";
         return false;
     }
 
-    motor_base::ControlCommand command =
-        motor_base::ControlCommand::set_position_targets_rad(target_motor_rad);
     const std::int64_t produced_at_ns = robot_base::monotonic_now_ns();
     command.timing.source_policy_seq = 0;
     command.timing.produced_at_ns = produced_at_ns;
@@ -319,69 +323,11 @@ bool RobotMotorSession::apply_targets_rad(const std::vector<double>& target_moto
     const motor_base::CommandSubmitResult result =
         controller_->send_policy_setpoint(command);
     if (result.status != motor_base::CommandSubmitStatus::ACCEPTED) {
-        std::cerr << "[RobotMotorSession] apply_targets_rad_position command rejected: "
+        std::cerr << "[RobotMotorSession] apply_targets_rad command rejected: "
                   << command_submit_status_name(result.status) << "\n";
         return false;
     }
     return true;
-}
-
-bool RobotMotorSession::apply_impedance_setpoints(
-    const std::vector<motor_base::ImpedanceSetpoint>& setpoints)
-{
-    if (!initialized_.load() || !controller_) {
-        return false;
-    }
-    if (!motion_enabled_.load()) {
-        std::cerr << "[RobotMotorSession] apply_impedance_setpoints rejected: motors are stopped. "
-                  << "Call restart(-1) first.\n";
-        return false;
-    }
-    if (!is_mit_mode(config_.control_mode)) {
-        std::cerr << "[RobotMotorSession] apply_impedance_setpoints supports only impedance mode\n";
-        return false;
-    }
-    if (static_cast<int>(setpoints.size()) != config_.num_motors) {
-        std::cerr << "[RobotMotorSession] apply_impedance_setpoints rejected: target size mismatch\n";
-        return false;
-    }
-    if (!finite_impedance_setpoints(setpoints)) {
-        std::cerr << "[RobotMotorSession] apply_impedance_setpoints rejected: non-finite setpoint\n";
-        return false;
-    }
-
-    motor_base::ControlCommand command =
-        motor_base::ControlCommand::set_impedance_targets(setpoints);
-    const std::int64_t produced_at_ns = robot_base::monotonic_now_ns();
-    command.timing.source_policy_seq = 0;
-    command.timing.produced_at_ns = produced_at_ns;
-    command.timing.valid_until_ns = produced_at_ns +
-        static_cast<std::int64_t>(std::llround(
-            safety_.control_command_timeout_ms * 1'000'000.0));
-    const motor_base::CommandSubmitResult result =
-        controller_->send_policy_setpoint(command);
-    if (result.status == motor_base::CommandSubmitStatus::ACCEPTED) {
-        return true;
-    }
-
-    std::cerr << "[RobotMotorSession] apply_impedance_setpoints command rejected: "
-              << command_submit_status_name(result.status) << "\n";
-    return false;
-}
-
-bool RobotMotorSession::apply_impedance_setpoints_realtime(
-    const std::array<motor_base::ImpedanceSetpoint,
-                     motor_base::kMaxMotorCommandSetpoints>& setpoints,
-    std::size_t count)
-{
-    const std::int64_t produced_at_ns = robot_base::monotonic_now_ns();
-    const std::int64_t valid_until_ns = produced_at_ns +
-        static_cast<std::int64_t>(std::llround(
-            safety_.control_command_timeout_ms * 1'000'000.0));
-    motor_base::CommandTiming timing;
-    timing.produced_at_ns = produced_at_ns;
-    timing.valid_until_ns = valid_until_ns;
-    return apply_impedance_setpoints_realtime(setpoints, count, timing);
 }
 
 bool RobotMotorSession::apply_impedance_setpoints_realtime(

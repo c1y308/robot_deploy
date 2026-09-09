@@ -51,7 +51,9 @@ RobotInterface::RobotInterface(RobotInterfaceConfig config)
 
 /* 析构时释放策略、IMU 和电机资源，保证后台线程退出。 */
 RobotInterface::~RobotInterface() {
-    shutdown();
+    while (!shutdown()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
 }
 
 /* 编排机器人完整运行态：电机、策略、IMU 和站立姿态复位。 */
@@ -60,7 +62,7 @@ bool RobotInterface::initialize() {
         return true;
     }
 
-    shutdown();
+    if (!shutdown()) return false;
 
     if (!initialize_model_processors()) {
         shutdown();
@@ -104,13 +106,17 @@ bool RobotInterface::initialize() {
 }
 
 
-/* 幂等停机：先卸载策略和日志，再释放 IMU，最后释放电机。 */
-void RobotInterface::shutdown() {
-    stop_policy_command_worker();
+/* 先请求并确认停止；超时保留 RT 和资源，供再次尝试。 */
+bool RobotInterface::shutdown() {
+    const auto request = motor_session_.request_stop();
     initialized_.store(false);
+    policy_command_worker_running_.store(false);
+    if (motor_session_.rt_started_ && !motor_session_.wait_for_stop(request)) return false;
+    stop_policy_command_worker();
     unload_policy();
     imu_session_.deinitialize();
-    motor_session_.deinitialize();
+    motor_session_.release_stopped_controller();
+    return true;
 }
 
 
@@ -523,10 +529,11 @@ void RobotInterface::policy_command_worker_loop()
 
 void RobotInterface::fail_policy_command_worker(std::string message)
 {
-    const std::string printable_message = message;
-    const bool already_failed = policy_command_worker_failed_.exchange(true);
+    motor_session_.request_stop();
     policy_command_worker_running_.store(false);
     initialized_.store(false);
+    const std::string printable_message = message;
+    const bool already_failed = policy_command_worker_failed_.exchange(true);
     {
         std::lock_guard<std::mutex> lock(policy_command_error_mutex_);
         policy_command_worker_error_ = std::move(message);
@@ -723,10 +730,12 @@ bool RobotInterface::policy_step() {
     return true;
 }
 
-/* 处理策略执行失败：打印错误并停止生产者；保护动作由 RT 基类执行。 */
+/* 故障入口先请求停止，再进行可能阻塞的诊断及 join。 */
 bool RobotInterface::handle_policy_step_failure(const std::string& message) {
-    std::cerr << "[RobotInterface] policy_step failed: " << message << "\n";
+    motor_session_.request_stop();
     initialized_.store(false);
+    policy_command_worker_running_.store(false);
+    std::cerr << "[RobotInterface] policy_step failed: " << message << "\n";
     stop_policy_command_worker();
     return false;
 }
