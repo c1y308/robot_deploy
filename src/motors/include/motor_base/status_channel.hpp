@@ -9,12 +9,14 @@
 #include <functional>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
 #include "spsc_latest_channel/spsc_latest_channel.hpp"
 #include "motor_base/command_types.hpp"
+#include "tool/thread_runtime.hpp"
 
 namespace motor_base {
 
@@ -68,7 +70,11 @@ public:
 
     // ──────────────────── 配置 ────────────────────
 
-    void configure(std::size_t motor_count, int publish_period_ms);
+    void configure(
+        std::size_t motor_count,
+        int publish_period_ms,
+        std::string thread_name = "motor_status",
+        robot_base::ThreadRuntimeOptions thread_options = {});
 
     // ──────────────────── 实时写入 API ────────────────────
 
@@ -86,8 +92,9 @@ public:
 
     // ──────────────────── 生命周期 ────────────────────
 
-    void start();
+    bool start();
     void stop();
+    const std::string& last_start_error() const noexcept { return last_start_error_; }
 
 private:
     struct StatusFrame {
@@ -100,6 +107,9 @@ private:
 
     std::size_t motor_count_{0};
     int publish_period_ms_{1};   // 读取频率
+    std::string thread_name_{"motor_status"};
+    robot_base::ThreadRuntimeOptions thread_options_;
+    std::string last_start_error_;
 
     robot_base::SpscLatestChannel<StatusFrame> latest_frame_;
 
@@ -136,8 +146,11 @@ LatestStatusChannel<Snapshot>::~LatestStatusChannel()
 // ============================================================================
 
 template <typename Snapshot>
-void LatestStatusChannel<Snapshot>::configure(std::size_t motor_count,
-                                              int publish_period_ms)
+void LatestStatusChannel<Snapshot>::configure(
+    std::size_t motor_count,
+    int publish_period_ms,
+    std::string thread_name,
+    robot_base::ThreadRuntimeOptions thread_options)
 {
     if (motor_count > kMaxMotorCommandSetpoints) {
         throw std::invalid_argument(
@@ -152,6 +165,8 @@ void LatestStatusChannel<Snapshot>::configure(std::size_t motor_count,
 
     motor_count_ = motor_count;
     publish_period_ms_ = publish_period_ms;
+    thread_name_ = std::move(thread_name);
+    thread_options_ = std::move(thread_options);
 
     status_cache_.assign(motor_count_, Snapshot());
 
@@ -225,13 +240,19 @@ void LatestStatusChannel<Snapshot>::set_callback(StatusCallback cb)
 // ---------------------------------------------------------------------------
 
 template <typename Snapshot>
-void LatestStatusChannel<Snapshot>::start()
+bool LatestStatusChannel<Snapshot>::start()
 {
     bool expected = false;
     if (!publisher_running_.compare_exchange_strong(expected, true)) {
-        return;
+        return true;
     }
-    publisher_thread_ = std::thread(&LatestStatusChannel::thread_func, this);
+    if (!robot_base::start_configured_thread(
+            publisher_thread_, thread_name_.c_str(), thread_options_,
+            [this] { thread_func(); }, last_start_error_)) {
+        publisher_running_.store(false);
+        return false;
+    }
+    return true;
 }
 
 

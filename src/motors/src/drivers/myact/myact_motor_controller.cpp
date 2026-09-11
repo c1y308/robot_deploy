@@ -81,9 +81,9 @@ MyactControlMode expected_mode_for_setpoint(mb::SetpointCommandType type)
 
 bool control_ready_for_mode(const MotorState& motor,
                             MyactControlMode expected_mode,
-                            bool whole_body_fault)
+                            bool terminal_fault)
 {
-    return !whole_body_fault &&
+    return !terminal_fault &&
            motor.comm_ok &&
            !(motor.observed.sw_faulted || motor.rx.error != 0) &&
            motor.step == MyactMotorStep::RUNNING &&
@@ -95,12 +95,12 @@ bool control_ready_for_mode(const MotorState& motor,
 }
 
 bool control_ready_for_current_target(const MotorState& motor,
-                                      bool whole_body_fault)
+                                      bool terminal_fault)
 {
     return control_ready_for_mode(
         motor,
         motor.desired.mode,
-        whole_body_fault);
+        terminal_fault);
 }
 
 }
@@ -167,10 +167,14 @@ MyActMotorController::MyActMotorController(std::shared_ptr<EthercatAdapter> adap
 
     set_event_fallback_printer(print_myact_event);
 
-    diagnostics_channel_.configure(_motors.size(), options_.status_publish_period_ms);
+    diagnostics_channel_.configure(_motors.size(),
+                                   options_.status_publish_period_ms,
+                                   "motor_diag",
+                                   options_.background_thread_options);
 
     status_monitor_.set_status_provider([this]() { return get_myact_diagnostics(); });
     status_monitor_.set_status_printer(print_myact_status_table);
+    status_monitor_.configure_thread(options_.background_thread_options);
     
     _adapter->set_event_sink(this, &MyActMotorController::event_sink_trampoline);
 }
@@ -260,9 +264,18 @@ bool MyActMotorController::realtime_start_callback()
 {
     process_data_fail_count_ = 0;
 
-    diagnostics_channel_.start();
+    if (!diagnostics_channel_.start()) {
+        std::cerr << "[MYACTUA] motor_diag setup failed: "
+                  << diagnostics_channel_.last_start_error() << std::endl;
+        return false;
+    }
     if (status_monitor_.has_print_motor_ids()) {
-        status_monitor_.start();
+        if (!status_monitor_.start()) {
+            std::cerr << "[MYACTUA] motor_mon setup failed: "
+                      << status_monitor_.last_start_error() << std::endl;
+            diagnostics_channel_.stop();
+            return false;
+        }
     }
     
     std::cout << "[MYACTUA] 实时控制线程已启动" << std::endl;
@@ -328,8 +341,31 @@ void MyActMotorController::update()
         }
     }
 
+    /* 任一轴退出稳定运行状态时，锁存整机保护。主动 STOP、RESTART 和模式切换
+       会先改变 desired/step，因此不会被视为意外失能或模式漂移。 */
+    for (const auto& motor : _motors) {
+        const bool expected_running =
+            motor.step == MyactMotorStep::RUNNING &&
+            motor.desired.enabled &&
+            motor.mode_switch_step == MyactModeSwitchStep::IDLE;
+        const bool drive_fault =
+            motor.comm_ok &&
+            (motor.observed.sw_faulted || motor.rx.error != 0);
+        const bool unexpectedly_disabled =
+            motor.comm_ok && expected_running &&
+            !motor.observed.operation_enabled;
+        const bool unexpected_mode =
+            motor.comm_ok && expected_running &&
+            motor.observed.observed_mode != motor.desired.mode;
+
+        if (!motor.comm_ok || drive_fault || unexpectedly_disabled || unexpected_mode) {
+            latch_terminal_fault();
+            break;
+        }
+    }
+
     update_communication_watchdog(process_data_ok, health);
-    if (whole_body_fault_latched_.load(std::memory_order_acquire)) {
+    if (terminal_fault_latched()) {
         apply_whole_body_quick_stop();
         return;
     }
@@ -356,7 +392,7 @@ void MyActMotorController::update_communication_watchdog(
     bool process_data_ok,
     const EthercatBusHealthSnapshot& health)
 {
-    if (whole_body_fault_latched_.load(std::memory_order_acquire)) {
+    if (terminal_fault_latched()) {
         return;
     }
 
@@ -379,9 +415,7 @@ void MyActMotorController::latch_communication_fault(
     MyactCommunicationFaultReason reason,
     const EthercatBusHealthSnapshot& health)
 {
-    bool expected = false;
-    if (!whole_body_fault_latched_.compare_exchange_strong(
-            expected, true, std::memory_order_acq_rel)) {
+    if (!latch_terminal_fault()) {
         return;
     }
 
@@ -404,13 +438,9 @@ void MyActMotorController::apply_whole_body_quick_stop()
         motor.mode_switch_step = MyactModeSwitchStep::IDLE;
         motor.desired.enabled = false;
 
+        reset_motor_setpoints_to_feedback(motor);
         motor.tx.control_word = options_.comm_fault_control_word;
         motor.tx.op_mode = static_cast<int8_t>(motor.desired.mode);
-        motor.tx.target_pos = motor.rx.pos;
-        motor.tx.target_vel = 0;
-        motor.tx.target_torque = 0;
-        motor.tx.pvt_kp = 0;
-        motor.tx.pvt_kd = 0;
 
         _adapter->send(motor.motor_index, motor.tx);
     }
@@ -647,16 +677,6 @@ void MyActMotorController::handle_mode_switching(MotorState& motor)
 mb::CommandSubmitStatus MyActMotorController::validate_command(
     const mb::ControlCommand& cmd) const
 {
-    if (whole_body_fault_latched_.load(std::memory_order_acquire)) {
-        if (cmd.kind == mb::ControlCommandKind::SETPOINT) {
-            return mb::CommandSubmitStatus::INVALID_COMMAND;
-        }
-        if (cmd.kind == mb::ControlCommandKind::DISCRETE &&
-            cmd.discrete_type == mb::DiscreteCommandType::SET_MODE) {
-            return mb::CommandSubmitStatus::INVALID_COMMAND;
-        }
-    }
-
     if (cmd.kind == mb::ControlCommandKind::SETPOINT) {
 
         /* 是否为单电机控制 */
@@ -721,9 +741,8 @@ mb::CommandSubmitStatus MyActMotorController::validate_command(
 /// @brief 执行连续目标值命令
 void MyActMotorController::apply_setpoint_command_impl(const mb::ControlCommand& cmd)
 {
-    const bool whole_body_fault =
-        whole_body_fault_latched_.load(std::memory_order_acquire);
-    if (whole_body_fault) {
+    const bool terminal_fault = terminal_fault_latched();
+    if (terminal_fault) {
         return;
     }
 
@@ -736,15 +755,17 @@ void MyActMotorController::apply_setpoint_command_impl(const mb::ControlCommand&
 
     const MyactControlMode expected_mode = expected_mode_for_setpoint(cmd.setpoint_type);
     for (std::size_t i = begin; i < end; ++i) {
-        if (!control_ready_for_mode(_motors[i], expected_mode, whole_body_fault)) {
-            mb::RtEvent event;
-            event.type = mb::RtEventType::SETPOINT_COMMAND_REJECTED;
-            event.tick = discrete_command_tick();
-            event.motor_index = _motors[i].motor_index;
-            event.reason = static_cast<int>(
-                mb::SetpointRejectReason::MODE_NOT_CONFIRMED);
-            event.value = static_cast<uint32_t>(cmd.setpoint_type);
-            push_event(event);
+        if (!control_ready_for_mode(_motors[i], expected_mode, terminal_fault)) {
+            if (latch_terminal_fault()) {
+                mb::RtEvent event;
+                event.type = mb::RtEventType::SETPOINT_COMMAND_REJECTED;
+                event.tick = discrete_command_tick();
+                event.motor_index = _motors[i].motor_index;
+                event.reason = static_cast<int>(
+                    mb::SetpointRejectReason::MODE_NOT_CONFIRMED);
+                event.value = static_cast<uint32_t>(cmd.setpoint_type);
+                push_event(event);
+            }
             return;
         }
     }
@@ -792,18 +813,10 @@ void MyActMotorController::apply_discrete_command_impl(
 
     MotorState& motor = _motors[motor_index];
     
-    if (whole_body_fault_latched_.load(std::memory_order_acquire)) {
-        switch (cmd.type) {
-            case mb::DiscreteCommandType::STOP:
-                motor.desired.enabled = false;
-                motor.mode_switch_step = MyactModeSwitchStep::IDLE;
-                break;
-
-            case mb::DiscreteCommandType::RESTART:
-                break;
-
-            case mb::DiscreteCommandType::SET_MODE:
-                break;
+    if (terminal_fault_latched()) {
+        if (cmd.type == mb::DiscreteCommandType::STOP) {
+            motor.desired.enabled = false;
+            motor.mode_switch_step = MyactModeSwitchStep::IDLE;
         }
         return;
     }
@@ -828,8 +841,8 @@ void MyActMotorController::apply_discrete_command_impl(
             if (motor.desired.mode != to_myact_mode(cmd.mode)) {
                 motor.desired.mode  = to_myact_mode(cmd.mode);
                 reset_motor_setpoints_to_feedback(motor);
-                motor.mode_switch_step = MyactModeSwitchStep::IDLE;
             }
+            motor.mode_switch_step = MyactModeSwitchStep::SET_MODE;
             break;
     }
 }
@@ -851,9 +864,9 @@ mb::DiscreteCommandEvaluation MyActMotorController::evaluate_discrete_command_im
             : mb::DiscreteCommandEvaluation::PENDING;
     }
 
-    const bool whole_body_fault = whole_body_fault_latched_.load(std::memory_order_acquire);
+    const bool terminal_fault = terminal_fault_latched();
 
-    if (whole_body_fault) {
+    if (terminal_fault) {
         switch (cmd.type) {
             case mb::DiscreteCommandType::RESTART:
                 return mb::DiscreteCommandEvaluation::FAILED;
@@ -874,7 +887,7 @@ mb::DiscreteCommandEvaluation MyActMotorController::evaluate_discrete_command_im
     bool satisfied = false;
     switch (cmd.type) {
         case mb::DiscreteCommandType::RESTART:
-            satisfied = control_ready_for_current_target(motor, whole_body_fault);
+            satisfied = control_ready_for_current_target(motor, terminal_fault);
             break;
         case mb::DiscreteCommandType::SET_MODE:
             satisfied = motor.observed.observed_mode == to_myact_mode(cmd.mode);
@@ -924,24 +937,33 @@ void MyActMotorController::update_realtime_feedback()
     std::array<mb::MotorStatusSnapshot, mb::kMaxMotorCommandSetpoints> feedback{};
 
     /* 把 MotorState 中的数据填充给对外发布的实时反馈快照 */
-    const bool whole_body_fault =
-        whole_body_fault_latched_.load(std::memory_order_acquire);
+    const bool terminal_fault = terminal_fault_latched();
+
     for (std::size_t i = 0; i < _motors.size(); ++i) {
+
         const auto& motor = _motors[i];
-        feedback[i].motor_index = motor.motor_index;
+
+        feedback[i].motor_index       = motor.motor_index;
         feedback[i].host_timestamp_ns = current_cycle_host_timestamp_ns_;
-        feedback[i].position_rad = motor.observed.position_rad;
-        feedback[i].velocity_rad_s = motor.observed.velocity_rad_s;
-        feedback[i].torque_percent = motor.observed.torque_percent;
-        feedback[i].comm_ok = motor.comm_ok;
+        feedback[i].position_rad      = motor.observed.position_rad;
+        feedback[i].velocity_rad_s    = motor.observed.velocity_rad_s;
+        feedback[i].torque_percent    = motor.observed.torque_percent;
+        feedback[i].comm_ok           = motor.comm_ok;
+
         if (motor.comm_ok) {
             feedback[i].enabled = motor.observed.operation_enabled;
-            feedback[i].faulted = whole_body_fault || motor.observed.sw_faulted ||
+            feedback[i].faulted = terminal_fault ||
+                                  motor.observed.sw_faulted ||
                                   (motor.rx.error != 0);
+            feedback[i].mode = to_motor_control_mode(motor.observed.observed_mode);
         } else {
             feedback[i].enabled = false;
-            feedback[i].faulted = whole_body_fault;
+            feedback[i].faulted = terminal_fault;
+            feedback[i].mode    = mb::MotorControlMode::NONE;
         }
+        feedback[i].control_ready =
+            control_ready_for_current_target(motor, terminal_fault);
+        feedback[i].target_mode = to_motor_control_mode(motor.desired.mode);
     }
 
     publish_feedback(feedback);
@@ -961,8 +983,7 @@ void MyActMotorController::update_status_snapshot()
     }
 
     mb::MotorStatusSnapshot* status_slot = write_token.data;
-    const bool whole_body_fault =
-        whole_body_fault_latched_.load(std::memory_order_acquire);
+    const bool terminal_fault = terminal_fault_latched();
     for (size_t i = 0; i < _motors.size(); i++) {
         const auto& m = _motors[i];
         auto& s = status_slot[i];
@@ -974,14 +995,14 @@ void MyActMotorController::update_status_snapshot()
         s.comm_ok = m.comm_ok;
         if (m.comm_ok) {
             s.enabled = m.observed.operation_enabled;
-            s.faulted = whole_body_fault || m.observed.sw_faulted || (m.rx.error != 0);
+            s.faulted = terminal_fault || m.observed.sw_faulted || (m.rx.error != 0);
             s.mode = to_motor_control_mode(m.observed.observed_mode);
         } else {
             s.enabled = false;
-            s.faulted = whole_body_fault;
+            s.faulted = terminal_fault;
             s.mode = mb::MotorControlMode::NONE;
         }
-        s.control_ready = control_ready_for_current_target(m, whole_body_fault);
+        s.control_ready = control_ready_for_current_target(m, terminal_fault);
         s.target_mode   = to_motor_control_mode(m.desired.mode);
     }
 
@@ -1048,7 +1069,15 @@ void MyActMotorController::set_print_info(const std::vector<int>& motor_indices)
 {
     const bool enabled = status_monitor_.set_print_info(motor_indices);
     if (is_running()) {
-        enabled ? status_monitor_.start() : status_monitor_.stop();
+        if (enabled) {
+            if (!status_monitor_.start()) {
+                std::cerr << "[MYACTUA] motor_mon setup failed: "
+                          << status_monitor_.last_start_error() << std::endl;
+                latch_terminal_fault();
+            }
+        } else {
+            status_monitor_.stop();
+        }
     }
 }
 

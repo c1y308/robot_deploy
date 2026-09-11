@@ -1,6 +1,7 @@
 #pragma once
 
 #include "recorder/inference_record.hpp"
+#include "tool/thread_runtime.hpp"
 
 #include <condition_variable>
 #include <cstdint>
@@ -21,7 +22,8 @@ public:
     InferenceRecorder(const InferenceRecorder&) = delete;
     InferenceRecorder& operator=(const InferenceRecorder&) = delete;
 
-    bool start(InferenceRecorderConfig config);
+    bool start(InferenceRecorderConfig config,
+               robot_base::ThreadRuntimeOptions thread_options = {});
     bool try_record(const InferenceRecord& record) noexcept;
     void stop() noexcept;
 

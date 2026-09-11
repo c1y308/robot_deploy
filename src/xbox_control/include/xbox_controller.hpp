@@ -1,5 +1,7 @@
 #pragma once
 
+#include "tool/thread_runtime.hpp"
+
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -44,7 +46,9 @@ public:
     bool is_open() const;
 
     /* 启动后台线程读取手柄事件 */
-    bool start_polling(std::chrono::milliseconds wait_timeout = std::chrono::milliseconds(20));
+    bool start_polling(
+        std::chrono::milliseconds wait_timeout = std::chrono::milliseconds(20),
+        robot_base::ThreadRuntimeOptions thread_options = {});
     /* 停止后台读取线程 */
     void stop_polling();
     /* 判断后台读取线程是否仍在运行 */

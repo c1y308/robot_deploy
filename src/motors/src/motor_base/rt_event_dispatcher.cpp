@@ -33,13 +33,19 @@ void RtEventDispatcher::set_fallback_printer(EventPrinter printer)
 }
 
 
-void RtEventDispatcher::start()
+bool RtEventDispatcher::start()
 {
     bool expected = false;
     if (!running_.compare_exchange_strong(expected, true)) {
-        return;
+        return true;
     }
-    thread_ = std::thread(&RtEventDispatcher::thread_func, this);
+    if (!robot_base::start_configured_thread(
+            thread_, "rt_event", thread_options_,
+            [this] { thread_func(); }, last_start_error_)) {
+        running_.store(false);
+        return false;
+    }
+    return true;
 }
 
 

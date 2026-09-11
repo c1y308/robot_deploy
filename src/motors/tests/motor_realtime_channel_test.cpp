@@ -39,10 +39,14 @@ public:
         default_health_.wc_state = EC_WC_COMPLETE;
         default_health_.working_counter = static_cast<unsigned int>(motor_count_);
         current_health_ = default_health_;
-        for (auto& rx : rx_) {
+        for (std::size_t i = 0; i < rx_.size(); ++i) {
+            auto& rx = rx_[i];
             rx = {};
             rx.status_word = myactua::BIT_READY_TO_SWITCH_ON;
             rx.op_mode = static_cast<int8_t>(myactua::MyactControlMode::CSP);
+            configured_[i].store(
+                i < static_cast<std::size_t>(motor_count_),
+                std::memory_order_relaxed);
         }
     }
 
@@ -91,6 +95,7 @@ public:
     myactua::RxPDO receive(int index) override
     {
         if (index >= 0 && index < motor_count_) {
+            std::lock_guard<std::mutex> lock(rx_mutex_);
             return rx_[static_cast<std::size_t>(index)];
         }
         return {};
@@ -98,7 +103,9 @@ public:
 
     bool is_configured(int index) override
     {
-        return index >= 0 && index < motor_count_;
+        return index >= 0 && index < motor_count_ &&
+               configured_[static_cast<std::size_t>(index)].load(
+                   std::memory_order_acquire);
     }
 
     myactua::EthercatBusHealthSnapshot get_bus_health() const override
@@ -140,6 +147,7 @@ public:
     void set_rx_position(int index, int32_t raw_position)
     {
         if (index >= 0 && index < motor_count_) {
+            std::lock_guard<std::mutex> lock(rx_mutex_);
             rx_[static_cast<std::size_t>(index)].pos = raw_position;
         }
     }
@@ -147,15 +155,33 @@ public:
     void set_rx_status_word(int index, uint16_t status_word)
     {
         if (index >= 0 && index < motor_count_) {
+            std::lock_guard<std::mutex> lock(rx_mutex_);
             rx_[static_cast<std::size_t>(index)].status_word = status_word;
+        }
+    }
+
+    void set_rx_error(int index, uint16_t error)
+    {
+        if (index >= 0 && index < motor_count_) {
+            std::lock_guard<std::mutex> lock(rx_mutex_);
+            rx_[static_cast<std::size_t>(index)].error = error;
         }
     }
 
     void set_rx_mode(int index, myactua::MyactControlMode mode)
     {
         if (index >= 0 && index < motor_count_) {
+            std::lock_guard<std::mutex> lock(rx_mutex_);
             rx_[static_cast<std::size_t>(index)].op_mode =
                 static_cast<int8_t>(mode);
+        }
+    }
+
+    void set_configured(int index, bool configured)
+    {
+        if (index >= 0 && index < motor_count_) {
+            configured_[static_cast<std::size_t>(index)].store(
+                configured, std::memory_order_release);
         }
     }
 
@@ -170,6 +196,8 @@ public:
 
 private:
     int motor_count_;
+    std::array<std::atomic<bool>, motor_base::kMaxMotorCommandSetpoints>
+        configured_{};
     std::array<myactua::RxPDO, motor_base::kMaxMotorCommandSetpoints> rx_{};
     std::array<myactua::TxPDO, motor_base::kMaxMotorCommandSetpoints> tx_{};
     std::atomic<std::uint64_t> cycles_{0};
@@ -177,6 +205,7 @@ private:
     std::condition_variable cycles_cv_;
     mutable std::mutex thread_ids_mutex_;
     std::vector<std::thread::id> receiver_thread_ids_;
+    mutable std::mutex rx_mutex_;
     mutable std::mutex tx_mutex_;
     mutable std::mutex health_mutex_;
     myactua::EthercatBusHealthSnapshot default_health_;
@@ -242,6 +271,269 @@ bool expect_start(myactua::MyActMotorController& controller, const char* message
         controller.shutdown();
         return false;
     }
+    return true;
+}
+
+enum class WholeBodyFaultInjection {
+    STATUS_WORD,
+    ERROR_CODE,
+    DISABLED,
+    MODE_MISMATCH,
+    OFFLINE,
+};
+
+bool run_whole_body_fault_scenario(WholeBodyFaultInjection injection)
+{
+    auto adapter = std::make_shared<FakeAdapter>(2);
+    for (int i = 0; i < 2; ++i) {
+        adapter->set_rx_status_word(i, operation_enabled_status_word());
+        adapter->set_rx_mode(i, myactua::MyactControlMode::CSP);
+    }
+
+    myactua::MyActMotorController controller(adapter, 2, test_options());
+    controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
+    std::atomic<int> fault_events{0};
+    controller.set_event_callback(
+        [&fault_events](const motor_base::RtEvent& event) {
+            if (event.type == motor_base::RtEventType::COMM_WATCHDOG_FAULT ||
+                event.type == motor_base::RtEventType::SETPOINT_TIMEOUT_FAULT ||
+                event.type == motor_base::RtEventType::SETPOINT_COMMAND_REJECTED) {
+                fault_events.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    if (!expect_start(controller, "whole-body fault controller should start")) {
+        return false;
+    }
+
+    const motor_base::CommandSubmitResult restart_submit =
+        controller.send_discrete_command(motor_base::ControlCommand::restart());
+    if (!expect(
+            restart_submit.status == motor_base::CommandSubmitStatus::ACCEPTED &&
+                restart_submit.command_id.has_value(),
+            "whole-body fault setup RESTART should be accepted") ||
+        !expect(adapter->wait_for_cycles(60, std::chrono::seconds(1)),
+                "whole-body fault setup should reach RUNNING") ||
+        !expect(controller.get_discrete_command_result(*restart_submit.command_id) ==
+                    motor_base::DiscreteCommandResult::SUCCEEDED,
+                "whole-body fault setup RESTART should succeed")) {
+        controller.shutdown();
+        return false;
+    }
+
+    std::array<motor_base::MotorStatusSnapshot,
+               motor_base::kMaxMotorCommandSetpoints> realtime_feedback{};
+    if (!expect(controller.try_consume_latest_status_command(realtime_feedback) &&
+                    realtime_feedback[0].comm_ok &&
+                    realtime_feedback[0].enabled &&
+                    !realtime_feedback[0].faulted &&
+                    realtime_feedback[0].control_ready &&
+                    realtime_feedback[1].comm_ok &&
+                    realtime_feedback[1].enabled &&
+                    !realtime_feedback[1].faulted &&
+                    realtime_feedback[1].control_ready,
+                "RT feedback should expose healthy control-ready state")) {
+        controller.shutdown();
+        return false;
+    }
+
+    constexpr int32_t old_target0_raw = 1111;
+    constexpr int32_t old_target1_raw = 2222;
+    const motor_base::CommandSubmitResult old_target_submit =
+        controller.send_debug_setpoint(
+            motor_base::ControlCommand::set_position_targets_rad(
+                {static_cast<double>(old_target0_raw) * myactua::kRawPosToRad,
+                 static_cast<double>(old_target1_raw) * myactua::kRawPosToRad}));
+    if (!expect(old_target_submit.status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED,
+                "whole-body fault setup target should be accepted") ||
+        !expect(adapter->wait_for_cycles(adapter->cycles() + 6,
+                                         std::chrono::seconds(1)),
+                "whole-body fault setup target should be applied") ||
+        !expect(adapter->last_tx(0).target_pos == old_target0_raw &&
+                    adapter->last_tx(1).target_pos == old_target1_raw,
+                "whole-body fault setup should output the old targets")) {
+        controller.shutdown();
+        return false;
+    }
+
+    switch (injection) {
+        case WholeBodyFaultInjection::STATUS_WORD:
+            adapter->set_rx_status_word(
+                0, operation_enabled_status_word() | myactua::BIT_FAULT);
+            break;
+        case WholeBodyFaultInjection::ERROR_CODE:
+            adapter->set_rx_error(0, 0x2310);
+            break;
+        case WholeBodyFaultInjection::DISABLED:
+            adapter->set_rx_status_word(0, myactua::BIT_READY_TO_SWITCH_ON);
+            break;
+        case WholeBodyFaultInjection::MODE_MISMATCH:
+            adapter->set_rx_mode(0, myactua::MyactControlMode::CSV);
+            break;
+        case WholeBodyFaultInjection::OFFLINE:
+            adapter->set_configured(0, false);
+            break;
+    }
+
+    if (!expect(adapter->wait_for_cycles(adapter->cycles() + 4,
+                                         std::chrono::seconds(1)),
+                "whole-body fault injection should be processed")) {
+        controller.shutdown();
+        return false;
+    }
+
+    for (int i = 0; i < 2; ++i) {
+        const myactua::TxPDO tx = adapter->last_tx(i);
+        if (!expect(tx.control_word == myactua::CMD_QUICK_STOP &&
+                        tx.target_pos == 0 &&
+                        tx.target_vel == 0 &&
+                        tx.target_torque == 0 &&
+                        tx.pvt_kp == 0 &&
+                        tx.pvt_kd == 0,
+                    "one-axis fault should quick-stop and clear every axis target")) {
+            controller.shutdown();
+            return false;
+        }
+    }
+
+    const std::vector<motor_base::MotorStatusSnapshot> fault_status =
+        controller.get_status();
+    if (!expect(controller.terminal_fault_latched(),
+                "one-axis fault should latch the terminal fault") ||
+        !expect(fault_events.load(std::memory_order_relaxed) == 0,
+                "direct axis faults should not synthesize an RT fault event") ||
+        !expect(fault_status.size() == 2 &&
+                    fault_status[0].faulted && !fault_status[0].control_ready &&
+                    fault_status[1].faulted && !fault_status[1].control_ready,
+                "terminal latch should be visible on every status snapshot") ||
+        !expect(controller.send_debug_setpoint(
+                    motor_base::ControlCommand::set_position_targets_rad(
+                        {3.0, 4.0})).status ==
+                    motor_base::CommandSubmitStatus::INVALID_COMMAND,
+                "setpoint after whole-body latch should fail synchronously") ||
+        !expect(controller.send_discrete_command(
+                    motor_base::ControlCommand::restart(0)).status ==
+                    motor_base::CommandSubmitStatus::INVALID_COMMAND,
+                "single-axis RESTART after whole-body latch should be rejected") ||
+        !expect(controller.send_discrete_command(
+                    motor_base::ControlCommand::restart()).status ==
+                    motor_base::CommandSubmitStatus::INVALID_COMMAND,
+                "whole-body RESTART after whole-body latch should be rejected") ||
+        !expect(controller.send_discrete_command(
+                    motor_base::ControlCommand::stop()).status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED,
+                "STOP after whole-body latch should remain accepted")) {
+        controller.shutdown();
+        return false;
+    }
+
+    adapter->set_configured(0, true);
+    adapter->set_rx_status_word(0, operation_enabled_status_word());
+    adapter->set_rx_error(0, 0);
+    adapter->set_rx_mode(0, myactua::MyactControlMode::CSP);
+    if (!expect(adapter->wait_for_cycles(adapter->cycles() + 6,
+                                         std::chrono::seconds(1)),
+                "cleared drive condition should be observed") ||
+        !expect(adapter->last_tx(0).control_word == myactua::CMD_QUICK_STOP &&
+                    adapter->last_tx(1).control_word == myactua::CMD_QUICK_STOP &&
+                    adapter->last_tx(0).target_pos == 0 &&
+                    adapter->last_tx(1).target_pos == 0,
+                "clearing the drive condition must not restore old targets")) {
+        controller.shutdown();
+        return false;
+    }
+
+    controller.shutdown();
+    return true;
+}
+
+bool run_whole_body_reinitialization_scenario()
+{
+    auto adapter = std::make_shared<FakeAdapter>(2);
+    for (int i = 0; i < 2; ++i) {
+        adapter->set_rx_status_word(i, operation_enabled_status_word());
+        adapter->set_rx_mode(i, myactua::MyactControlMode::CSP);
+    }
+
+    {
+        myactua::MyActMotorController controller(adapter, 2, test_options());
+        if (!expect_start(controller, "pre-reinitialization controller should start")) {
+            return false;
+        }
+        adapter->set_rx_error(0, 0x2310);
+        if (!expect(adapter->wait_for_cycles(adapter->cycles() + 4,
+                                             std::chrono::seconds(1)),
+                    "pre-reinitialization fault should latch")) {
+            controller.shutdown();
+            return false;
+        }
+        adapter->set_rx_error(0, 0);
+        controller.shutdown();
+
+        const std::uint64_t restart_cycle = adapter->cycles();
+        if (!expect(controller.start(),
+                    "latched controller should permit RT restart for STOP output") ||
+            !expect(adapter->wait_for_cycles(restart_cycle + 4,
+                                             std::chrono::seconds(1)),
+                    "restarted latched controller should continue STOP output") ||
+            !expect(controller.terminal_fault_latched() &&
+                        adapter->last_tx(0).control_word ==
+                            myactua::CMD_QUICK_STOP &&
+                        adapter->last_tx(1).control_word ==
+                            myactua::CMD_QUICK_STOP,
+                    "shutdown and start on the same controller must preserve the terminal latch") ||
+            !expect(controller.send_discrete_command(
+                        motor_base::ControlCommand::restart()).status ==
+                        motor_base::CommandSubmitStatus::INVALID_COMMAND,
+                    "same-controller restart must not clear the terminal latch")) {
+            controller.shutdown();
+            return false;
+        }
+        controller.shutdown();
+    }
+
+    myactua::MyActMotorController controller(adapter, 2, test_options());
+    controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
+    if (!expect_start(controller, "reinitialized controller should start")) {
+        return false;
+    }
+
+    const std::uint64_t restart_start_cycle = adapter->cycles();
+    const motor_base::CommandSubmitResult restart_submit =
+        controller.send_discrete_command(motor_base::ControlCommand::restart());
+    if (!expect(
+            restart_submit.status == motor_base::CommandSubmitStatus::ACCEPTED &&
+                restart_submit.command_id.has_value(),
+            "RESTART should be accepted by a rebuilt controller") ||
+        !expect(adapter->wait_for_cycles(restart_start_cycle + 60,
+                                         std::chrono::seconds(1)),
+                "rebuilt controller should confirm all axes") ||
+        !expect(controller.get_discrete_command_result(*restart_submit.command_id) ==
+                    motor_base::DiscreteCommandResult::SUCCEEDED,
+                "rebuilt controller should complete all-axis RESTART")) {
+        controller.shutdown();
+        return false;
+    }
+
+    constexpr int32_t target0_raw = 3333;
+    constexpr int32_t target1_raw = 4444;
+    if (!expect(controller.send_debug_setpoint(
+                    motor_base::ControlCommand::set_position_targets_rad(
+                        {static_cast<double>(target0_raw) * myactua::kRawPosToRad,
+                         static_cast<double>(target1_raw) * myactua::kRawPosToRad})).status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED,
+                "rebuilt controller should accept a fresh target") ||
+        !expect(adapter->wait_for_cycles(adapter->cycles() + 6,
+                                         std::chrono::seconds(1)),
+                "rebuilt controller should apply a fresh target") ||
+        !expect(adapter->last_tx(0).target_pos == target0_raw &&
+                    adapter->last_tx(1).target_pos == target1_raw,
+                "rebuilt controller should resume only with fresh targets")) {
+        controller.shutdown();
+        return false;
+    }
+
+    controller.shutdown();
     return true;
 }
 
@@ -1177,6 +1469,11 @@ int main()
             partial_controller.shutdown();
             return 1;
         }
+        const motor_base::CommandSubmitResult next_setpoint_submit =
+            partial_controller.send_debug_setpoint(
+                motor_base::ControlCommand::set_position_targets_rad({0.0, 0.0}));
+        const std::vector<motor_base::MotorStatusSnapshot> fault_status =
+            partial_controller.get_status();
         partial_controller.shutdown();
 
         if (!expect(reject_events.load(std::memory_order_relaxed) == 1 &&
@@ -1187,6 +1484,24 @@ int main()
         if (!expect(adapter->last_tx(0).target_pos != target0_raw &&
                         adapter->last_tx(1).target_pos != target1_raw,
                     "rejected setpoint frame should not partially update targets")) {
+            return 1;
+        }
+        if (!expect(adapter->last_tx(0).control_word == myactua::CMD_QUICK_STOP &&
+                        adapter->last_tx(1).control_word == myactua::CMD_QUICK_STOP &&
+                        adapter->last_tx(0).target_pos == 0 &&
+                        adapter->last_tx(1).target_pos == 0,
+                    "RT setpoint rejection should quick-stop and reset the whole body")) {
+            return 1;
+        }
+        if (!expect(next_setpoint_submit.status ==
+                        motor_base::CommandSubmitStatus::INVALID_COMMAND,
+                    "setpoints after RT rejection should fail synchronously")) {
+            return 1;
+        }
+        if (!expect(fault_status.size() == 2 &&
+                        fault_status[0].faulted && !fault_status[0].control_ready &&
+                        fault_status[1].faulted && !fault_status[1].control_ready,
+                    "RT setpoint rejection should publish whole-body fault status")) {
             return 1;
         }
     }
@@ -1370,23 +1685,10 @@ int main()
           const motor_base::CommandSubmitResult restart_submit =
               watchdog_controller.send_discrete_command(motor_base::ControlCommand::restart(0));
           if (!expect(
-                  restart_submit.status == motor_base::CommandSubmitStatus::ACCEPTED &&
-                      restart_submit.command_id.has_value(),
-                  "single-motor RESTART under fault should submit with command_id")) {
-              watchdog_controller.shutdown();
-              return 1;
-          }
-          if (!expect(adapter->wait_for_cycles(adapter->cycles() + 32,
-                                               std::chrono::seconds(1)),
-                      "single-motor restart scenario should continue running")) {
-              watchdog_controller.shutdown();
-              return 1;
-          }
-          if (!expect(
-                  watchdog_controller.get_discrete_command_result(
-                      *restart_submit.command_id) ==
-                      motor_base::DiscreteCommandResult::FAILED,
-                  "single-motor RESTART under latched fault should fail")) {
+                  restart_submit.status ==
+                          motor_base::CommandSubmitStatus::INVALID_COMMAND &&
+                      !restart_submit.command_id.has_value(),
+                  "single-motor RESTART under fault should be rejected synchronously")) {
               watchdog_controller.shutdown();
               return 1;
           }
@@ -1424,7 +1726,16 @@ int main()
           std::vector<myactua::EthercatBusHealthSnapshot> recovery_script;
           append_health(recovery_script, 20, health(true, EC_WC_COMPLETE, 1));
           adapter->set_health_script(recovery_script);
-          watchdog_controller.send_discrete_command(motor_base::ControlCommand::restart());
+          const motor_base::CommandSubmitResult restart_submit =
+              watchdog_controller.send_discrete_command(motor_base::ControlCommand::restart());
+          if (!expect(
+                  restart_submit.status ==
+                          motor_base::CommandSubmitStatus::INVALID_COMMAND &&
+                      !restart_submit.command_id.has_value(),
+                  "RESTART(-1) under fault should be rejected synchronously")) {
+              watchdog_controller.shutdown();
+              return 1;
+          }
           if (!expect(adapter->wait_for_cycles(28, std::chrono::seconds(1)),
                       "healthy cycles after RESTART(-1) should continue running")) {
               watchdog_controller.shutdown();
@@ -1564,9 +1875,9 @@ int main()
           }
 
           const myactua::TxPDO hold_tx = adapter->last_tx(0);
-          if (!expect(!setup_controller.safety_stop_latched() &&
+          if (!expect(!setup_controller.terminal_fault_latched() &&
                           timeout_events.load(std::memory_order_relaxed) == 0,
-                      "refreshed startup hold must not latch STOP")) {
+                      "refreshed startup hold must not latch a terminal fault")) {
               setup_controller.shutdown();
               return 1;
           }
@@ -1587,16 +1898,21 @@ int main()
           }
           setup_controller.shutdown();
 
-          if (!expect(setup_controller.safety_stop_latched() &&
+          if (!expect(setup_controller.terminal_fault_latched() &&
                           timeout_events.load(std::memory_order_relaxed) == 1 &&
                           timeout_reason.load(std::memory_order_relaxed) == 1 &&
                           timeout_policy_seq.load(std::memory_order_relaxed) == 0,
                       "expired startup hold should latch reason=1, policy_seq=0")) {
               return 1;
           }
-          if (!expect(adapter->last_tx(0).control_word ==
-                          myactua::CMD_DISABLE_OPERATION,
-                      "expired startup hold should apply STOP output")) {
+          const myactua::TxPDO timeout_tx = adapter->last_tx(0);
+          if (!expect(timeout_tx.control_word == myactua::CMD_QUICK_STOP &&
+                          timeout_tx.target_pos == 0 &&
+                          timeout_tx.target_vel == 0 &&
+                          timeout_tx.target_torque == 0 &&
+                          timeout_tx.pvt_kp == 0 &&
+                          timeout_tx.pvt_kd == 0,
+                      "expired startup hold should quick-stop and clear its target")) {
               return 1;
           }
       }
@@ -1635,7 +1951,7 @@ int main()
               return 1;
           }
 
-          if (!expect(!timing_controller.safety_stop_latched() &&
+          if (!expect(!timing_controller.terminal_fault_latched() &&
                           timing_controller.safety_stop_count() == 0,
                       "invalid incoming metadata should be rejected without latching")) {
               timing_controller.shutdown();
@@ -1683,8 +1999,8 @@ int main()
               timing_controller.shutdown();
               return 1;
           }
-          if (!expect(!timing_controller.safety_stop_latched(),
-                      "timestamp rollback should not latch the safety stop")) {
+          if (!expect(!timing_controller.terminal_fault_latched(),
+                      "timestamp rollback should not latch a terminal fault")) {
               timing_controller.shutdown();
               return 1;
           }
@@ -1697,29 +2013,50 @@ int main()
           }
           timing_controller.shutdown();
 
-          if (!expect(timing_controller.safety_stop_latched(),
-                      "expired command should latch the safety stop")) {
+          if (!expect(timing_controller.terminal_fault_latched(),
+                      "expired command should latch a terminal fault")) {
               return 1;
           }
           if (!expect(timing_controller.safety_stop_count() > 0 &&
-                          timeout_events.load(std::memory_order_relaxed) >= 3,
+                          timeout_events.load(std::memory_order_relaxed) == 3,
                       "expired command should directly apply STOP and emit freshness events")) {
               return 1;
           }
           if (!expect(timing_controller.send_policy_setpoint(
                           timed_policy_position(3.0, 8)).status ==
                           motor_base::CommandSubmitStatus::INVALID_COMMAND,
-                      "fresh producer must not clear a latched safety stop")) {
+                      "fresh producer must not clear a terminal fault")) {
               return 1;
           }
-          if (!expect(timing_controller.clear_safety_stop_latch(),
-                      "safety latch should require explicit stopped-state clear")) {
+          const std::uint64_t restart_cycle = timing_controller.cycles();
+          if (!expect(timing_controller.start(),
+                      "terminally latched controller should allow STOP loop restart") ||
+              !expect(timing_controller.wait_for_cycles(
+                          restart_cycle + 3, std::chrono::seconds(1)),
+                      "restarted terminally latched controller should cycle")) {
+              timing_controller.shutdown();
               return 1;
           }
-          if (!expect(!timing_controller.safety_stop_latched(),
-                      "explicit clear should remove the safety latch")) {
+          timing_controller.shutdown();
+          if (!expect(timing_controller.terminal_fault_latched() &&
+                          timing_controller.safety_stop_count() > 0,
+                      "shutdown and start must not clear a terminal fault")) {
               return 1;
           }
+      }
+
+      if (!run_whole_body_fault_scenario(
+              WholeBodyFaultInjection::STATUS_WORD) ||
+          !run_whole_body_fault_scenario(
+              WholeBodyFaultInjection::ERROR_CODE) ||
+          !run_whole_body_fault_scenario(
+              WholeBodyFaultInjection::DISABLED) ||
+          !run_whole_body_fault_scenario(
+              WholeBodyFaultInjection::MODE_MISMATCH) ||
+          !run_whole_body_fault_scenario(
+              WholeBodyFaultInjection::OFFLINE) ||
+          !run_whole_body_reinitialization_scenario()) {
+          return 1;
       }
 
       return 0;

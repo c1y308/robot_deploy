@@ -1,4 +1,6 @@
 #include "config/deploy_config.hpp"
+#include "robot/rk3588_host_preflight.hpp"
+#include "robot/rk3588_runtime_profile.hpp"
 #include "robot/robot_interface.hpp"
 #include "xbox_controller.hpp"
 
@@ -77,6 +79,23 @@ int main(int argc, char** argv)
                   << config_error << "\n";
         return 1;
     }
+    cfg.runtime = inference::make_rk3588_runtime_profile();
+
+    if (cfg.runtime.require_host_preflight &&
+        !inference::verify_rk3588_host_layout(config_error)) {
+        std::cerr << "[ERROR] RK3588 RT host preflight failed: "
+                  << config_error << "\n";
+        return 1;
+    }
+
+    const robot_base::ThreadSetupResult main_setup =
+        robot_base::configure_current_thread("policy_main",
+                                             cfg.runtime.policy_main);
+    if (!main_setup.success) {
+        std::cerr << "[ERROR] Failed to configure policy_main: "
+                  << main_setup.error << "\n";
+        return 1;
+    }
     print_config_summary(cfg);
 
     xbox_control::XboxController controller;
@@ -101,7 +120,8 @@ int main(int argc, char** argv)
     }
 
     std::cout << "[INFO] Starting Xbox polling thread...\n";
-    if (!controller.start_polling(std::chrono::milliseconds(20))) {
+    if (!controller.start_polling(std::chrono::milliseconds(20),
+                                  cfg.runtime.background)) {
         safe_shutdown(robot);
         std::cerr << "[ERROR] " << controller.last_error() << "\n";
         return 1;

@@ -51,7 +51,6 @@ private:
     motor_base::LatestStatusChannel<MotorState> diagnostics_channel_;
     motor_base::MotorStatusMonitor<MotorState>  status_monitor_;
 
-    std::atomic<bool> whole_body_fault_latched_{false};
     uint32_t process_data_fail_count_{0};
     MyactCommunicationFaultReason fault_reason_{MyactCommunicationFaultReason::None};
     std::int64_t current_cycle_host_timestamp_ns_{0};

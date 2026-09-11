@@ -158,7 +158,9 @@ InferenceRecorder::~InferenceRecorder()
     stop();
 }
 
-bool InferenceRecorder::start(InferenceRecorderConfig config)
+bool InferenceRecorder::start(
+    InferenceRecorderConfig config,
+    robot_base::ThreadRuntimeOptions thread_options)
 {
     stop();
 
@@ -218,9 +220,10 @@ bool InferenceRecorder::start(InferenceRecorderConfig config)
         running_ = true;
     }
 
-    try {
-        worker_ = std::thread(&InferenceRecorder::worker_loop, this);
-    } catch (const std::exception& error) {
+    std::string thread_error;
+    if (!robot_base::start_configured_thread(
+            worker_, "infer_log", thread_options,
+            [this] { worker_loop(); }, thread_error)) {
         std::lock_guard<std::mutex> lock(mutex_);
         running_ = false;
         stop_requested_ = false;
@@ -228,19 +231,7 @@ bool InferenceRecorder::start(InferenceRecorderConfig config)
         if (file_.is_open()) {
             file_.close();
         }
-        last_error_ =
-            std::string("failed to start inference recorder worker: ") +
-            error.what();
-        return false;
-    } catch (...) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        running_ = false;
-        stop_requested_ = false;
-        queue_.clear();
-        if (file_.is_open()) {
-            file_.close();
-        }
-        last_error_ = "failed to start inference recorder worker";
+        last_error_ = "failed to start inference recorder worker: " + thread_error;
         return false;
     }
 

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace inference {
 
@@ -29,7 +30,11 @@ public:
     PolicyRuntime(const PolicyRuntime&) = delete;
     PolicyRuntime& operator=(const PolicyRuntime&) = delete;
 
-    bool load(const PolicyRuntimeConfig& config);
+    bool load(const PolicyRuntimeConfig& config,
+              int intra_op_threads = 0,
+              int inter_op_threads = 0,
+              int openblas_threads = 0,
+              const std::vector<int>& expected_worker_cpus = {});
     void shutdown();
 
     bool is_loaded() const;
@@ -41,6 +46,9 @@ private:
     struct Impl;
 
     bool dry_run_and_validate_output();
+    bool configure_parallel_runtime(int intra_op_threads,
+                                    int inter_op_threads,
+                                    int openblas_threads);
     void unload();
     void set_error(std::string message);
 

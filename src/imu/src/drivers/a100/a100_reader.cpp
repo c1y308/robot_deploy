@@ -36,7 +36,16 @@ bool IMUReader::start(const Config_t& config) {
     }
 
     running_.store(true);
-    worker_thread_ = std::thread(&IMUReader::read_loop, this);
+    std::string thread_error;
+    if (!robot_base::start_configured_thread(
+            worker_thread_, "imu_serial_rx", config_.thread_options,
+            [this] { read_loop(); }, thread_error)) {
+        running_.store(false);
+        serial_port_->close();
+        std::cerr << "[ERROR] IMU reader thread setup failed: "
+                  << thread_error << std::endl;
+        return false;
+    }
     std::cout << "[INFO] IMU reader thread started." << std::endl;
     return true;
 }

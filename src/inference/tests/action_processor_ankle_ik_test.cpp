@@ -238,6 +238,50 @@ void test_partial_unreachable_does_not_pollute_solver_history()
                               "partial failure should not change later IK branch");
 }
 
+void test_policy_command_rejects_unhealthy_motor_feedback()
+{
+    std::array<motor_base::MotorStatusSnapshot,
+               motor_base::kMaxMotorCommandSetpoints> feedback{};
+    for (int motor_index = 0; motor_index < kDof; ++motor_index) {
+        auto& motor = feedback[static_cast<std::size_t>(motor_index)];
+        motor.motor_index = motor_index;
+        motor.comm_ok = true;
+        motor.enabled = true;
+        motor.faulted = false;
+        motor.control_ready = true;
+    }
+
+    for (int condition = 0; condition < 4; ++condition) {
+        auto unhealthy_feedback = feedback;
+        auto& motor = unhealthy_feedback[3];
+        switch (condition) {
+            case 0:
+                motor.comm_ok = false;
+                break;
+            case 1:
+                motor.enabled = false;
+                break;
+            case 2:
+                motor.faulted = true;
+                break;
+            case 3:
+                motor.control_ready = false;
+                break;
+        }
+
+        auto processor = make_processor();
+        inference::robot_detail::ActionProcessor::FixedModelTarget target{};
+        inference::robot_detail::ActionProcessor::FixedPolicyMotorCommand command;
+        std::string error;
+        expect(!processor.build_policy_impedance_command(
+                   target, unhealthy_feedback, command, error),
+               "policy command should reject unhealthy motor feedback condition " +
+                   std::to_string(condition));
+        expect(error.find("index 3") != std::string::npos,
+               "policy health rejection should identify the unhealthy motor");
+    }
+}
+
 }  // namespace
 
 int main()
@@ -245,6 +289,7 @@ int main()
     test_first_unreachable_fails();
     test_unreachable_after_valid_solution_holds_last();
     test_partial_unreachable_does_not_pollute_solver_history();
+    test_policy_command_rejects_unhealthy_motor_feedback();
 
     std::cout << "action_processor_ankle_ik_test passed\n";
     return 0;

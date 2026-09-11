@@ -5,10 +5,13 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "motor_base/command_types.hpp"
+#include "tool/thread_runtime.hpp"
 
 namespace motor_base {
 
@@ -55,8 +58,13 @@ public:
     void set_fallback_printer(EventPrinter printer);
     bool push(const RtEvent& event);
 
-    void start();
+    void configure_thread(robot_base::ThreadRuntimeOptions options)
+    {
+        thread_options_ = std::move(options);
+    }
+    bool start();
     void stop();
+    const std::string& last_start_error() const noexcept { return last_start_error_; }
 
 private:
     bool pop(RtEvent& event);
@@ -72,6 +80,8 @@ private:
 
     std::thread thread_;
     std::atomic<bool> running_{false};
+    robot_base::ThreadRuntimeOptions thread_options_;
+    std::string last_start_error_;
 
     Callback callback_;
     mutable std::mutex callback_mutex_;

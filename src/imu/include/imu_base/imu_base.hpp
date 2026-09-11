@@ -1,5 +1,7 @@
 #pragma once
 
+#include "tool/thread_runtime.hpp"
+
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -19,6 +21,7 @@ struct ReaderConfig {
     int can_bitrate = 250000;
     bool print_imu = false;
     bool print_ahrs = false;
+    robot_base::ThreadRuntimeOptions thread_options;
 };
 
 struct IMUData {

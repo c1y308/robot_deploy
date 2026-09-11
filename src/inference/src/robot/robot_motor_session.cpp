@@ -62,8 +62,12 @@ void fill_motor_snapshot_from_range(MotorStateSnapshot& snapshot,
 
 }  // namespace
 
-RobotMotorSession::RobotMotorSession(MotorConfig config, SafetyConfig safety)
-    : config_(std::move(config)), safety_(std::move(safety)) {}
+RobotMotorSession::RobotMotorSession(MotorConfig config,
+                                     SafetyConfig safety,
+                                     RuntimeThreadingConfig runtime)
+    : config_(std::move(config)),
+      safety_(std::move(safety)),
+      runtime_(std::move(runtime)) {}
 
 RobotMotorSession::~RobotMotorSession()
 {
@@ -86,6 +90,11 @@ bool RobotMotorSession::initialize()
     controller_options.setpoint_timeout_ns =
         static_cast<std::int64_t>(std::llround(
             safety_.control_command_timeout_ms * 1'000'000.0));
+    if (runtime_.enabled) {
+        controller_options.rt_priority = runtime_.motor_rt.priority;
+        controller_options.rt_thread_options = runtime_.motor_rt;
+        controller_options.background_thread_options = runtime_.background;
+    }
     controller_ = std::make_unique<myactua::MyActMotorController>(
         adapter_, config_.num_motors, controller_options);
 
@@ -270,15 +279,6 @@ bool RobotMotorSession::restart(int motor_index)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
-
-bool RobotMotorSession::clear_safety_stop_latch()
-{
-    if (!controller_) {
-        return false;
-    }
-    return controller_->clear_safety_stop_latch();
-}
-
 
 bool RobotMotorSession::apply_targets_rad(const std::vector<double>& target_motor_rad)
 {

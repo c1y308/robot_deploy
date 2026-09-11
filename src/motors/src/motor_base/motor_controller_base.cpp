@@ -2,10 +2,7 @@
 #include "tool/tool.hpp"
 
 #include <algorithm>
-#include <cstring>
 #include <iostream>
-#include <pthread.h>
-#include <sched.h>
 #include <stdexcept>
 #include <time.h>
 #include <utility>
@@ -32,109 +29,6 @@ void add_period_ns(timespec& time, long period_ns)
         time.tv_nsec -= kNsecPerSec;
         ++time.tv_sec;
     }
-}
-
-const char* scheduling_policy_name(int policy)
-{
-    switch (policy) {
-        case SCHED_FIFO: return "SCHED_FIFO";
-        case SCHED_RR: return "SCHED_RR";
-        case SCHED_OTHER: return "SCHED_OTHER";
-#ifdef SCHED_BATCH
-        case SCHED_BATCH: return "SCHED_BATCH";
-#endif
-#ifdef SCHED_IDLE
-        case SCHED_IDLE: return "SCHED_IDLE";
-#endif
-    }
-    return "UNKNOWN";
-}
-
-
-bool read_thread_scheduling(std::thread& thread,
-                            int& policy,
-                            sched_param& param)
-{
-    const int result =
-        pthread_getschedparam(thread.native_handle(), &policy, &param);
-    if (result != 0) {
-        std::cerr << "[MotorControllerBase] failed to read realtime "
-                  << "scheduling: " << std::strerror(result) << std::endl;
-        return false;
-    }
-    return true;
-}
-
-
-void print_realtime_scheduling_state(int requested_priority,
-                                     bool actual_available,
-                                     int actual_policy,
-                                     int actual_priority)
-{
-    std::cerr << "[MotorControllerBase] Requested realtime scheduling:\n"
-              << "  policy   = SCHED_FIFO\n"
-              << "  priority = " << requested_priority << "\n";
-    if (actual_available) {
-        std::cerr << "[MotorControllerBase] Actual scheduling:\n"
-                  << "  policy   = " << scheduling_policy_name(actual_policy) << "\n"
-                  << "  priority = " << actual_priority << std::endl;
-    } else {
-        std::cerr << "[MotorControllerBase] Actual scheduling: unavailable"
-                  << std::endl;
-    }
-}
-
-
-bool verify_realtime_priority(std::thread& thread, int expected_priority)
-{
-    int policy = 0;
-    sched_param actual{};
-    if (!read_thread_scheduling(thread, policy, actual)) {
-        print_realtime_scheduling_state(expected_priority, false, 0, 0);
-        return false;
-    }
-
-    if (policy == SCHED_FIFO && actual.sched_priority == expected_priority) {
-        return true;
-    }
-
-    std::cerr << "[MotorControllerBase] realtime scheduling verification failed"
-              << std::endl;
-    print_realtime_scheduling_state(
-        expected_priority,
-        true,
-        policy,
-        actual.sched_priority);
-    return false;
-}
-
-
-bool set_realtime_priority(std::thread& thread, int priority)
-{
-    if (priority <= 0) {
-        return true;
-    }
-
-    sched_param param{};
-    param.sched_priority = priority;
-    const int result =
-        pthread_setschedparam(thread.native_handle(), SCHED_FIFO, &param);
-    if (result != 0) {
-        int actual_policy = 0;
-        sched_param actual{};
-        const bool actual_available =
-            read_thread_scheduling(thread, actual_policy, actual);
-        std::cerr << "[MotorControllerBase] failed to set realtime scheduling: "
-                  << std::strerror(result) << std::endl;
-        print_realtime_scheduling_state(
-            priority,
-            actual_available,
-            actual_policy,
-            actual.sched_priority);
-        return false;
-    }
-
-    return verify_realtime_priority(thread, priority);
 }
 
 const char* setpoint_source_name(SetpointSource source)
@@ -187,7 +81,11 @@ MotorControllerBase::MotorControllerBase(
         throw std::invalid_argument(
             "RealtimeOptions status_publish_period_ms must be positive");
     }
-    status_channel_.configure(motor_count_, rt_options_.status_publish_period_ms);
+    status_channel_.configure(motor_count_,
+                              rt_options_.status_publish_period_ms,
+                              "motor_status",
+                              rt_options_.background_thread_options);
+    rt_event_dispatcher_.configure_thread(rt_options_.background_thread_options);
     setpoint_channel_debug_.reset_empty();
     setpoint_channel_policy_.reset_empty();
     command_feedback_channel_.reset_empty();
@@ -240,40 +138,49 @@ bool MotorControllerBase::start()
     policy_sequence_started_.store(false, std::memory_order_release);
     command_feedback_channel_.reset_empty();
     policy_feedback_channel_.reset_empty();
-    status_channel_.start();
-    rt_event_dispatcher_.start();
+    if (!status_channel_.start()) {
+        std::cerr << "[MotorControllerBase] motor_status setup failed: "
+                  << status_channel_.last_start_error() << std::endl;
+        return false;
+    }
+    if (!rt_event_dispatcher_.start()) {
+        std::cerr << "[MotorControllerBase] rt_event setup failed: "
+                  << rt_event_dispatcher_.last_start_error() << std::endl;
+        status_channel_.stop();
+        return false;
+    }
 
     if (!realtime_start_callback()) {
+        realtime_stop_callback();
         rt_event_dispatcher_.stop();
         status_channel_.stop();
         return false;
     }
 
     running_.store(true, std::memory_order_release);
-    try {
-        rt_thread_ = std::thread(&MotorControllerBase::thread_func, this);
-    } catch (...) {
-        running_.store(false, std::memory_order_release);
-        rt_scheduling_ready_.store(false, std::memory_order_release);
-        realtime_stop_callback();
-        rt_event_dispatcher_.stop();
-        status_channel_.stop();
-        throw;
+    robot_base::ThreadRuntimeOptions rt_thread_options =
+        rt_options_.rt_thread_options;
+    if (rt_options_.rt_priority > 0) {
+        rt_thread_options.scheduling_policy =
+            robot_base::ThreadSchedulingPolicy::FIFO;
+        rt_thread_options.priority = rt_options_.rt_priority;
     }
 
-    const bool scheduling_ready =
-        set_realtime_priority(rt_thread_, rt_options_.rt_priority);
-    rt_scheduling_ready_.store(scheduling_ready, std::memory_order_release);
-    if (!scheduling_ready) {
+    std::string thread_error;
+    if (!robot_base::start_configured_thread(
+            rt_thread_, "ecat_rt", rt_thread_options,
+            [this] { thread_func(); }, thread_error)) {
         running_.store(false, std::memory_order_release);
-        if (rt_thread_.joinable()) {
-            rt_thread_.join();
-        }
+        rt_scheduling_ready_.store(false, std::memory_order_release);
+        std::cerr << "[MotorControllerBase] ecat_rt setup failed: "
+                  << thread_error << std::endl;
         realtime_stop_callback();
         rt_event_dispatcher_.stop();
         status_channel_.stop();
         return false;
     }
+
+    rt_scheduling_ready_.store(true, std::memory_order_release);
 
     return true;
 }
@@ -348,7 +255,7 @@ CommandSubmitResult MotorControllerBase::send_discrete_command(
         return {CommandSubmitStatus::INVALID_PAYLOAD, std::nullopt};
     }
 
-    if (safety_stop_latched_.load(std::memory_order_acquire) &&
+    if (terminal_fault_latched_.load(std::memory_order_acquire) &&
         cmd.discrete_type != DiscreteCommandType::STOP) {
         return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
     }
@@ -463,7 +370,7 @@ CommandSubmitResult MotorControllerBase::send_policy_setpoint(
         return {CommandSubmitStatus::INVALID_PAYLOAD, std::nullopt};
     }
 
-    if (safety_stop_latched_.load(std::memory_order_acquire)) {
+    if (terminal_fault_latched_.load(std::memory_order_acquire)) {
         return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
     }
 
@@ -534,7 +441,7 @@ CommandSubmitResult MotorControllerBase::send_debug_setpoint(
         return {CommandSubmitStatus::INVALID_PAYLOAD, std::nullopt};
     }
 
-    if (safety_stop_latched_.load(std::memory_order_acquire)) {
+    if (terminal_fault_latched_.load(std::memory_order_acquire)) {
         return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
     }
 
@@ -759,6 +666,7 @@ void MotorControllerBase::publish_status(const StatusWriteToken& token)
     status_channel_.publish(token);
 }
 
+
 void MotorControllerBase::publish_feedback(
     const std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback)
 {
@@ -801,15 +709,16 @@ void MotorControllerBase::process_latest_setpoint_commands()
 {
     const std::int64_t now_ns = robot_base::monotonic_now_ns();
 
-    if (safety_stop_latched_.load(std::memory_order_acquire)) {
-        apply_safety_stop();
+    if (terminal_fault_latched_.load(std::memory_order_acquire)) {
+        apply_terminal_fault_stop();
         return;
     }
 
     if (has_active_setpoint_ && now_ns >= active_setpoint_.timing.valid_until_ns) {
-        latch_safety_stop(FRESHNESS_EXPIRED,
-                          active_setpoint_.timing.source_policy_seq);
-        apply_safety_stop();
+        latch_setpoint_timeout_fault(
+            FRESHNESS_EXPIRED,
+            active_setpoint_.timing.source_policy_seq);
+        apply_terminal_fault_stop();
         return;
     }
 
@@ -899,13 +808,18 @@ bool MotorControllerBase::validate_setpoint_timing(
     return true;
 }
 
-void MotorControllerBase::latch_safety_stop(
+bool MotorControllerBase::latch_terminal_fault() noexcept
+{
+    bool expected = false;
+    return terminal_fault_latched_.compare_exchange_strong(
+        expected, true, std::memory_order_acq_rel);
+}
+
+void MotorControllerBase::latch_setpoint_timeout_fault(
     int reason,
     std::uint64_t policy_seq)
 {
-    bool expected = false;
-    if (!safety_stop_latched_.compare_exchange_strong(
-            expected, true, std::memory_order_acq_rel)) {
+    if (!latch_terminal_fault()) {
         return;
     }
 
@@ -919,34 +833,13 @@ void MotorControllerBase::latch_safety_stop(
     push_event(event);
 }
 
-void MotorControllerBase::apply_safety_stop()
+void MotorControllerBase::apply_terminal_fault_stop()
 {
     DiscreteCommand stop(DiscreteCommandType::STOP);
     stop.from_all_motors = true;
     for (std::size_t i = 0; i < motor_count_; ++i) {
         apply_discrete_command_impl(static_cast<int>(i), stop);
     }
-}
-
-bool MotorControllerBase::clear_safety_stop_latch()
-{
-    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-    if (running_.load(std::memory_order_acquire)) {
-        return false;
-    }
-    safety_stop_latched_.store(false, std::memory_order_release);
-    has_active_setpoint_ = false;
-    active_setpoint_ = ControlCommand{};
-    last_policy_seq_ = 0;
-    last_produced_at_ns_ = 0;
-    policy_sequence_started_.store(false, std::memory_order_release);
-    setpoint_channel_policy_.reset_empty();
-    setpoint_channel_debug_.reset_empty();
-    cmd_queue_.clear();
-    for (auto& queue : discrete_cmd_queues_) {
-        queue.clear();
-    }
-    return true;
 }
 
 void MotorControllerBase::enqueue_discrete_command(

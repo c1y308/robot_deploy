@@ -9,8 +9,10 @@
 
 namespace inference {
 
-RobotImuSession::RobotImuSession(ImuConfig config)
-    : config_(std::move(config))
+RobotImuSession::RobotImuSession(ImuConfig config,
+                                 RuntimeThreadingConfig runtime)
+    : config_(std::move(config)),
+      runtime_(std::move(runtime))
 {
 }
 
@@ -25,7 +27,10 @@ bool RobotImuSession::initialize()
         return true;
     }
 
-    const imu_base::ReaderConfig imu_cfg = make_reader_config(config_);
+    imu_base::ReaderConfig imu_cfg = make_reader_config(config_);
+    if (runtime_.enabled) {
+        imu_cfg.thread_options = runtime_.imu_reader;
+    }
 
     ahrs_ready_.store(false);
     ahrs_state_channel_.reset_empty();

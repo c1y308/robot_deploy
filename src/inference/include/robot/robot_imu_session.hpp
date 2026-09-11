@@ -46,7 +46,8 @@ inline imu_base::ReaderConfig make_reader_config(const ImuConfig& config)
 
 class RobotImuSession {
 public:
-    explicit RobotImuSession(ImuConfig config);
+    explicit RobotImuSession(ImuConfig config,
+                             RuntimeThreadingConfig runtime = {});
     ~RobotImuSession();
 
     RobotImuSession(const RobotImuSession&) = delete;
@@ -62,6 +63,7 @@ public:
 
 private:
     ImuConfig config_;
+    RuntimeThreadingConfig runtime_;
     std::unique_ptr<imu_base::IMUReaderBase> reader_;
 
     std::atomic<bool> initialized_{false};

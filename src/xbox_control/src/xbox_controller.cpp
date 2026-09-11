@@ -74,7 +74,9 @@ bool XboxController::open_device()
 
 
 /* 启动后台线程，将设备事件读取从控制主循环中移出。 */
-bool XboxController::start_polling(std::chrono::milliseconds wait_timeout)
+bool XboxController::start_polling(
+    std::chrono::milliseconds wait_timeout,
+    robot_base::ThreadRuntimeOptions thread_options)
 {
     if (is_polling()) {
         return true;
@@ -99,12 +101,13 @@ bool XboxController::start_polling(std::chrono::milliseconds wait_timeout)
     polling_active_.store(true);
 
     /* 创建后台线程 */
-    try {
-        polling_thread_ = std::thread(&XboxController::polling_loop, this, wait_timeout);
-    } catch (...) {
+    std::string thread_error;
+    if (!robot_base::start_configured_thread(
+            polling_thread_, "xbox_poll", thread_options,
+            [this, wait_timeout] { polling_loop(wait_timeout); }, thread_error)) {
         polling_active_.store(false);
         stop_polling_requested_.store(true);
-        set_error("start controller polling thread failed");
+        set_error("start controller polling thread failed: " + thread_error);
         return false;
     }
 

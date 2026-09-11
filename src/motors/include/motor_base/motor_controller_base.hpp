@@ -14,6 +14,7 @@
 #include "motor_base/command_types.hpp"
 #include "motor_base/rt_event_dispatcher.hpp"
 #include "motor_base/status_channel.hpp"
+#include "tool/thread_runtime.hpp"
 
 namespace motor_base {
 
@@ -35,6 +36,8 @@ public:
 
         long rt_period_ns = 1000000;
         int rt_priority   = 80;
+        robot_base::ThreadRuntimeOptions rt_thread_options;
+        robot_base::ThreadRuntimeOptions background_thread_options;
 
         // Used to stamp legacy debug setpoints at the controller boundary.
         std::int64_t setpoint_timeout_ns = 10'000'000;
@@ -82,14 +85,10 @@ public:
 
     /// @brief 实时控制线程是否正在运行
     bool is_running() const;
-    bool safety_stop_latched() const noexcept
+    bool terminal_fault_latched() const noexcept
     {
-        return safety_stop_latched_.load(std::memory_order_acquire);
+        return terminal_fault_latched_.load(std::memory_order_acquire);
     }
-
-    // Explicit recovery operation.  It is deliberately unavailable while the
-    // RT thread is running, so a producer cannot clear its own safety latch.
-    bool clear_safety_stop_latch();
     bool is_realtime_scheduling_ready() const noexcept
     {
         return rt_scheduling_ready_.load(std::memory_order_acquire);
@@ -172,6 +171,7 @@ protected:
 
     void push_event(const RtEvent& event);
     void set_event_fallback_printer(RtEventDispatcher::EventPrinter printer);
+    bool latch_terminal_fault() noexcept;
 
     // ============================================================
     // REQUIRED OVERRIDES
@@ -239,8 +239,8 @@ private:
     //  thread_func()中调用，从命令队列中取出离散命令进行分发
     void process_queued_commands();
     void process_latest_setpoint_commands();
-    void apply_safety_stop();
-    void latch_safety_stop(int reason, std::uint64_t policy_seq);
+    void apply_terminal_fault_stop();
+    void latch_setpoint_timeout_fault(int reason, std::uint64_t policy_seq);
     bool validate_setpoint_timing(const ControlCommand& cmd,
                                   std::int64_t now_ns,
                                   int& reason) const noexcept;
@@ -300,7 +300,7 @@ private:
     std::thread rt_thread_;
     std::atomic<bool> running_{false};
     std::atomic<bool> rt_scheduling_ready_{false};
-    std::atomic<bool> safety_stop_latched_{false};
+    std::atomic<bool> terminal_fault_latched_{false};
     // Startup/setup setpoints may use sequence zero until the first policy
     // frame has been accepted; policy traffic thereafter must be sequenced.
     std::atomic<bool> policy_sequence_started_{false};

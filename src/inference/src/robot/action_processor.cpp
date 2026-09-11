@@ -273,6 +273,22 @@ bool ActionProcessor::build_policy_impedance_command(
 {
     const int count = dof_count();
 
+    for (int motor_index = 0; motor_index < count; ++motor_index) {
+        const auto& motor =
+            motor_feedback[static_cast<std::size_t>(motor_index)];
+        if (!motor.comm_ok || !motor.enabled || motor.faulted ||
+            !motor.control_ready) {
+            error = "motor feedback is not control-ready at index " +
+                    std::to_string(motor_index) +
+                    ": comm_ok=" + (motor.comm_ok ? "true" : "false") +
+                    ", enabled=" + (motor.enabled ? "true" : "false") +
+                    ", faulted=" + (motor.faulted ? "true" : "false") +
+                    ", control_ready=" +
+                    (motor.control_ready ? "true" : "false");
+            return false;
+        }
+    }
+
     const std::array<int, 4> ankle_motor_indices = {
         mapping_->left_ankle().upper_motor_index,
         mapping_->left_ankle().lower_motor_index,

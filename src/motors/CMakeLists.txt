@@ -4,6 +4,7 @@ project(myactua_ethercat)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)
+enable_testing()
 
 set(IGH_PATH /home/cat/ethercat)
 
@@ -55,3 +56,4 @@ target_include_directories(motor_response_latency_test PRIVATE
 target_link_libraries(id_test myactua_ethercat)
 target_link_libraries(motor_response_latency_test myactua_ethercat)
 target_link_libraries(motor_realtime_channel_test myactua_ethercat)
+add_test(NAME motor_realtime_channel_test COMMAND motor_realtime_channel_test)

@@ -44,8 +44,8 @@ void fill_record_motor_state(const MotorStateSnapshot& motor_state,
 /* 保存外部传入的接口配置，后续由初始化函数按模块使用。 */
 RobotInterface::RobotInterface(RobotInterfaceConfig config)
     : config_(std::move(config)),
-      motor_session_(config_.motor, config_.safety),    // 构造 motor_session_
-      imu_session_(config_.imu)         // 构造 imu_session_
+      motor_session_(config_.motor, config_.safety, config_.runtime),
+      imu_session_(config_.imu, config_.runtime)
 {
 }
 
@@ -165,17 +165,38 @@ bool RobotInterface::load_policy() {
 
     initialize_policy_runtime_state();
 
-    if (!policy_runtime_.load(config_.policy)) {
+    const int intra_op_threads = config_.runtime.enabled
+                                     ? config_.runtime.torch_intra_op_threads
+                                     : 0;
+    const int inter_op_threads = config_.runtime.enabled
+                                     ? config_.runtime.torch_inter_op_threads
+                                     : 0;
+    const int openblas_threads = config_.runtime.enabled
+                                     ? config_.runtime.openblas_threads
+                                     : 0;
+    if (!policy_runtime_.load(config_.policy,
+                              intra_op_threads,
+                              inter_op_threads,
+                              openblas_threads,
+                              config_.runtime.enabled
+                                  ? config_.runtime.policy_main.cpu_ids
+                                  : std::vector<int>{})) {
         std::cerr << "[RobotInterface] load_policy failed: "
                   << policy_runtime_.last_error() << "\n";
         return false;
     }
 
     if (config_.recorder.enabled) {
-        if (!inference_recorder_.start(config_.recorder)) {
+        const robot_base::ThreadRuntimeOptions recorder_thread =
+            config_.runtime.enabled ? config_.runtime.background
+                                    : robot_base::ThreadRuntimeOptions{};
+        if (!inference_recorder_.start(config_.recorder, recorder_thread)) {
             std::cerr << "[RobotInterface] failed to open inference log: "
                       << inference_recorder_.last_error() << "\n";
             inference_recorder_failed_ = true;
+            if (config_.runtime.enabled) {
+                return false;
+            }
         } else {
             std::cout << "[RobotInterface] inference log: "
                       << inference_recorder_.log_path() << "\n";
@@ -367,17 +388,16 @@ bool RobotInterface::start_policy_command_worker()
     policy_command_worker_failed_.store(false);
     policy_command_worker_running_.store(true);
 
-    try {
-        policy_command_worker_thread_ =
-            std::thread(&RobotInterface::policy_command_worker_loop, this);
-    } catch (const std::exception& error) {
+    const robot_base::ThreadRuntimeOptions worker_options =
+        config_.runtime.enabled ? config_.runtime.policy_command
+                                : robot_base::ThreadRuntimeOptions{};
+    std::string thread_error;
+    if (!robot_base::start_configured_thread(
+            policy_command_worker_thread_, "policy_cmd", worker_options,
+            [this] { policy_command_worker_loop(); }, thread_error)) {
         policy_command_worker_running_.store(false);
         std::cerr << "[RobotInterface] failed to start policy command worker: "
-                  << error.what() << "\n";
-        return false;
-    } catch (...) {
-        policy_command_worker_running_.store(false);
-        std::cerr << "[RobotInterface] failed to start policy command worker\n";
+                  << thread_error << "\n";
         return false;
     }
 

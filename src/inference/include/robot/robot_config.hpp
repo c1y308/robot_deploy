@@ -5,6 +5,7 @@
 #include "policy/policy_observation_config.hpp"
 #include "recorder/inference_recorder_config.hpp"
 #include "robot/joint_mapping_config.hpp"
+#include "tool/thread_runtime.hpp"
 
 #include <array>
 #include <string>
@@ -112,6 +113,21 @@ struct AnkleTorqueControlConfig {
     double target_torque_limit_permille = 2000.0;    // 目标扭矩限制，单位为千分比，最大值为 32767
 };
 
+struct RuntimeThreadingConfig {
+    bool enabled{false};
+    bool require_host_preflight{false};
+
+    robot_base::ThreadRuntimeOptions policy_main;
+    robot_base::ThreadRuntimeOptions motor_rt;
+    robot_base::ThreadRuntimeOptions policy_command;
+    robot_base::ThreadRuntimeOptions imu_reader;
+    robot_base::ThreadRuntimeOptions background;
+
+    int torch_intra_op_threads{0};
+    int torch_inter_op_threads{0};
+    int openblas_threads{0};
+};
+
 struct RobotInterfaceConfig {
     MotorConfig motor;
     ImuConfig   imu;
@@ -129,6 +145,7 @@ struct RobotInterfaceConfig {
     PolicyRuntimeConfig policy;
 
     InferenceRecorderConfig recorder;
+    RuntimeThreadingConfig runtime;
 };
 
 }  // namespace inference

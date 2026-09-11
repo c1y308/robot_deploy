@@ -37,7 +37,9 @@ struct MotorStateSnapshot {
 
 class RobotMotorSession {
 public:
-    RobotMotorSession(MotorConfig config, SafetyConfig safety);
+    RobotMotorSession(MotorConfig config,
+                      SafetyConfig safety,
+                      RuntimeThreadingConfig runtime = {});
     ~RobotMotorSession();
 
     RobotMotorSession(const RobotMotorSession&) = delete;
@@ -47,7 +49,6 @@ public:
     motor_base::CommandSubmitResult request_stop(int motor_index = -1);
     bool stop(int motor_index = -1);
     bool restart(int motor_index = -1);
-    bool clear_safety_stop_latch();
     // False retains the running controller for another confirmation attempt.
     bool deinitialize();
 
@@ -78,6 +79,7 @@ private:
 
     MotorConfig config_;
     SafetyConfig safety_;
+    RuntimeThreadingConfig runtime_;
 
     std::shared_ptr<myactua::EthercatAdapterIGH>     adapter_;
     std::unique_ptr<motor_base::MotorControllerBase> controller_;

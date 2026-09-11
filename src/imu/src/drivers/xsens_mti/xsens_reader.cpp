@@ -41,7 +41,16 @@ bool XsensMtiCanReader::start(const imu_base::ReaderConfig& config)
     }
 
     running_.store(true);
-    worker_thread_ = std::thread(&XsensMtiCanReader::read_loop, this);
+    std::string thread_error;
+    if (!robot_base::start_configured_thread(
+            worker_thread_, "imu_can_rx", config_.thread_options,
+            [this] { read_loop(); }, thread_error)) {
+        running_.store(false);
+        can_port_->close();
+        std::cerr << "[ERROR] Xsens MTi CAN reader thread setup failed: "
+                  << thread_error << std::endl;
+        return false;
+    }
     std::cout << "[INFO] Xsens MTi CAN reader thread started." << std::endl;
     return true;
 }

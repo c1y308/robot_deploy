@@ -95,6 +95,7 @@ add_library(robot_interface STATIC
     src/robot/observation_builder.cpp
     src/robot/robot_motor_session.cpp
     src/robot/robot_imu_session.cpp
+    src/robot/rk3588_host_preflight.cpp
     src/policy/policy_runtime.cpp
 )
 target_include_directories(robot_interface PUBLIC
@@ -115,6 +116,7 @@ target_link_libraries(robot_interface
     imu_a100_core
     imu_xsens_mti_core
     ${TORCH_LIBRARIES}
+    dl
     pthread
 )
 if(EXISTS "${LOCAL_PYTORCH_LIBS_DIR}")
@@ -131,6 +133,7 @@ if(NOT TARGET xbox_control_core)
     )
     target_include_directories(xbox_control_core PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/../xbox_control/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../base/include
     )
     target_link_libraries(xbox_control_core PUBLIC pthread)
 endif()
@@ -205,3 +208,30 @@ target_include_directories(robot_imu_session_config_test PRIVATE
 )
 add_test(NAME robot_imu_session_config_test
          COMMAND robot_imu_session_config_test)
+
+add_executable(rk3588_runtime_profile_test
+    tests/rk3588_runtime_profile_test.cpp
+)
+target_include_directories(rk3588_runtime_profile_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(rk3588_runtime_profile_test PRIVATE deploy_config robot_base)
+add_test(NAME rk3588_runtime_profile_test COMMAND rk3588_runtime_profile_test)
+
+add_executable(rk3588_host_preflight_test
+    tests/rk3588_host_preflight_test.cpp
+    src/robot/rk3588_host_preflight.cpp
+)
+target_include_directories(rk3588_host_preflight_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+add_test(NAME rk3588_host_preflight_test COMMAND rk3588_host_preflight_test)
+
+add_executable(policy_runtime_threading_test
+    tests/policy_runtime_threading_test.cpp
+)
+target_compile_definitions(policy_runtime_threading_test PRIVATE
+    ROBOT_TEST_POLICY_PATH="${CMAKE_CURRENT_SOURCE_DIR}/model/policy.pt"
+)
+target_link_libraries(policy_runtime_threading_test PRIVATE robot_interface)
+add_test(NAME policy_runtime_threading_test COMMAND policy_runtime_threading_test)

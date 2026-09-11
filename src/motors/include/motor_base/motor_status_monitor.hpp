@@ -4,9 +4,12 @@
 #include <chrono>
 #include <functional>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
+
+#include "tool/thread_runtime.hpp"
 
 namespace motor_base {
 
@@ -56,13 +59,24 @@ public:
         return !print_motor_ids_.empty();
     }
 
-    void start()
+    void configure_thread(robot_base::ThreadRuntimeOptions options)
+    {
+        thread_options_ = std::move(options);
+    }
+
+    bool start()
     {
         bool expected = false;
         if (!running_.compare_exchange_strong(expected, true)) {
-            return;
+            return true;
         }
-        thread_ = std::thread(&MotorStatusMonitor::thread_func, this);
+        if (!robot_base::start_configured_thread(
+                thread_, "motor_mon", thread_options_,
+                [this] { thread_func(); }, last_start_error_)) {
+            running_.store(false);
+            return false;
+        }
+        return true;
     }
 
     void stop()
@@ -89,6 +103,11 @@ public:
         }
 
         printer(provider(), print_motor_ids);
+    }
+
+    const std::string& last_start_error() const noexcept
+    {
+        return last_start_error_;
     }
 
 private:
@@ -140,6 +159,8 @@ private:
 
     std::thread thread_;
     std::atomic<bool> running_{false};
+    robot_base::ThreadRuntimeOptions thread_options_;
+    std::string last_start_error_;
 };
 
 } // namespace motor_base
