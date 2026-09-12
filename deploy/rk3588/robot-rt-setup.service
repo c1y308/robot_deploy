@@ -1,6 +1,6 @@
 [Unit]
 Description=Apply and verify RK3588 robot real-time CPU layout
-After=systemd-modules-load.service irqbalance.service
+After=systemd-modules-load.service irqbalance.service NetworkManager.service
 Before=multi-user.target
 
 [Service]

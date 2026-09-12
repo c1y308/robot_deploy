@@ -2,6 +2,7 @@
 set -euo pipefail
 
 readonly PROFILE="rk3588-v1"
+readonly DEFAULT_ECAT_DEVICE_ID="fe1c0000.ethernet"
 readonly EXPECTED_BOOT_ARGS=(
     "isolcpus=domain,managed_irq,6-7"
     "rcu_nocbs=6-7"
@@ -17,6 +18,8 @@ BOOT_UENV="${ROBOT_RT_BOOT_UENV:-/boot/uEnv/uEnv.txt}"
 INSTALL_ROOT="${ROBOT_RT_INSTALL_ROOT:-}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 READY_FILE="${RUN_ROOT}/robot-rt-layout.ready"
+ECAT_DEVICE_ID="${ROBOT_RT_ECAT_DEVICE_ID:-${DEFAULT_ECAT_DEVICE_ID}}"
+NM_UNMANAGED_CONFIG="${ETC_ROOT}/NetworkManager/conf.d/99-ethercat-unmanaged.conf"
 
 fail()
 {
@@ -196,6 +199,88 @@ set_workqueue()
     printf '%s\n' 3f > "${path}"
 }
 
+resolve_ethercat_interface()
+{
+    local net_path device_path resolved candidate=""
+    for net_path in "${SYS_ROOT}"/class/net/*; do
+        [[ -e "${net_path}" ]] || continue
+        device_path="${net_path}/device"
+        [[ -e "${device_path}" || -L "${device_path}" ]] || continue
+        resolved="$(readlink -f -- "${device_path}")" || continue
+        [[ "${resolved##*/}" == "${ECAT_DEVICE_ID}" ]] || continue
+        if [[ -n "${candidate}" ]]; then
+            fail "multiple netdevs map to EtherCAT device ${ECAT_DEVICE_ID}: ${candidate}, ${net_path##*/}"
+            return 1
+        fi
+        candidate="${net_path##*/}"
+    done
+    [[ -n "${candidate}" ]] ||
+        fail "no netdev maps to EtherCAT device ${ECAT_DEVICE_ID}"
+    printf '%s' "${candidate}"
+}
+
+ethercat_mac()
+{
+    local interface_name="$1"
+    local address_path="${SYS_ROOT}/class/net/${interface_name}/address"
+    local assign_type_path="${SYS_ROOT}/class/net/${interface_name}/addr_assign_type"
+    local mac assign_type
+    mac="$(read_one_line "${address_path}")"
+    mac="${mac,,}"
+    [[ "${mac}" =~ ^([0-9a-f]{2}:){5}[0-9a-f]{2}$ ]] ||
+        fail "invalid MAC for EtherCAT device ${ECAT_DEVICE_ID} (${interface_name}): ${mac}"
+    if [[ -r "${assign_type_path}" ]]; then
+        assign_type="$(read_one_line "${assign_type_path}")"
+        [[ "${assign_type}" == "0" ]] ||
+            fail "EtherCAT device ${ECAT_DEVICE_ID} (${interface_name}) has non-permanent MAC type ${assign_type}"
+    fi
+    printf '%s' "${mac}"
+}
+
+networkmanager_unmanages_mac()
+{
+    local mac="$1"
+    [[ -r "${NM_UNMANAGED_CONFIG}" ]] || return 1
+    awk -v target="mac:${mac}" '
+        BEGIN { found=0; section="" }
+        /^[[:space:]]*[#;]/ { next }
+        {
+            line=tolower($0)
+            gsub(/[[:space:]]/, "", line)
+            if (line ~ /^\[[^]]+\]$/) {
+                section=line
+                next
+            }
+            if (section != "[keyfile]") next
+            if (line !~ /^unmanaged-devices=/) next
+            value=substr(line, index(line, "=") + 1)
+            count=split(value, entries, ";")
+            for (i=1; i<=count; ++i) {
+                if (entries[i] == target) found=1
+            }
+        }
+        END { exit(found ? 0 : 1) }
+    ' "${NM_UNMANAGED_CONFIG}"
+}
+
+check_networkmanager_guard()
+{
+    local interface_name mac
+    interface_name="$(resolve_ethercat_interface)"
+    mac="$(ethercat_mac "${interface_name}")"
+    networkmanager_unmanages_mac "${mac}" ||
+        fail "${NM_UNMANAGED_CONFIG} does not mark EtherCAT device ${ECAT_DEVICE_ID} (${interface_name}, ${mac}) unmanaged"
+    echo "[robot-rt] NetworkManager guard passed for ${ECAT_DEVICE_ID} (${interface_name}, ${mac})"
+}
+
+check_networkmanager_dropin()
+{
+    local dropin="${ETC_ROOT}/systemd/system/NetworkManager.service.d/robot-ethercat-guard.conf"
+    [[ -r "${dropin}" ]] || fail "NetworkManager guard drop-in is missing: ${dropin}"
+    grep -Fxq 'ExecStartPre=/usr/local/sbin/robot-rt-setup check-nm-guard' \
+        "${dropin}" || fail "NetworkManager guard drop-in is invalid: ${dropin}"
+}
+
 configured_master_mac()
 {
     local config="${ETC_ROOT}/modprobe.d/ethercat.conf"
@@ -215,16 +300,23 @@ configured_master_mac()
 
 check_ethercat()
 {
-    local configured mac_path mac
+    local interface_name="${1:-}"
+    local configured mac loaded_path loaded
+    [[ -n "${interface_name}" ]] || interface_name="$(resolve_ethercat_interface)"
+    mac="$(ethercat_mac "${interface_name}")"
     configured="$(configured_master_mac)"
     [[ -n "${configured}" ]] || fail "ec_master main_devices is not configured"
-    mac_path="${SYS_ROOT}/class/net/eth0/address"
-    if [[ -r "${mac_path}" ]]; then
-        mac="$(read_one_line "${mac_path}")"
-        mac="${mac,,}"
-        [[ "${configured}" == "${mac}" ]] ||
-            fail "ec_master main_devices=${configured} does not match eth0 MAC ${mac}"
+    [[ "${configured}" == "${mac}" ]] ||
+        fail "ec_master main_devices=${configured} does not match EtherCAT device ${ECAT_DEVICE_ID} (${interface_name}) MAC ${mac}"
+    loaded_path="${SYS_ROOT}/module/ec_master/parameters/main_devices"
+    if [[ -r "${loaded_path}" ]]; then
+        loaded="$(read_one_line "${loaded_path}")"
+        loaded="${loaded,,}"
+        [[ "${loaded}" == "${mac}" ]] ||
+            fail "loaded ec_master main_devices=${loaded} does not match EtherCAT device ${ECAT_DEVICE_ID} (${interface_name}) MAC ${mac}; reboot after install"
     fi
+    networkmanager_unmanages_mac "${mac}" ||
+        fail "${NM_UNMANAGED_CONFIG} does not mark EtherCAT device ${ECAT_DEVICE_ID} (${interface_name}, ${mac}) unmanaged"
     [[ -e "${DEV_ROOT}/EtherCAT0" ]] ||
         fail "${DEV_ROOT}/EtherCAT0 is unavailable"
 }
@@ -243,21 +335,23 @@ check_irqbalance_guard()
 
 check_napi_context()
 {
-    local threaded="${SYS_ROOT}/class/net/eth0/threaded"
+    local interface_name="$1"
+    local threaded="${SYS_ROOT}/class/net/${interface_name}/threaded"
     [[ -r "${threaded}" ]] || return 0
     local state
     state="$(read_one_line "${threaded}")"
     case "${state}" in
         0|N|n|no|false) return 0 ;;
         1|Y|y|yes|true) ;;
-        *) fail "unknown eth0 threaded NAPI state: ${state}" ;;
+        *) fail "unknown ${interface_name} threaded NAPI state: ${state}" ;;
     esac
 
     local comm_path comm status_path affinity found=0
     for comm_path in "${PROC_ROOT}"/[0-9]*/task/[0-9]*/comm; do
         [[ -r "${comm_path}" ]] || continue
         comm="$(read_one_line "${comm_path}")"
-        [[ "${comm}" == napi/eth0 || "${comm}" == napi/eth0-* ]] || continue
+        [[ "${comm}" == "napi/${interface_name}" ||
+           "${comm}" == "napi/${interface_name}-"* ]] || continue
         found=1
         status_path="${comm_path%/comm}/status"
         affinity="$(awk '/^Cpus_allowed_list:/ { print $2; exit }' "${status_path}")"
@@ -265,7 +359,7 @@ check_napi_context()
             fail "threaded NAPI ${comm} affinity is ${affinity}, expected CPU3"
     done
     [[ "${found}" -eq 1 ]] ||
-        fail "eth0 reports threaded NAPI but no napi/eth0 thread was found"
+        fail "${interface_name} reports threaded NAPI but no napi/${interface_name} thread was found"
 }
 
 check_ready_marker()
@@ -281,23 +375,29 @@ check_ready_marker()
 
 check_runtime_without_marker()
 {
+    local ethercat_interface
+    ethercat_interface="$(resolve_ethercat_interface)"
     check_boot_layout
     check_workqueue
     check_governors
     check_irq_affinity can0 2
-    check_irq_affinity eth0 3
+    check_irq_affinity "${ethercat_interface}" 3
     check_irqbalance_guard
-    check_napi_context
-    check_ethercat
+    check_networkmanager_dropin
+    check_napi_context "${ethercat_interface}"
+    check_ethercat "${ethercat_interface}"
 }
 
 report_network_context()
 {
-    local threaded="${SYS_ROOT}/class/net/eth0/threaded"
+    local interface_name
+    interface_name="$(resolve_ethercat_interface)"
+    local threaded="${SYS_ROOT}/class/net/${interface_name}/threaded"
+    echo "[robot-rt] EtherCAT device ${ECAT_DEVICE_ID}: ${interface_name} ($(ethercat_mac "${interface_name}"))"
     if [[ -r "${threaded}" ]]; then
-        echo "[robot-rt] eth0 threaded NAPI: $(read_one_line "${threaded}")"
+        echo "[robot-rt] ${interface_name} threaded NAPI: $(read_one_line "${threaded}")"
     else
-        echo "[robot-rt] eth0 threaded NAPI state is not exposed; inspect NET_RX and ksoftirqd/3 during trace"
+        echo "[robot-rt] ${interface_name} threaded NAPI state is not exposed; inspect NET_RX and ksoftirqd/3 during trace"
     fi
     if [[ -r "${PROC_ROOT}/softirqs" ]]; then
         awk '/NET_RX:/ { print "[robot-rt] " $0 }' "${PROC_ROOT}/softirqs"
@@ -321,13 +421,15 @@ apply_layout()
 {
     [[ "$(id -u)" -eq 0 || "${PROC_ROOT}" != "/proc" ]] ||
         fail "apply must run as root"
+    local ethercat_interface
+    ethercat_interface="$(resolve_ethercat_interface)"
     check_boot_layout
-    check_ethercat
+    check_ethercat "${ethercat_interface}"
     rm -f -- "${READY_FILE}"
     set_workqueue
     set_governors
     set_irq_affinity can0 2
-    set_irq_affinity eth0 3
+    set_irq_affinity "${ethercat_interface}" 3
     check_runtime_without_marker
 
     mkdir -p -- "${RUN_ROOT}"
@@ -401,23 +503,39 @@ rewrite_ethercat_config()
     rm -f -- "${temp}"
 }
 
+rewrite_networkmanager_config()
+{
+    local mac="$1"
+    local temp
+    mkdir -p -- "$(dirname -- "${NM_UNMANAGED_CONFIG}")"
+    if [[ -e "${NM_UNMANAGED_CONFIG}" &&
+          ! -e "${NM_UNMANAGED_CONFIG}.pre-robot-rt" ]]; then
+        cp -a -- "${NM_UNMANAGED_CONFIG}" \
+            "${NM_UNMANAGED_CONFIG}.pre-robot-rt"
+    fi
+    temp="$(mktemp "${NM_UNMANAGED_CONFIG}.tmp.XXXXXX")"
+    {
+        echo "[keyfile]"
+        echo "unmanaged-devices=mac:${mac}"
+    } > "${temp}"
+    chmod 0644 "${temp}"
+    mv -f -- "${temp}" "${NM_UNMANAGED_CONFIG}"
+}
+
 install_layout()
 {
     [[ "$(id -u)" -eq 0 || -n "${INSTALL_ROOT}" ]] ||
         fail "install must run as root"
 
     local root="${INSTALL_ROOT}"
-    local source_mac_path="${SYS_ROOT}/class/net/eth0/address"
-    local mac
-    [[ -r "${source_mac_path}" ]] ||
-        fail "eth0 MAC is unavailable at ${source_mac_path}"
-    mac="$(read_one_line "${source_mac_path}")"
-    mac="${mac,,}"
-    [[ "${mac}" =~ ^([0-9a-f]{2}:){5}[0-9a-f]{2}$ ]] ||
-        fail "invalid eth0 MAC: ${mac}"
+    local ethercat_interface mac
+    ethercat_interface="$(resolve_ethercat_interface)"
+    mac="$(ethercat_mac "${ethercat_interface}")"
 
-    rewrite_uenv "${BOOT_UENV}"
+    rewrite_networkmanager_config "${mac}"
+    check_networkmanager_guard
     rewrite_ethercat_config "${mac}"
+    rewrite_uenv "${BOOT_UENV}"
 
     install -D -m 0755 "${SCRIPT_DIR}/robot-rt-setup.sh" \
         "${root}/usr/local/sbin/robot-rt-setup"
@@ -426,24 +544,29 @@ install_layout()
     mkdir -p -- "${root}/etc/systemd/system/irqbalance.service.d"
     install -m 0644 "${SCRIPT_DIR}/irqbalance-robot-rt.conf" \
         "${root}/etc/systemd/system/irqbalance.service.d/robot-rt.conf"
+    install -D -m 0644 "${SCRIPT_DIR}/networkmanager-ethercat-guard.conf" \
+        "${root}/etc/systemd/system/NetworkManager.service.d/robot-ethercat-guard.conf"
 
     if [[ -z "${root}" && "${ROBOT_RT_SKIP_SYSTEMD:-0}" != "1" ]]; then
         systemctl daemon-reload
         systemctl enable robot-rt-setup.service
     fi
 
+    echo "[robot-rt] EtherCAT device ${ECAT_DEVICE_ID} resolved as ${ethercat_interface} (${mac})"
     echo "[robot-rt] installed ${PROFILE}; reboot is required before apply/check can pass"
+    echo "[robot-rt] NetworkManager was not restarted; its next start is guarded by the unmanaged-MAC check"
     echo "[robot-rt] no IRQ or kernel-thread scheduling priority was changed"
 }
 
 usage()
 {
-    echo "Usage: $0 {check|apply|install}" >&2
+    echo "Usage: $0 {check|check-nm-guard|apply|install}" >&2
     exit 2
 }
 
 case "${1:-}" in
     check) check_layout ;;
+    check-nm-guard) check_networkmanager_guard ;;
     apply) apply_layout ;;
     install) install_layout ;;
     *) usage ;;

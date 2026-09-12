@@ -174,10 +174,101 @@ bool verify_governor(const Rk3588HostPaths& paths,
     return true;
 }
 
-bool verify_threaded_napi(const Rk3588HostPaths& paths, std::string& error)
+bool valid_mac_address(const std::string& address)
+{
+    if (address.size() != 17U) {
+        return false;
+    }
+    for (std::size_t index = 0; index < address.size(); ++index) {
+        if (index % 3U == 2U) {
+            if (address[index] != ':') {
+                return false;
+            }
+        } else if (std::isxdigit(
+                       static_cast<unsigned char>(address[index])) == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool resolve_ethercat_interface(const Rk3588HostPaths& paths,
+                                std::string& interface_name,
+                                std::string& address,
+                                std::string& error)
+{
+    interface_name.clear();
+    const auto net_root = std::filesystem::path(paths.sys_root) / "class/net";
+    try {
+        for (const auto& entry : std::filesystem::directory_iterator(net_root)) {
+            const auto device_link = entry.path() / "device";
+            if (!std::filesystem::exists(device_link)) {
+                continue;
+            }
+            std::error_code canonical_error;
+            const auto device_path =
+                std::filesystem::canonical(device_link, canonical_error);
+            if (canonical_error ||
+                device_path.filename() != paths.ethercat_device_id) {
+                continue;
+            }
+            if (!interface_name.empty()) {
+                error = "multiple netdevs map to EtherCAT device " +
+                        paths.ethercat_device_id + ": " + interface_name +
+                        ", " + entry.path().filename().string();
+                return false;
+            }
+            interface_name = entry.path().filename().string();
+        }
+    } catch (const std::exception& exception) {
+        error = "failed to resolve EtherCAT device " +
+                paths.ethercat_device_id + ": " + exception.what();
+        return false;
+    }
+
+    if (interface_name.empty()) {
+        error = "no netdev maps to EtherCAT device " +
+                paths.ethercat_device_id;
+        return false;
+    }
+
+    const auto interface_root = net_root / interface_name;
+    if (!read_text(interface_root / "address", address, error)) {
+        return false;
+    }
+    std::transform(address.begin(), address.end(), address.begin(),
+                   [](unsigned char value) {
+                       return static_cast<char>(std::tolower(value));
+                   });
+    if (!valid_mac_address(address)) {
+        error = "invalid MAC for EtherCAT device " +
+                paths.ethercat_device_id + " (" + interface_name + "): " +
+                address;
+        return false;
+    }
+
+    const auto assign_type_path = interface_root / "addr_assign_type";
+    if (std::filesystem::exists(assign_type_path)) {
+        std::string assign_type;
+        if (!read_text(assign_type_path, assign_type, error)) {
+            return false;
+        }
+        if (assign_type != "0") {
+            error = "EtherCAT device " + paths.ethercat_device_id + " (" +
+                    interface_name + ") has non-permanent MAC type " +
+                    assign_type;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool verify_threaded_napi(const Rk3588HostPaths& paths,
+                          const std::string& interface_name,
+                          std::string& error)
 {
     const auto threaded_path = std::filesystem::path(paths.sys_root) /
-                               "class/net/eth0/threaded";
+                               "class/net" / interface_name / "threaded";
     if (!std::filesystem::exists(threaded_path)) {
         return true;
     }
@@ -191,7 +282,7 @@ bool verify_threaded_napi(const Rk3588HostPaths& paths, std::string& error)
     }
     if (state != "1" && state != "Y" && state != "y" && state != "yes" &&
         state != "true") {
-        error = "unknown eth0 threaded NAPI state: " + state;
+        error = "unknown " + interface_name + " threaded NAPI state: " + state;
         return false;
     }
 
@@ -215,7 +306,8 @@ bool verify_threaded_napi(const Rk3588HostPaths& paths, std::string& error)
                 if (!read_text(task.path() / "comm", comm, error)) {
                     continue;
                 }
-                if (comm != "napi/eth0" && comm.rfind("napi/eth0-", 0) != 0) {
+                const std::string napi_name = "napi/" + interface_name;
+                if (comm != napi_name && comm.rfind(napi_name + "-", 0) != 0) {
                     continue;
                 }
                 found = true;
@@ -256,28 +348,60 @@ bool verify_threaded_napi(const Rk3588HostPaths& paths, std::string& error)
         return false;
     }
     if (!found) {
-        error = "eth0 reports threaded NAPI but no napi/eth0 thread was found";
+        error = interface_name + " reports threaded NAPI but no napi/" +
+                interface_name + " thread was found";
         return false;
     }
     return true;
 }
 
-bool verify_ethercat_mac(const Rk3588HostPaths& paths, std::string& error)
+bool networkmanager_unmanages_mac(const std::string& config,
+                                  const std::string& address)
 {
-    const auto address_path = std::filesystem::path(paths.sys_root) /
-                              "class/net/eth0/address";
-    if (!std::filesystem::exists(address_path)) {
-        return true;
+    std::istringstream lines(config);
+    std::string line;
+    std::string section;
+    const std::string expected = "mac:" + address;
+    while (std::getline(lines, line)) {
+        line.erase(std::remove_if(line.begin(), line.end(),
+                                  [](unsigned char value) {
+                                      return std::isspace(value) != 0;
+                                  }),
+                   line.end());
+        std::transform(line.begin(), line.end(), line.begin(),
+                       [](unsigned char value) {
+                           return static_cast<char>(std::tolower(value));
+                       });
+        if (line.empty() || line.front() == '#' || line.front() == ';') {
+            continue;
+        }
+        if (line.front() == '[' && line.back() == ']') {
+            section = line;
+            continue;
+        }
+        if (section != "[keyfile]") {
+            continue;
+        }
+        const std::string prefix = "unmanaged-devices=";
+        if (line.compare(0, prefix.size(), prefix) != 0) {
+            continue;
+        }
+        std::istringstream entries(line.substr(prefix.size()));
+        std::string entry;
+        while (std::getline(entries, entry, ';')) {
+            if (entry == expected) {
+                return true;
+            }
+        }
     }
-    std::string address;
-    if (!read_text(address_path, address, error)) {
-        return false;
-    }
-    std::transform(address.begin(), address.end(), address.begin(),
-                   [](unsigned char value) {
-                       return static_cast<char>(std::tolower(value));
-                   });
+    return false;
+}
 
+bool verify_ethercat_configuration(const Rk3588HostPaths& paths,
+                                   const std::string& interface_name,
+                                   const std::string& address,
+                                   std::string& error)
+{
     std::string config;
     if (!read_text(std::filesystem::path(paths.etc_root) /
                        "modprobe.d/ethercat.conf",
@@ -287,6 +411,7 @@ bool verify_ethercat_mac(const Rk3588HostPaths& paths, std::string& error)
     }
     std::istringstream lines(config);
     std::string line;
+    bool configured_matches = false;
     while (std::getline(lines, line)) {
         std::istringstream tokens(line);
         std::string first;
@@ -304,17 +429,84 @@ bool verify_ethercat_mac(const Rk3588HostPaths& paths, std::string& error)
                                configured.begin(), [](unsigned char value) {
                                    return static_cast<char>(std::tolower(value));
                                });
-                if (configured == address) {
-                    return true;
+                if (configured != address) {
+                    error = "ec_master main_devices=" + configured +
+                            " does not match EtherCAT device " +
+                            paths.ethercat_device_id + " (" + interface_name +
+                            ") MAC " + address;
+                    return false;
                 }
-                error = "ec_master main_devices=" + configured +
-                        " does not match eth0 MAC " + address;
-                return false;
+                configured_matches = true;
             }
         }
     }
-    error = "ec_master main_devices is not configured";
-    return false;
+    if (!configured_matches) {
+        error = "ec_master main_devices is not configured";
+        return false;
+    }
+
+    const auto loaded_mac_path = std::filesystem::path(paths.sys_root) /
+                                 "module/ec_master/parameters/main_devices";
+    if (std::filesystem::exists(loaded_mac_path)) {
+        std::string loaded_address;
+        if (!read_text(loaded_mac_path, loaded_address, error)) {
+            return false;
+        }
+        std::transform(loaded_address.begin(), loaded_address.end(),
+                       loaded_address.begin(), [](unsigned char value) {
+                           return static_cast<char>(std::tolower(value));
+                       });
+        if (loaded_address != address) {
+            error = "loaded ec_master main_devices=" + loaded_address +
+                    " does not match EtherCAT device " +
+                    paths.ethercat_device_id + " (" + interface_name +
+                    ") MAC " + address + "; reboot after install";
+            return false;
+        }
+    }
+
+    std::string nm_config;
+    const auto nm_path = std::filesystem::path(paths.etc_root) /
+                         "NetworkManager/conf.d/99-ethercat-unmanaged.conf";
+    if (!read_text(nm_path, nm_config, error)) {
+        return false;
+    }
+    if (!networkmanager_unmanages_mac(nm_config, address)) {
+        error = nm_path.string() + " does not mark EtherCAT device " +
+                paths.ethercat_device_id + " (" + interface_name + ", " +
+                address + ") unmanaged";
+        return false;
+    }
+
+    std::string nm_dropin;
+    const auto nm_dropin_path =
+        std::filesystem::path(paths.etc_root) /
+        "systemd/system/NetworkManager.service.d/robot-ethercat-guard.conf";
+    if (!read_text(nm_dropin_path, nm_dropin, error)) {
+        return false;
+    }
+    const std::string guard_command =
+        "ExecStartPre=/usr/local/sbin/robot-rt-setup check-nm-guard";
+    bool guard_present = false;
+    std::istringstream dropin_lines(nm_dropin);
+    std::string dropin_line;
+    while (std::getline(dropin_lines, dropin_line)) {
+        dropin_line.erase(
+            std::remove_if(dropin_line.begin(), dropin_line.end(),
+                           [](unsigned char value) {
+                               return value == '\r';
+                           }),
+            dropin_line.end());
+        if (dropin_line == guard_command) {
+            guard_present = true;
+        }
+    }
+    if (!guard_present) {
+        error = "NetworkManager guard drop-in is invalid: " +
+                nm_dropin_path.string();
+        return false;
+    }
+    return true;
 }
 
 }  // namespace
@@ -420,10 +612,21 @@ bool verify_rk3588_host_layout(std::string& error,
             return false;
         }
     }
+    std::string ethercat_interface;
+    std::string ethercat_address;
+    if (!resolve_ethercat_interface(paths,
+                                    ethercat_interface,
+                                    ethercat_address,
+                                    error)) {
+        return false;
+    }
     if (!verify_irq_affinity(paths, "can0", {2}, error) ||
-        !verify_irq_affinity(paths, "eth0", {3}, error) ||
-        !verify_threaded_napi(paths, error) ||
-        !verify_ethercat_mac(paths, error)) {
+        !verify_irq_affinity(paths, ethercat_interface, {3}, error) ||
+        !verify_threaded_napi(paths, ethercat_interface, error) ||
+        !verify_ethercat_configuration(paths,
+                                       ethercat_interface,
+                                       ethercat_address,
+                                       error)) {
         return false;
     }
 
