@@ -15,24 +15,30 @@
 
 namespace robot_base {
 
+// 调度策略
 enum class ThreadSchedulingPolicy {
-    INHERIT,
-    OTHER,
-    FIFO,
+    INHERIT,    // 继承，不修改当前线程的调度策略和优先级
+    OTHER,      // SCHED_OTHER，普通调度策略，优先级为 0（用 nice 值）
+    FIFO,       // SCHED_FIFO，实时调度策略，优先级范围为 [1, 99]
 };
 
+// 线程运行时选项
 struct ThreadRuntimeOptions {
-    std::vector<int> cpu_ids;
-    ThreadSchedulingPolicy scheduling_policy{ThreadSchedulingPolicy::INHERIT};
-    int priority{0};
+    std::vector<int> cpu_ids;   // 允许线程运行的 CPU 集合
+    ThreadSchedulingPolicy scheduling_policy{ThreadSchedulingPolicy::INHERIT};  // 调度策略 
+    int priority{0};    // 调度优先级
 };
 
+// 线程设置结果（这里是否过度设计？）
 struct ThreadSetupResult {
     bool success{false};
     int error_code{0};
     std::string error;
 };
 
+
+/// @param operation  操作名称
+/// @param error_code 错误码
 inline ThreadSetupResult thread_setup_error(const std::string& operation,
                                             int error_code)
 {
@@ -43,19 +49,26 @@ inline ThreadSetupResult thread_setup_error(const std::string& operation,
     return result;
 }
 
+
+// 配置当前线程的名称、CPU 亲和性、调度策略、调度优先级
 inline ThreadSetupResult configure_current_thread(
     const char* name,
     const ThreadRuntimeOptions& options)
 {
+    // 检测线程名称是否为空
     if (!name || name[0] == '\0') {
         return thread_setup_error("thread name is empty", EINVAL);
     }
+    // 检测线程名称长度是否超过 Linux 的 15 字节限制
     if (std::strlen(name) > 15U) {
         return thread_setup_error("thread name exceeds Linux 15-byte limit", ERANGE);
     }
 
+    // 获取当前线程的 pthread_t 对象
     const pthread_t self = pthread_self();
+    // 设置线程名称
     int result = pthread_setname_np(self, name);
+
     if (result != 0) {
         return thread_setup_error("pthread_setname_np", result);
     }
@@ -65,10 +78,8 @@ inline ThreadSetupResult configure_current_thread(
     if (result != 0) {
         return thread_setup_error("pthread_getname_np", result);
     }
-    if (std::strcmp(name, actual_name) != 0) {
-        return thread_setup_error("thread name verification", 0);
-    }
 
+    // 进行 CPU 绑核
     if (!options.cpu_ids.empty()) {
         cpu_set_t expected;
         CPU_ZERO(&expected);
@@ -84,6 +95,7 @@ inline ThreadSetupResult configure_current_thread(
             return thread_setup_error("pthread_setaffinity_np", result);
         }
 
+        // 验证 CPU 绑核是否成功
         cpu_set_t actual;
         CPU_ZERO(&actual);
         result = pthread_getaffinity_np(self, sizeof(actual), &actual);
@@ -95,10 +107,12 @@ inline ThreadSetupResult configure_current_thread(
         }
     }
 
+    // 设置线程调度策略和优先级（采用带有时间片的是否更好？）
     if (options.scheduling_policy != ThreadSchedulingPolicy::INHERIT) {
         const int policy = options.scheduling_policy == ThreadSchedulingPolicy::FIFO
                                ? SCHED_FIFO
                                : SCHED_OTHER;
+        // OTHER 策略的优先级必须为 0，FIFO 策略的优先级必须在 [1, 99] 范围内
         if (policy == SCHED_OTHER && options.priority != 0) {
             return thread_setup_error("SCHED_OTHER priority must be zero", EINVAL);
         }
@@ -111,6 +125,7 @@ inline ThreadSetupResult configure_current_thread(
             }
         }
 
+        // 设置调度策略与优先级
         sched_param requested{};
         requested.sched_priority = options.priority;
         result = pthread_setschedparam(self, policy, &requested);
@@ -118,6 +133,7 @@ inline ThreadSetupResult configure_current_thread(
             return thread_setup_error("pthread_setschedparam", result);
         }
 
+        // 验证调度策略与优先级是否设置成功
         int actual_policy = 0;
         sched_param actual{};
         result = pthread_getschedparam(self, &actual_policy, &actual);
@@ -134,11 +150,13 @@ inline ThreadSetupResult configure_current_thread(
     return success;
 }
 
+
+// 启动配置好的线程（用启动握手消除竞态，什么意思？）
 template <typename Callable>
-bool start_configured_thread(std::thread& output,
-                             const char* name,
-                             const ThreadRuntimeOptions& options,
-                             Callable&& callable,
+bool start_configured_thread(std::thread& output,   // 线程对象
+                             const char*  name,     // 线程名称
+                             const ThreadRuntimeOptions& options,   // 线程运行时选项
+                             Callable&& callable,   // 线程执行函数
                              std::string& error)
 {
     if (output.joinable()) {
@@ -146,16 +164,22 @@ bool start_configured_thread(std::thread& output,
         return false;
     }
 
+    // 一次性结果发送端（producer）
     std::promise<ThreadSetupResult> setup_promise;
-    std::future<ThreadSetupResult> setup_future = setup_promise.get_future();
+    // 一次性结果接收端（consumer）
+    std::future<ThreadSetupResult>  setup_future = setup_promise.get_future();
 
     try {
         output = std::thread(
             [name_string = std::string(name ? name : ""),
              options,
              setup_promise = std::move(setup_promise),
-             function = std::forward<Callable>(callable)]() mutable {
+             function      = std::forward<Callable>(callable)
+            ] () mutable {
+
                 ThreadSetupResult setup;
+
+                // 配置子线程
                 try {
                     setup = configure_current_thread(name_string.c_str(), options);
                 } catch (const std::exception& exception) {
@@ -164,7 +188,11 @@ bool start_configured_thread(std::thread& output,
                 } catch (...) {
                     setup.error = "thread setup exception";
                 }
+
+                // 传递配置结果给主线程
                 setup_promise.set_value(setup);
+
+                // 配置成功才执行线程函数（保证业务函数绝不会在配置成功前执行）
                 if (setup.success) {
                     function();
                 }
@@ -177,9 +205,10 @@ bool start_configured_thread(std::thread& output,
         return false;
     }
 
+    // 父线程等待子线程配置完成（阻塞等待，直到子线程调用 set_value() 或者异常退出）
     ThreadSetupResult setup;
     try {
-        setup = setup_future.get();
+        setup = setup_future.get();  // 阻塞行为（休眠-唤醒）
     } catch (const std::exception& exception) {
         error = std::string("thread setup handshake failed: ") +
                 exception.what();

@@ -129,22 +129,40 @@ struct RuntimeThreadingConfig {
 };
 
 struct RobotInterfaceConfig {
+    // 电机 运行配置
     MotorConfig motor;
+
+    // IMU 运行配置
     ImuConfig   imu;
+
+    // 传感器数据时效性检查配置
     SensorGuardConfig sensor_guard;
+
+    // 命令时效性检查配置
     SafetyConfig safety;
 
+    // 关节映射配置（物理电机顺序 -> 模型 DOF 顺序）
     JointMappingConfig joint_mapping;
+
+    // 动作后处理配置（包含默认关节位置、动作缩放、动作限位）
     ActionConfig action;
 
+    // 脚踝电机限位配置（包含行程限位、扭矩控制参数）
     AnkleMotorLimitConfig ankle_motor_limits;
+
+    // 脚踝扭矩控制配置（包含虚拟阻尼、滤波器参数、目标扭矩限制）
     AnkleTorqueControlConfig ankle_torque;
 
+    // 观测缩放配置（包含关节位置、关节速度、命令、机体角速度的缩放参数）
     ObservationScaleConfig observation_scales;
 
+    // 策略运行时配置（包含模型路径、步长、705 观测分支的步态参数）
     PolicyRuntimeConfig policy;
 
+    // 日志记录器配置
     InferenceRecorderConfig recorder;
+
+    // 线程运行配置
     RuntimeThreadingConfig runtime;
 };
 
