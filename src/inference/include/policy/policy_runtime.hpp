@@ -22,7 +22,6 @@ class PolicyRuntime {
 public:
     static constexpr std::size_t kDof = policy_observation::kDof;
     static constexpr std::size_t kFrameStack = policy_observation::kFrameStack;
-    static constexpr std::size_t kObservationSize = policy_observation::kObservationSize;
 
     PolicyRuntime();
     ~PolicyRuntime();
@@ -39,6 +38,7 @@ public:
 
     bool is_loaded() const;
     bool infer(const PolicyObservation& observation, PolicyRuntimeStepResult& result);
+    std::size_t observation_size() const noexcept { return observation_size_; }
 
     const std::string& last_error() const noexcept { return last_error_; }
 
@@ -54,6 +54,7 @@ private:
 
     std::unique_ptr<Impl> impl_;
     bool loaded_{false};
+    std::size_t observation_size_{0};
     std::string last_error_;
 };
 

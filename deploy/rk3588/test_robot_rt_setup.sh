@@ -50,23 +50,89 @@ write_file "${FIXTURE}/sys/module/ec_master/parameters/main_devices" \
 write_file "${FIXTURE}/etc/NetworkManager/conf.d/99-ethercat-unmanaged.conf" \
     $'[keyfile]\nunmanaged-devices=mac:fa:fd:53:a0:a5:55\n'
 write_file "${FIXTURE}/etc/systemd/system/NetworkManager.service.d/robot-ethercat-guard.conf" \
-    $'[Service]\nExecStartPre=/usr/local/sbin/robot-rt-setup check-nm-guard\n'
+    $'[Service]\nExecStartPre=/usr/bin/env ROBOT_RT_INTERNAL_COMMAND=1 /usr/local/sbin/robot-rt-setup __check-nm-guard\n'
 write_file "${FIXTURE}/dev/EtherCAT0" ''
+
+run_fixture_command()
+{
+    TEST_FIXTURE="${FIXTURE}" TEST_SETUP="${SETUP}" bash -c '
+        source "${TEST_SETUP}"
+        PROC_ROOT="${TEST_FIXTURE}/proc"
+        SYS_ROOT="${TEST_FIXTURE}/sys"
+        RUN_ROOT="${TEST_FIXTURE}/run"
+        DEV_ROOT="${TEST_FIXTURE}/dev"
+        ETC_ROOT="${TEST_FIXTURE}/etc"
+        BOOT_UENV="${TEST_FIXTURE}/boot/uEnv/uEnv.txt"
+        INSTALL_ROOT="${TEST_FIXTURE}/stage"
+        READY_FILE="${RUN_ROOT}/robot-rt-layout.ready"
+        NM_UNMANAGED_CONFIG="${ETC_ROOT}/NetworkManager/conf.d/99-ethercat-unmanaged.conf"
+        ROBOT_RT_SKIP_SYSTEMD=1
+        SCRIPT_DIR="$(dirname -- "${TEST_SETUP}")"
+
+        case "$1" in
+            check)
+                check_layout
+                ;;
+            install)
+                install_layout
+                ;;
+            __apply)
+                apply_layout
+                ;;
+            __check-nm-guard)
+                check_networkmanager_guard
+                ;;
+            *)
+                echo "unexpected fixture command: $1" >&2
+                exit 1
+                ;;
+        esac
+    ' robot-rt-fixture "$1"
+}
 
 run_setup()
 {
-    ROBOT_RT_PROC_ROOT="${FIXTURE}/proc" \
-    ROBOT_RT_SYS_ROOT="${FIXTURE}/sys" \
-    ROBOT_RT_RUN_ROOT="${FIXTURE}/run" \
-    ROBOT_RT_DEV_ROOT="${FIXTURE}/dev" \
-    ROBOT_RT_ETC_ROOT="${FIXTURE}/etc" \
-    "${SETUP}" "$@"
+    run_fixture_command "$1"
 }
 
-run_setup apply
-run_setup apply
+run_internal_setup()
+{
+    run_fixture_command "$1"
+}
+
+run_internal_setup __apply
+run_internal_setup __apply
 run_setup check
-run_setup check-nm-guard
+run_internal_setup __check-nm-guard
+
+if "${SETUP}" apply >/dev/null 2>&1; then
+    echo "public apply command unexpectedly passed" >&2
+    exit 1
+fi
+if "${SETUP}" check-nm-guard >/dev/null 2>&1; then
+    echo "public check-nm-guard command unexpectedly passed" >&2
+    exit 1
+fi
+
+write_file "${FIXTURE}/run/robot-rt-layout.ready" \
+    $'profile=wrong-profile\nboot_id=fixture-boot\n'
+if run_setup check >/dev/null 2>&1; then
+    echo "ready marker with wrong profile unexpectedly passed" >&2
+    exit 1
+fi
+write_file "${FIXTURE}/run/robot-rt-layout.ready" \
+    $'profile=rk3588-v1\nboot_id=old-boot\n'
+if run_setup check >/dev/null 2>&1; then
+    echo "ready marker from another boot unexpectedly passed" >&2
+    exit 1
+fi
+rm -f -- "${FIXTURE}/run/robot-rt-layout.ready"
+if run_setup check >/dev/null 2>&1; then
+    echo "missing ready marker unexpectedly passed" >&2
+    exit 1
+fi
+run_internal_setup __apply >/dev/null
+run_setup check >/dev/null
 
 [[ "$(< "${FIXTURE}/proc/irq/77/smp_affinity_list")" == "2" ]]
 [[ "$(< "${FIXTURE}/proc/irq/142/smp_affinity_list")" == "3" ]]
@@ -106,13 +172,13 @@ write_file "${FIXTURE}/sys/module/ec_master/parameters/main_devices" \
 
 write_file "${FIXTURE}/etc/NetworkManager/conf.d/99-ethercat-unmanaged.conf" \
     $'[keyfile]\nunmanaged-devices=mac:f6:fd:53:a0:a5:55\n'
-if run_setup check-nm-guard >/dev/null 2>&1; then
+if run_internal_setup __check-nm-guard >/dev/null 2>&1; then
     echo "wrong NetworkManager unmanaged MAC unexpectedly passed" >&2
     exit 1
 fi
 write_file "${FIXTURE}/etc/NetworkManager/conf.d/99-ethercat-unmanaged.conf" \
     $'[connection]\nunmanaged-devices=mac:fa:fd:53:a0:a5:55\n'
-if run_setup check-nm-guard >/dev/null 2>&1; then
+if run_internal_setup __check-nm-guard >/dev/null 2>&1; then
     echo "NetworkManager unmanaged MAC in the wrong section unexpectedly passed" >&2
     exit 1
 fi
@@ -141,23 +207,14 @@ write_file "${FIXTURE}/etc/modprobe.d/ethercat.conf" \
     $'options ec_master main_devices=f6:fd:53:a0:a5:55\n'
 write_file "${FIXTURE}/etc/NetworkManager/conf.d/99-ethercat-unmanaged.conf" \
     $'[keyfile]\nunmanaged-devices=mac:f6:fd:53:a0:a5:55\n'
+chmod 0640 "${FIXTURE}/boot/uEnv/active.txt"
+chmod 0600 "${FIXTURE}/etc/modprobe.d/ethercat.conf"
+chmod 0640 "${FIXTURE}/etc/NetworkManager/conf.d/99-ethercat-unmanaged.conf"
 mv "${FIXTURE}/sys/class/net/eth0" "${FIXTURE}/sys/class/net/net-swap"
 mv "${FIXTURE}/sys/class/net/eth1" "${FIXTURE}/sys/class/net/eth0"
 mv "${FIXTURE}/sys/class/net/net-swap" "${FIXTURE}/sys/class/net/eth1"
-ROBOT_RT_PROC_ROOT="${FIXTURE}/proc" \
-ROBOT_RT_SYS_ROOT="${FIXTURE}/sys" \
-ROBOT_RT_ETC_ROOT="${FIXTURE}/etc" \
-ROBOT_RT_BOOT_UENV="${FIXTURE}/boot/uEnv/uEnv.txt" \
-ROBOT_RT_INSTALL_ROOT="${FIXTURE}/stage" \
-ROBOT_RT_SKIP_SYSTEMD=1 \
-"${SETUP}" install
-ROBOT_RT_PROC_ROOT="${FIXTURE}/proc" \
-ROBOT_RT_SYS_ROOT="${FIXTURE}/sys" \
-ROBOT_RT_ETC_ROOT="${FIXTURE}/etc" \
-ROBOT_RT_BOOT_UENV="${FIXTURE}/boot/uEnv/uEnv.txt" \
-ROBOT_RT_INSTALL_ROOT="${FIXTURE}/stage" \
-ROBOT_RT_SKIP_SYSTEMD=1 \
-"${SETUP}" install
+run_setup install
+run_setup install
 
 grep -q 'isolcpus=domain,managed_irq,6-7 rcu_nocbs=6-7 irqaffinity=0-5' \
     "${FIXTURE}/boot/uEnv/active.txt"
@@ -171,10 +228,19 @@ grep -q 'unmanaged-devices=mac:fa:fd:53:a0:a5:55' \
     "${FIXTURE}/etc/NetworkManager/conf.d/99-ethercat-unmanaged.conf"
 grep -q 'unmanaged-devices=mac:f6:fd:53:a0:a5:55' \
     "${FIXTURE}/etc/NetworkManager/conf.d/99-ethercat-unmanaged.conf.pre-robot-rt"
+[[ "$(stat -c '%a' "${FIXTURE}/boot/uEnv/active.txt")" == "640" ]]
+[[ "$(stat -c '%a' "${FIXTURE}/etc/modprobe.d/ethercat.conf")" == "600" ]]
+[[ "$(stat -c '%a' "${FIXTURE}/etc/NetworkManager/conf.d/99-ethercat-unmanaged.conf")" == "640" ]]
+if find "${FIXTURE}" -name '*.tmp.*' -print -quit | grep -q .; then
+    echo "configuration rewrite left a temporary file behind" >&2
+    exit 1
+fi
 [[ -x "${FIXTURE}/stage/usr/local/sbin/robot-rt-setup" ]]
+cmp -s "${SETUP}" "${FIXTURE}/stage/usr/local/sbin/robot-rt-setup"
 [[ -r "${FIXTURE}/stage/etc/systemd/system/NetworkManager.service.d/robot-ethercat-guard.conf" ]]
-grep -q 'check-nm-guard' \
+grep -q '__check-nm-guard' \
     "${FIXTURE}/stage/etc/systemd/system/NetworkManager.service.d/robot-ethercat-guard.conf"
+grep -q '__apply' "${FIXTURE}/stage/etc/systemd/system/robot-rt-setup.service"
 if grep -R -qE 'chrt|SCHED_FIFO|nohz_full' \
     "${FIXTURE}/stage/etc/systemd/system"; then
     echo "installed systemd configuration changed RT priorities or added nohz_full" >&2

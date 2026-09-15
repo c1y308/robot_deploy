@@ -6,10 +6,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)
 enable_testing()
 
-option(ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS
-       "Include gait phase in policy observation history, using 705 input dimensions instead of 675"
-       ON)
-
 set(LOCAL_LIBTORCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libtorch)
 set(LOCAL_PYTORCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/python_torch/torch)
 set(LOCAL_PYTORCH_LIBS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/python_torch/torch.libs)
@@ -66,9 +62,6 @@ add_library(inference_recorder STATIC
 target_include_directories(inference_recorder PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_compile_definitions(inference_recorder PUBLIC
-    ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=$<BOOL:${ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS}>
-)
 target_link_libraries(inference_recorder PUBLIC robot_base pthread)
 
 # deploy.yaml 加载器：解析真实 schema，并校验模型序/电机序边界。
@@ -83,7 +76,6 @@ target_include_directories(deploy_config PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../imu/include
 )
 target_compile_definitions(deploy_config PUBLIC
-    ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=$<BOOL:${ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS}>
     ROBOT_DEPLOY_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/deploy.yaml"
     ROBOT_INFERENCE_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )
@@ -103,9 +95,6 @@ target_include_directories(robot_interface PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../motors/src/protocol/ethercat
     ${CMAKE_CURRENT_SOURCE_DIR}/../imu/include
-)
-target_compile_definitions(robot_interface PUBLIC
-    ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=$<BOOL:${ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS}>
 )
 target_link_libraries(robot_interface
     PUBLIC
@@ -161,6 +150,12 @@ add_executable(inference_recorder_csv_test
 )
 target_link_libraries(inference_recorder_csv_test PRIVATE inference_recorder)
 add_test(NAME inference_recorder_csv_test COMMAND inference_recorder_csv_test)
+
+add_executable(deploy_config_model_order_test
+    tests/deploy_config_model_order_test.cpp
+)
+target_link_libraries(deploy_config_model_order_test PRIVATE deploy_config)
+add_test(NAME deploy_config_model_order_test COMMAND deploy_config_model_order_test)
 
 add_executable(action_processor_ankle_ik_test
     tests/action_processor_ankle_ik_test.cpp

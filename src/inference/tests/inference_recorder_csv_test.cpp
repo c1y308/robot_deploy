@@ -70,12 +70,8 @@ bool near(double actual, double expected)
     return std::abs(actual - expected) < 1e-6;
 }
 
-void test_policy_observation_csv_columns()
+void test_policy_observation_csv_columns(std::size_t observation_size)
 {
-    static_assert(inference::policy_observation::kObservationSize ==
-                      (inference::policy_observation::kEnableGaitPhase ? 705 : 675),
-                  "test expects the P1 observation layout of the active branch");
-
     const std::filesystem::path dir = unique_test_dir();
 
     inference::InferenceRecorderConfig config;
@@ -84,6 +80,7 @@ void test_policy_observation_csv_columns()
     config.file_prefix = "policy_obs";
     config.flush_interval = std::chrono::milliseconds(1);
     config.max_queue_depth = 8;
+    config.policy_observation_size = observation_size;
 
     inference::InferenceRecorder recorder;
     expect(recorder.start(config),
@@ -205,9 +202,9 @@ void test_policy_observation_csv_columns()
            "command target effort value mismatch");
 
     const std::size_t policy_obs_0 = require_column(columns, "policy_obs_0");
-    expect(policy_obs_0 + inference::policy_observation::kObservationSize <= columns.size(),
+    expect(policy_obs_0 + observation_size <= columns.size(),
            "CSV does not have enough policy observation columns");
-    for (std::size_t i = 0; i < inference::policy_observation::kObservationSize; ++i) {
+    for (std::size_t i = 0; i < observation_size; ++i) {
         const std::string expected_name = "policy_obs_" + std::to_string(i);
         expect(columns[policy_obs_0 + i] == expected_name,
                "policy observation column is not contiguous at index " +
@@ -215,16 +212,38 @@ void test_policy_observation_csv_columns()
         expect(near(std::stod(values[policy_obs_0 + i]), static_cast<double>(i)),
                "policy observation value mismatch at index " + std::to_string(i));
     }
+    expect(!has_column(columns, "policy_obs_" + std::to_string(observation_size)),
+           "CSV contains a policy observation column past the configured size");
 
     std::error_code ignored;
     std::filesystem::remove_all(dir, ignored);
+}
+
+void test_invalid_policy_observation_size_is_rejected()
+{
+    inference::InferenceRecorderConfig config;
+    config.directory = unique_test_dir();
+    config.policy_observation_size =
+        inference::policy_observation::kMaxObservationSize + 1;
+
+    inference::InferenceRecorder recorder;
+    expect(!recorder.start(config),
+           "recorder accepted an unsupported policy observation size");
+    expect(recorder.last_error() ==
+               "policy observation size must be 675 or 705",
+           "unexpected invalid observation size error: " +
+               recorder.last_error());
 }
 
 }  // namespace
 
 int main()
 {
-    test_policy_observation_csv_columns();
+    test_policy_observation_csv_columns(
+        inference::policy_observation::kObservationSizeWithoutGaitPhase);
+    test_policy_observation_csv_columns(
+        inference::policy_observation::kObservationSizeWithGaitPhase);
+    test_invalid_policy_observation_size_is_rejected();
     std::cout << "inference_recorder_csv_test passed\n";
     return 0;
 }

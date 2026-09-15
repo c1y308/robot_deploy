@@ -9,10 +9,6 @@
 
 namespace inference {
 
-static_assert(policy_observation::kObservationSize ==
-                  (policy_observation::kEnableGaitPhase ? 705 : 675),
-              "P1 real2sim policy input CSV requires policy_obs_0..policy_obs_N");
-
 namespace {
 
 /* 返回本地时间戳，用于文件名，例如：0813_1425 */
@@ -60,14 +56,14 @@ void append_motor_columns(std::ostream& stream,
 }
 
 
-void write_header(std::ostream& stream)
+void write_header(std::ostream& stream, std::size_t observation_size)
 {
     stream << "frame_index,elapsed_us,motor_sample_timestamp_ns,inference_start_ns,"
            << "inference_end_ns,inference_duration_us,command_timestamp_ns,"
            << "command_applied,policy_seq,policy_observation_time_ns,"
            << "policy_valid_until_ns,command_produced_at_ns,"
            << "command_valid_until_ns";
-    append_indexed_columns(stream, "policy_obs", policy_observation::kObservationSize);
+    append_indexed_columns(stream, "policy_obs", observation_size);
     append_indexed_columns(stream, "raw_action", kInferenceDof);
     append_indexed_columns(stream, "target_q_model_rad", kInferenceDof);
     append_motor_columns(stream, "target_pos_rad", kInferenceMotorCount);
@@ -105,6 +101,15 @@ void append_values(std::ostream& stream, const std::array<Value, Count>& values)
     }
 }
 
+void append_values(std::ostream& stream,
+                   const PolicyObservation& values,
+                   std::size_t count)
+{
+    for (std::size_t i = 0; i < count; ++i) {
+        stream << ',' << values[i];
+    }
+}
+
 
 template <std::size_t Count>
 void append_u8_values(std::ostream& stream,
@@ -118,7 +123,8 @@ void append_u8_values(std::ostream& stream,
 
 void write_record(std::ostream&          stream,
                   const InferenceRecord& record,
-                  std::int64_t           session_start_timestamp_ns)
+                  std::int64_t           session_start_timestamp_ns,
+                  std::size_t            observation_size)
 {
     stream << std::setprecision(17)
            << record.frame_index << ','
@@ -135,7 +141,7 @@ void write_record(std::ostream&          stream,
            << record.command_produced_at_ns << ','
            << record.command_valid_until_ns;
 
-    append_values(stream, record.policy_observation);
+    append_values(stream, record.policy_observation, observation_size);
     append_values(stream, record.raw_action);
     append_values(stream, record.target_q_model_rad);
     append_values(stream, record.target_pos_rad);
@@ -175,6 +181,15 @@ bool InferenceRecorder::start(
         return true;
     }
 
+    if (config.policy_observation_size !=
+            policy_observation::kObservationSizeWithoutGaitPhase &&
+        config.policy_observation_size !=
+            policy_observation::kObservationSizeWithGaitPhase) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        last_error_ = "policy observation size must be 675 or 705";
+        return false;
+    }
+
     if (config.flush_interval.count() <= 0) {
         config.flush_interval = std::chrono::milliseconds(1000);
     }
@@ -200,7 +215,7 @@ bool InferenceRecorder::start(
         return false;
     }
 
-    write_header(file);
+    write_header(file, config.policy_observation_size);
     if (!file) {
         std::lock_guard<std::mutex> lock(mutex_);
         last_error_ = "failed to write inference log header: " + path.string();
@@ -337,6 +352,10 @@ void InferenceRecorder::worker_loop() noexcept
         std::lock_guard<std::mutex> lock(mutex_);
         return session_start_timestamp_ns_;
     }();
+    const std::size_t observation_size = [this] {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return config_.policy_observation_size;
+    }();
 
     auto next_flush = std::chrono::steady_clock::now() + flush_interval;
     bool dirty = true;
@@ -355,7 +374,8 @@ void InferenceRecorder::worker_loop() noexcept
         }
 
         for (const InferenceRecord& record : records) {
-            write_record(file_, record, session_start_timestamp_ns);
+            write_record(file_, record, session_start_timestamp_ns,
+                         observation_size);
             dirty = true;
         }
 

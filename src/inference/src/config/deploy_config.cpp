@@ -104,6 +104,7 @@ private:
     enum class ParamsRule {
         Empty,
         BaseVelocityCommand,
+        GaitPhase,
     };
 
     static bool fail(const std::string& message, std::string& error)
@@ -398,6 +399,9 @@ private:
                         "default ankle motors", error);
         }
 
+        std::copy(joint_ids_map.begin(), joint_ids_map.end(),
+                  model_to_motor_index_.begin());
+
         config_.joint_mapping.model_to_motor_index.assign(
             joint_ids_map.begin(),
             joint_ids_map.begin() + kDirectDriveDofCount);
@@ -420,23 +424,28 @@ private:
 
     bool load_motor_gains(const YAML::Node& root, std::string& error)
     {
-        if (!require_double_array(root, "stiffness", config_.motor.mit_kp,
+        std::array<double, kDof> model_kp{};
+        std::array<double, kDof> model_kd{};
+        if (!require_double_array(root, "stiffness", model_kp,
                                   "root", error) ||
-            !require_double_array(root, "damping", config_.motor.mit_kd,
+            !require_double_array(root, "damping", model_kd,
                                   "root", error)) {
             return false;
         }
-        if (!finite_array(config_.motor.mit_kp) ||
-            !finite_array(config_.motor.mit_kd)) {
+        if (!finite_array(model_kp) || !finite_array(model_kd)) {
             return fail("stiffness/damping values must be finite", error);
         }
 
-        for (std::size_t i = 0; i < kMotorCount; ++i) {
-            if (config_.motor.mit_kp[i] < 0.0 ||
-                config_.motor.mit_kd[i] < 0.0) {
+        for (std::size_t model_index = 0; model_index < kDof; ++model_index) {
+            if (model_kp[model_index] < 0.0 || model_kd[model_index] < 0.0) {
                 return fail("stiffness/damping values must be non-negative",
                             error);
             }
+
+            const auto motor_index = static_cast<std::size_t>(
+                model_to_motor_index_[model_index]);
+            config_.motor.mit_kp[motor_index] = model_kp[model_index];
+            config_.motor.mit_kd[motor_index] = model_kd[model_index];
         }
 
         const std::array<int, 4> ankle_motors = {
@@ -581,10 +590,23 @@ private:
         }
         config_.action.default_joint_pos_rad = action_offset;
 
-        if (!require_finite_positive(action, "raw_action_clip",
-                                     config_.action.raw_action_clip,
-                                     "actions.JointPositionAction", error) ||
-            !validate_delay_range(action, "min_inference_delay",
+        const YAML::Node raw_action_clip = action["raw_action_clip"];
+        if (!raw_action_clip.IsDefined()) {
+            return fail("actions.JointPositionAction missing required key: "
+                        "raw_action_clip", error);
+        }
+        if (raw_action_clip.IsNull()) {
+            config_.action.raw_action_clip.reset();
+        } else {
+            double clip = 0.0;
+            if (!require_finite_positive(action, "raw_action_clip", clip,
+                                         "actions.JointPositionAction", error)) {
+                return false;
+            }
+            config_.action.raw_action_clip = clip;
+        }
+
+        if (!validate_delay_range(action, "min_inference_delay",
                                   "max_inference_delay",
                                   "actions.JointPositionAction", error) ||
             !validate_delay_range(action, "min_communication_delay",
@@ -649,6 +671,7 @@ private:
         if (!check_known_keys(observations, {"base_ang_vel",
                                              "projected_gravity",
                                              "velocity_commands",
+                                             "gait_phase",
                                              "joint_pos_rel",
                                              "joint_vel_rel",
                                              "last_action"},
@@ -658,6 +681,24 @@ private:
 
         std::array<double, 3> projected_gravity_scale{};
         std::array<double, kDof> last_action_scale{};
+        const YAML::Node gait_phase = observations["gait_phase"];
+        config_.policy.gait.enabled = false;
+        if (gait_phase.IsDefined()) {
+            std::array<double, policy_observation::kGaitPhaseSize>
+                gait_phase_scale{};
+            if (!load_observation_item(observations, "gait_phase",
+                                       gait_phase_scale, ParamsRule::GaitPhase,
+                                       error)) {
+                return false;
+            }
+            if (!all_near(gait_phase_scale, 1.0)) {
+                return fail("observations.gait_phase scale must be all 1.0 "
+                            "because runtime does not apply a configurable scale",
+                            error);
+            }
+            config_.policy.gait.enabled = true;
+        }
+
         if (!load_observation_item(observations, "base_ang_vel",
                                    config_.observation_scales.body_ang_vel_scale,
                                    ParamsRule::Empty, error) ||
@@ -750,6 +791,48 @@ private:
             return check_known_keys(params, {}, where, error);
         }
 
+        if (params_rule == ParamsRule::GaitPhase) {
+            if (!check_known_keys(params, {"period", "command_name",
+                                            "gate_by_command"},
+                                   where, error)) {
+                return false;
+            }
+            if (!require_finite_positive(params, "period",
+                                         config_.policy.gait.period,
+                                         where, error)) {
+                return false;
+            }
+
+            const YAML::Node command_name_node = params["command_name"];
+            if (command_name_node.IsDefined()) {
+                std::string command_name;
+                if (!require_value(params, "command_name", command_name,
+                                    where, error)) {
+                    return false;
+                }
+                if (command_name != "base_velocity") {
+                    return fail(where + " command_name must be base_velocity, got: " +
+                                    command_name,
+                                error);
+                }
+            }
+
+            const YAML::Node gate_by_command_node = params["gate_by_command"];
+            if (gate_by_command_node.IsDefined()) {
+                bool gate_by_command = false;
+                if (!require_value(params, "gate_by_command", gate_by_command,
+                                    where, error)) {
+                    return false;
+                }
+                if (!gate_by_command) {
+                    return fail(where + " gate_by_command must be true because "
+                                "runtime always gates gait phase by command",
+                                error);
+                }
+            }
+            return true;
+        }
+
         if (!check_known_keys(params, {"command_name"}, where, error)) {
             return false;
         }
@@ -768,6 +851,7 @@ private:
     std::string root_dir_;
     RobotInterfaceConfig& config_;
     std::shared_ptr<const robot_detail::JointMapping> mapping_;
+    std::array<int, kDof> model_to_motor_index_{};
     std::array<double, kDof> root_default_joint_pos_{};
 };
 

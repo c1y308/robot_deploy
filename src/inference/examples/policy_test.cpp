@@ -48,7 +48,13 @@ void print_config_summary(const inference::RobotInterfaceConfig& cfg)
               << " can_bitrate: " << cfg.imu.can_bitrate << "\n"
               << "  model_path: " << cfg.policy.model_path << "\n"
               << "  step_dt: " << cfg.policy.step_dt << "\n"
-              << "  raw_action_clip: " << cfg.action.raw_action_clip << "\n";
+              << "  raw_action_clip: ";
+    if (cfg.action.raw_action_clip) {
+        std::cout << *cfg.action.raw_action_clip;
+    } else {
+        std::cout << "disabled";
+    }
+    std::cout << "\n";
 }
 
 

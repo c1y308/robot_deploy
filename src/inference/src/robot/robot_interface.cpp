@@ -95,6 +95,8 @@ bool RobotInterface::initialize() {
         return false;
     }
 
+    // std::this_thread::sleep_for(std::chrono::seconds(10));
+
     initialized_.store(true);
     if (!start_policy_command_worker()) {
         initialized_.store(false);
@@ -187,6 +189,8 @@ bool RobotInterface::load_policy() {
     }
 
     if (config_.recorder.enabled) {
+        config_.recorder.policy_observation_size =
+            policy_observation::observation_size(config_.policy.gait.enabled);
         const robot_base::ThreadRuntimeOptions recorder_thread =
             config_.runtime.enabled ? config_.runtime.background
                                     : robot_base::ThreadRuntimeOptions{};
@@ -710,11 +714,12 @@ bool RobotInterface::policy_step() {
     policy_target.valid_until_ns = policy_valid_until_ns;
     for (std::size_t model_index = 0; model_index < PolicyRuntime::kDof; ++model_index) {
 
-        // 对模型原始输出截断[-1, 1]
-        const double clipped_raw_action =
-            std::max(-config_.action.raw_action_clip,
-                     std::min(config_.action.raw_action_clip,
-                              static_cast<double>(policy_result.raw_action[model_index])));
+        const double raw_action =
+            static_cast<double>(policy_result.raw_action[model_index]);
+        const double clipped_raw_action = config_.action.raw_action_clip
+            ? std::max(-*config_.action.raw_action_clip,
+                       std::min(*config_.action.raw_action_clip, raw_action))
+            : raw_action;
         // 进行缩放
         const double scaled_action = clipped_raw_action * config_.action.action_scale[model_index];
         // 进行截断

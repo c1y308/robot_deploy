@@ -1,5 +1,7 @@
 #pragma once
 
+#include "policy/policy_observation_config.hpp"
+
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -15,6 +17,8 @@ struct InferenceRecorderConfig {
     std::string file_prefix{};
     std::chrono::milliseconds flush_interval{1000};
     std::size_t max_queue_depth{kDefaultInferenceRecorderQueueDepth};
+    std::size_t policy_observation_size{
+        policy_observation::kObservationSizeWithoutGaitPhase};
 };
 
 }  // namespace inference

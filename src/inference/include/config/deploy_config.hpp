@@ -20,7 +20,8 @@ struct DeployConfigLoadOptions {
    顺序约定：
    - default_joint_pos / actions.JointPositionAction / observations 中
      按 DOF 维度的参数按模型 DOF 顺序书写；
-   - stiffness / damping 按物理电机顺序书写，直接填充 MIT 增益；
+   - stiffness / damping 按模型 DOF 顺序书写，加载器根据
+     joint_ids_map 转换为物理电机顺序的 MIT 增益；
    - joint_ids_map 只用于生成模型 DOF → 物理电机下标的拓扑映射。 */
 bool load_deploy_config(const std::string& yaml_path,
                         RobotInterfaceConfig& config,

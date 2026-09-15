@@ -49,11 +49,8 @@ sudo /usr/local/sbin/robot-rt-setup check
 和所有回读均正确时，生成与本次 boot ID 绑定的
 `/run/robot-rt-layout.ready`。`policy_test` 会在硬件初始化前复查同样条件。
 
-可以在重启前单独验证 NetworkManager 保护（只读）：
-
-```bash
-sudo /usr/local/sbin/robot-rt-setup check-nm-guard
-```
+`install` 会在写入 NetworkManager 配置后立即执行相同的只读保护校验；重启后
+使用 `robot-rt-setup check` 验收完整实时布局。
 
 若 `/dev/EtherCAT0` 未出现，先检查物理映射、NetworkManager 排除规则和主站
 MAC。下面的命令不假定 EtherCAT 一定叫 `eth0`：
@@ -69,7 +66,7 @@ dmesg | grep -Ei 'ethercat|ec_master|ec_stmmac'
 ```
 
 如果 NetworkManager 因保护检查失败而没有启动，应从本地串口修复上述文件，
-重新运行 `robot-rt-setup.sh install`，验证 `check-nm-guard` 后再启动
+重新运行 `robot-rt-setup.sh install`，确认安装过程中的 NetworkManager 保护校验通过后再启动
 NetworkManager。不要通过删除保护 drop-in 来绕过失败。
 
 ## 路径测量

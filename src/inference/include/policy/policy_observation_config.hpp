@@ -3,14 +3,7 @@
 #include <array>
 #include <cstddef>
 
-#ifndef ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS
-#define ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS 0
-#endif
-
 namespace inference::policy_observation {
-
-inline constexpr bool kEnableGaitPhase =
-    ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS != 0;
 
 inline constexpr std::size_t kDof = 12;
 inline constexpr std::size_t kFrameStack = 15;
@@ -23,26 +16,42 @@ inline constexpr std::size_t kJointPosRelSize = kDof;
 inline constexpr std::size_t kJointVelRelSize = kDof;
 inline constexpr std::size_t kLastActionSize = kDof;
 
-inline constexpr std::size_t kSingleObservationSize =
+inline constexpr std::size_t kSingleObservationSizeWithoutGaitPhase =
     kBaseAngVelSize +
     kProjectedGravitySize +
     kVelocityCommandsSize +
-    (kEnableGaitPhase ? kGaitPhaseSize : 0) +
     kJointPosRelSize +
     kJointVelRelSize +
     kLastActionSize;
 
-inline constexpr std::size_t kObservationSize =
-    kSingleObservationSize * kFrameStack;
+inline constexpr std::size_t kSingleObservationSizeWithGaitPhase =
+    kSingleObservationSizeWithoutGaitPhase + kGaitPhaseSize;
 
-static_assert(kObservationSize == (kEnableGaitPhase ? 705 : 675),
+inline constexpr std::size_t kObservationSizeWithoutGaitPhase =
+    kSingleObservationSizeWithoutGaitPhase * kFrameStack;
+inline constexpr std::size_t kObservationSizeWithGaitPhase =
+    kSingleObservationSizeWithGaitPhase * kFrameStack;
+
+inline constexpr std::size_t kMaxObservationSize =
+    kObservationSizeWithGaitPhase;
+
+inline constexpr std::size_t observation_size(bool enable_gait_phase) noexcept
+{
+    return enable_gait_phase ? kObservationSizeWithGaitPhase
+                             : kObservationSizeWithoutGaitPhase;
+}
+
+static_assert(kObservationSizeWithoutGaitPhase == 675 &&
+                  kObservationSizeWithGaitPhase == 705,
               "policy observation size must match the selected model version");
 
 }  // namespace inference::policy_observation
 
 namespace inference {
 
-using PolicyObservation = std::array<float, policy_observation::kObservationSize>;
+/* 固定容量缓冲；实际有效长度由 PolicyRuntimeConfig::GaitPhase::enabled 决定。 */
+using PolicyObservation =
+    std::array<float, policy_observation::kMaxObservationSize>;
 using PolicyAction = std::array<float, policy_observation::kDof>;
 
 }  // namespace inference

@@ -54,6 +54,7 @@ int main()
 
     inference::PolicyRuntimeConfig config;
     config.model_path = ROBOT_TEST_POLICY_PATH;
+    config.gait.enabled = true;
     inference::PolicyRuntime runtime;
     expect(runtime.load(config, 2, 1, 1, cpus), runtime.last_error());
     expect(at::get_num_threads() == 2, "ATen intra-op readback mismatch");

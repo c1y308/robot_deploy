@@ -192,167 +192,80 @@ bool valid_mac_address(const std::string& address)
     return true;
 }
 
-bool resolve_ethercat_interface(const Rk3588HostPaths& paths,
-                                std::string& interface_name,
-                                std::string& address,
-                                std::string& error)
+bool verify_ethercat_platform_driver(const Rk3588HostPaths& paths,
+                                     std::string& error)
 {
-    interface_name.clear();
-    const auto net_root = std::filesystem::path(paths.sys_root) / "class/net";
-    try {
-        for (const auto& entry : std::filesystem::directory_iterator(net_root)) {
-            const auto device_link = entry.path() / "device";
-            if (!std::filesystem::exists(device_link)) {
-                continue;
-            }
-            std::error_code canonical_error;
-            const auto device_path =
-                std::filesystem::canonical(device_link, canonical_error);
-            if (canonical_error ||
-                device_path.filename() != paths.ethercat_device_id) {
-                continue;
-            }
-            if (!interface_name.empty()) {
-                error = "multiple netdevs map to EtherCAT device " +
-                        paths.ethercat_device_id + ": " + interface_name +
-                        ", " + entry.path().filename().string();
-                return false;
-            }
-            interface_name = entry.path().filename().string();
-        }
-    } catch (const std::exception& exception) {
-        error = "failed to resolve EtherCAT device " +
-                paths.ethercat_device_id + ": " + exception.what();
+    const auto device_path = std::filesystem::path(paths.sys_root) /
+                             "bus/platform/devices" /
+                             paths.ethercat_device_id;
+    if (!std::filesystem::exists(device_path)) {
+        error = "EtherCAT device " + paths.ethercat_device_id +
+                " is unavailable";
         return false;
     }
 
-    if (interface_name.empty()) {
-        error = "no netdev maps to EtherCAT device " +
-                paths.ethercat_device_id;
+    std::error_code canonical_error;
+    const auto driver_path =
+        std::filesystem::canonical(device_path / "driver", canonical_error);
+    if (canonical_error) {
+        error = "EtherCAT device " + paths.ethercat_device_id +
+                " has no bound platform driver";
         return false;
     }
 
-    const auto interface_root = net_root / interface_name;
-    if (!read_text(interface_root / "address", address, error)) {
+    const std::string driver = driver_path.filename().string();
+    if (driver != paths.ethercat_driver) {
+        error = "EtherCAT device " + paths.ethercat_device_id +
+                " is bound to " + driver + ", expected " +
+                paths.ethercat_driver;
         return false;
-    }
-    std::transform(address.begin(), address.end(), address.begin(),
-                   [](unsigned char value) {
-                       return static_cast<char>(std::tolower(value));
-                   });
-    if (!valid_mac_address(address)) {
-        error = "invalid MAC for EtherCAT device " +
-                paths.ethercat_device_id + " (" + interface_name + "): " +
-                address;
-        return false;
-    }
-
-    const auto assign_type_path = interface_root / "addr_assign_type";
-    if (std::filesystem::exists(assign_type_path)) {
-        std::string assign_type;
-        if (!read_text(assign_type_path, assign_type, error)) {
-            return false;
-        }
-        if (assign_type != "0") {
-            error = "EtherCAT device " + paths.ethercat_device_id + " (" +
-                    interface_name + ") has non-permanent MAC type " +
-                    assign_type;
-            return false;
-        }
     }
     return true;
 }
 
-bool verify_threaded_napi(const Rk3588HostPaths& paths,
-                          const std::string& interface_name,
-                          std::string& error)
+bool configured_master_mac(const Rk3588HostPaths& paths,
+                           std::string& address,
+                           std::string& error)
 {
-    const auto threaded_path = std::filesystem::path(paths.sys_root) /
-                               "class/net" / interface_name / "threaded";
-    if (!std::filesystem::exists(threaded_path)) {
-        return true;
-    }
-    std::string state;
-    if (!read_text(threaded_path, state, error)) {
-        return false;
-    }
-    if (state == "0" || state == "N" || state == "n" || state == "no" ||
-        state == "false") {
-        return true;
-    }
-    if (state != "1" && state != "Y" && state != "y" && state != "yes" &&
-        state != "true") {
-        error = "unknown " + interface_name + " threaded NAPI state: " + state;
+    std::string config;
+    if (!read_text(std::filesystem::path(paths.etc_root) /
+                       "modprobe.d/ethercat.conf",
+                   config,
+                   error)) {
         return false;
     }
 
-    bool found = false;
-    try {
-        for (const auto& process :
-             std::filesystem::directory_iterator(paths.proc_root)) {
-            const std::string pid = process.path().filename().string();
-            if (pid.empty() || !std::all_of(
-                                   pid.begin(), pid.end(), [](unsigned char value) {
-                                       return std::isdigit(value) != 0;
-                                   })) {
-                continue;
-            }
-            const auto task_root = process.path() / "task";
-            if (!std::filesystem::exists(task_root)) {
-                continue;
-            }
-            for (const auto& task : std::filesystem::directory_iterator(task_root)) {
-                std::string comm;
-                if (!read_text(task.path() / "comm", comm, error)) {
-                    continue;
-                }
-                const std::string napi_name = "napi/" + interface_name;
-                if (comm != napi_name && comm.rfind(napi_name + "-", 0) != 0) {
-                    continue;
-                }
-                found = true;
-                std::string status;
-                if (!read_text(task.path() / "status", status, error)) {
-                    return false;
-                }
-                std::istringstream lines(status);
-                std::string line;
-                std::string affinity;
-                while (std::getline(lines, line)) {
-                    const std::string prefix = "Cpus_allowed_list:";
-                    if (line.compare(0, prefix.size(), prefix) == 0) {
-                        affinity = line.substr(prefix.size());
-                        affinity.erase(
-                            std::remove_if(affinity.begin(), affinity.end(),
-                                           [](unsigned char value) {
-                                               return std::isspace(value) != 0;
-                                           }),
-                            affinity.end());
-                        break;
-                    }
-                }
-                std::set<int> actual;
-                if (affinity.empty() || !parse_cpu_list(affinity, actual, error) ||
-                    actual != std::set<int>({3})) {
-                    if (error.empty()) {
-                        error = "threaded NAPI " + comm + " affinity is " +
-                                affinity + ", expected CPU3";
-                    }
-                    return false;
-                }
-            }
+    std::istringstream lines(config);
+    std::string line;
+    while (std::getline(lines, line)) {
+        std::istringstream tokens(line);
+        std::string first;
+        std::string second;
+        if (!(tokens >> first >> second) || first != "options" ||
+            second != "ec_master") {
+            continue;
         }
-    } catch (const std::exception& exception) {
-        error = std::string("failed to inspect threaded NAPI: ") +
-                exception.what();
-        return false;
+        std::string token;
+        while (tokens >> token) {
+            const std::string prefix = "main_devices=";
+            if (token.compare(0, prefix.size(), prefix) != 0) {
+                continue;
+            }
+            address = token.substr(prefix.size());
+            std::transform(address.begin(), address.end(), address.begin(),
+                           [](unsigned char value) {
+                               return static_cast<char>(std::tolower(value));
+                           });
+            if (!valid_mac_address(address)) {
+                error = "invalid configured ec_master main_devices: " + address;
+                return false;
+            }
+            return true;
+        }
     }
-    if (!found) {
-        error = interface_name + " reports threaded NAPI but no napi/" +
-                interface_name + " thread was found";
-        return false;
-    }
-    return true;
+
+    error = "ec_master main_devices is not configured";
+    return false;
 }
 
 bool networkmanager_unmanages_mac(const std::string& config,
@@ -397,72 +310,38 @@ bool networkmanager_unmanages_mac(const std::string& config,
     return false;
 }
 
-bool verify_ethercat_configuration(const Rk3588HostPaths& paths,
-                                   const std::string& interface_name,
-                                   const std::string& address,
-                                   std::string& error)
+bool verify_ethercat_runtime(const Rk3588HostPaths& paths,
+                             std::string& error)
 {
-    std::string config;
-    if (!read_text(std::filesystem::path(paths.etc_root) /
-                       "modprobe.d/ethercat.conf",
-                   config,
-                   error)) {
-        return false;
-    }
-    std::istringstream lines(config);
-    std::string line;
-    bool configured_matches = false;
-    while (std::getline(lines, line)) {
-        std::istringstream tokens(line);
-        std::string first;
-        std::string second;
-        if (!(tokens >> first >> second) || first != "options" ||
-            second != "ec_master") {
-            continue;
-        }
-        std::string token;
-        while (tokens >> token) {
-            const std::string prefix = "main_devices=";
-            if (token.compare(0, prefix.size(), prefix) == 0) {
-                std::string configured = token.substr(prefix.size());
-                std::transform(configured.begin(), configured.end(),
-                               configured.begin(), [](unsigned char value) {
-                                   return static_cast<char>(std::tolower(value));
-                               });
-                if (configured != address) {
-                    error = "ec_master main_devices=" + configured +
-                            " does not match EtherCAT device " +
-                            paths.ethercat_device_id + " (" + interface_name +
-                            ") MAC " + address;
-                    return false;
-                }
-                configured_matches = true;
-            }
-        }
-    }
-    if (!configured_matches) {
-        error = "ec_master main_devices is not configured";
+    if (!verify_ethercat_platform_driver(paths, error)) {
         return false;
     }
 
-    const auto loaded_mac_path = std::filesystem::path(paths.sys_root) /
-                                 "module/ec_master/parameters/main_devices";
-    if (std::filesystem::exists(loaded_mac_path)) {
-        std::string loaded_address;
-        if (!read_text(loaded_mac_path, loaded_address, error)) {
-            return false;
-        }
-        std::transform(loaded_address.begin(), loaded_address.end(),
-                       loaded_address.begin(), [](unsigned char value) {
-                           return static_cast<char>(std::tolower(value));
-                       });
-        if (loaded_address != address) {
-            error = "loaded ec_master main_devices=" + loaded_address +
-                    " does not match EtherCAT device " +
-                    paths.ethercat_device_id + " (" + interface_name +
-                    ") MAC " + address + "; reboot after install";
-            return false;
-        }
+    std::string configured_address;
+    if (!configured_master_mac(paths, configured_address, error)) {
+        return false;
+    }
+
+    std::string loaded_address;
+    if (!read_text(std::filesystem::path(paths.sys_root) /
+                       "module/ec_master/parameters/main_devices",
+                   loaded_address,
+                   error)) {
+        return false;
+    }
+    std::transform(loaded_address.begin(), loaded_address.end(),
+                   loaded_address.begin(), [](unsigned char value) {
+                       return static_cast<char>(std::tolower(value));
+                   });
+    if (!valid_mac_address(loaded_address)) {
+        error = "invalid loaded ec_master main_devices: " + loaded_address;
+        return false;
+    }
+    if (loaded_address != configured_address) {
+        error = "loaded ec_master main_devices=" + loaded_address +
+                " does not match configured value " + configured_address +
+                "; reboot after install";
+        return false;
     }
 
     std::string nm_config;
@@ -471,39 +350,9 @@ bool verify_ethercat_configuration(const Rk3588HostPaths& paths,
     if (!read_text(nm_path, nm_config, error)) {
         return false;
     }
-    if (!networkmanager_unmanages_mac(nm_config, address)) {
-        error = nm_path.string() + " does not mark EtherCAT device " +
-                paths.ethercat_device_id + " (" + interface_name + ", " +
-                address + ") unmanaged";
-        return false;
-    }
-
-    std::string nm_dropin;
-    const auto nm_dropin_path =
-        std::filesystem::path(paths.etc_root) /
-        "systemd/system/NetworkManager.service.d/robot-ethercat-guard.conf";
-    if (!read_text(nm_dropin_path, nm_dropin, error)) {
-        return false;
-    }
-    const std::string guard_command =
-        "ExecStartPre=/usr/local/sbin/robot-rt-setup check-nm-guard";
-    bool guard_present = false;
-    std::istringstream dropin_lines(nm_dropin);
-    std::string dropin_line;
-    while (std::getline(dropin_lines, dropin_line)) {
-        dropin_line.erase(
-            std::remove_if(dropin_line.begin(), dropin_line.end(),
-                           [](unsigned char value) {
-                               return value == '\r';
-                           }),
-            dropin_line.end());
-        if (dropin_line == guard_command) {
-            guard_present = true;
-        }
-    }
-    if (!guard_present) {
-        error = "NetworkManager guard drop-in is invalid: " +
-                nm_dropin_path.string();
+    if (!networkmanager_unmanages_mac(nm_config, loaded_address)) {
+        error = nm_path.string() + " does not mark EtherCAT MAC " +
+                loaded_address + " unmanaged";
         return false;
     }
     return true;
@@ -612,21 +461,8 @@ bool verify_rk3588_host_layout(std::string& error,
             return false;
         }
     }
-    std::string ethercat_interface;
-    std::string ethercat_address;
-    if (!resolve_ethercat_interface(paths,
-                                    ethercat_interface,
-                                    ethercat_address,
-                                    error)) {
-        return false;
-    }
     if (!verify_irq_affinity(paths, "can0", {2}, error) ||
-        !verify_irq_affinity(paths, ethercat_interface, {3}, error) ||
-        !verify_threaded_napi(paths, ethercat_interface, error) ||
-        !verify_ethercat_configuration(paths,
-                                       ethercat_interface,
-                                       ethercat_address,
-                                       error)) {
+        !verify_ethercat_runtime(paths, error)) {
         return false;
     }
 
@@ -644,7 +480,7 @@ bool verify_rk3588_host_layout(std::string& error,
                    error)) {
         return false;
     }
-    if (ready.find("profile=rk3588-v1") == std::string::npos ||
+    if (ready.find("profile=" + paths.profile) == std::string::npos ||
         ready.find("boot_id=" + boot_id) == std::string::npos) {
         error = "robot RT ready marker is stale or has the wrong profile";
         return false;

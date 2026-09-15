@@ -146,6 +146,8 @@ bool PolicyRuntime::load(const PolicyRuntimeConfig& config,
 {
     unload();
     last_error_.clear();
+    observation_size_ =
+        policy_observation::observation_size(config.gait.enabled);
 
     std::set<pid_t> tasks_before;
     cpu_set_t expected_worker_mask;
@@ -297,6 +299,7 @@ void PolicyRuntime::unload()
         impl_->module.reset();
     }
     loaded_ = false;
+    observation_size_ = 0;
 }
 
 bool PolicyRuntime::is_loaded() const
@@ -314,7 +317,7 @@ bool PolicyRuntime::dry_run_and_validate_output()
     try {
         torch::NoGradGuard no_grad;
         torch::Tensor input = torch::zeros(
-            {1, static_cast<int64_t>(kObservationSize)},
+            {1, static_cast<int64_t>(observation_size_)},
             torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU));
 
         torch::jit::IValue output_value = impl_->module->forward({input});
@@ -354,7 +357,7 @@ bool PolicyRuntime::infer(const PolicyObservation& observation,
         torch::NoGradGuard no_grad;
         torch::Tensor input = torch::from_blob(
             const_cast<float*>(observation.data()),
-            {1, static_cast<int64_t>(observation.size())},
+            {1, static_cast<int64_t>(observation_size_)},
             torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU));
 
         torch::jit::IValue output_value = impl_->module->forward({input});

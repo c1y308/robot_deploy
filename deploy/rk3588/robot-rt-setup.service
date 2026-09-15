@@ -5,7 +5,7 @@ Before=multi-user.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/robot-rt-setup apply
+ExecStart=/usr/bin/env ROBOT_RT_INTERNAL_COMMAND=1 /usr/local/sbin/robot-rt-setup __apply
 RemainAfterExit=yes
 
 [Install]

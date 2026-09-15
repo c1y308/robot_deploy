@@ -8,6 +8,7 @@
 #include "tool/thread_runtime.hpp"
 
 #include <array>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -52,7 +53,8 @@ struct ActionConfig {
     std::array<double, policy_observation::kDof> action_scale{};
     /* raw_action * action_scale 之后的偏移量限位: [lower, upper] */
     std::array<std::array<double, 2>, policy_observation::kDof> action_clip{};
-    double raw_action_clip = 1.0;
+    /* nullopt 表示不对策略原始输出做额外裁剪。 */
+    std::optional<double> raw_action_clip = 1.0;
 };
 
 /* 观测缩放：ObservationBuilder 消费。全部按模型 DOF 顺序。 */
@@ -74,9 +76,9 @@ struct PolicyRuntimeConfig {
     std::string model_path = "model/policy.pt";
     double step_dt = 0.02;
 
-    /* 仅 705 观测分支（ROBOT_POLICY_ENABLE_GAIT_PHASE_OBS=ON）使用；
-       675 编译时该段禁止出现在配置文件中，由加载器检查。 */
+    /* gait_phase 存在于 deploy.yaml 时使用 705 维观测，否则使用 675 维观测。 */
     struct GaitPhase {
+        bool enabled           = false;
         double period          = 0.74;
         double stand_threshold = 0.05;
         double move_threshold  = 0.15;
