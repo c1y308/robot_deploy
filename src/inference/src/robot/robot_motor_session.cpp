@@ -6,6 +6,7 @@
 #include "motor_base/motor_controller_base.hpp"
 
 #include <array>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -77,7 +78,7 @@ RobotMotorSession::~RobotMotorSession()
 }
 
 
-bool RobotMotorSession::initialize()
+bool RobotMotorSession::initialize(bool defer_communication_protection)
 {
     if (initialized_.load()) {
         return true;
@@ -97,6 +98,8 @@ bool RobotMotorSession::initialize()
     }
     controller_ = std::make_unique<myactua::MyActMotorController>(
         adapter_, config_.num_motors, controller_options);
+    // 仅策略启动链延后通信锁存，直到第一次正式推理；独立电机入口默认开启。
+    controller_->set_communication_protection_enabled(!defer_communication_protection);
 
     std::cout << "[RobotMotorSession] Connecting EtherCAT on "
               << config_.ethercat_ifname << "...\n";
@@ -147,17 +150,23 @@ bool RobotMotorSession::initialize()
 }
 
 
+void RobotMotorSession::enable_communication_protection() noexcept
+{
+    controller_->set_communication_protection_enabled(true);
+}
+
+
 bool RobotMotorSession::deinitialize()
 {
     if (rt_started_ && !stop()) {
         initialized_.store(false);
         return false;
     }
-    release_stopped_controller();
+    release_controller();
     return true;
 }
 
-void RobotMotorSession::release_stopped_controller()
+void RobotMotorSession::release_controller()
 {
     if (controller_) controller_->shutdown();
     controller_.reset();
@@ -165,6 +174,28 @@ void RobotMotorSession::release_stopped_controller()
     rt_started_ = false;
     initialized_.store(false);
     motion_enabled_.store(false);
+}
+
+bool RobotMotorSession::communication_fault_latched() const noexcept
+{
+    return controller_ && controller_->communication_fault_latched();
+}
+
+MotorCommunicationState RobotMotorSession::communication_state() const noexcept
+{
+    if (!controller_) {
+        return MotorCommunicationState::Healthy;
+    }
+
+    switch (controller_->current_communication_fault()) {
+        case myactua::MyactCommunicationFaultReason::None:
+            return MotorCommunicationState::Healthy;
+        case myactua::MyactCommunicationFaultReason::LinkDown:
+            return MotorCommunicationState::LinkDown;
+        case myactua::MyactCommunicationFaultReason::WkcIncomplete:
+            return MotorCommunicationState::WkcIncomplete;
+    }
+    return MotorCommunicationState::WkcIncomplete;
 }
 
 motor_base::CommandSubmitResult RobotMotorSession::request_stop(int motor_index)
@@ -280,7 +311,21 @@ bool RobotMotorSession::restart(int motor_index)
     }
 }
 
-bool RobotMotorSession::apply_targets_rad(const std::vector<double>& target_motor_rad)
+motor_base::CommandTiming RobotMotorSession::target_command_timing(
+    std::int64_t produced_at_ns, std::int64_t absolute_deadline_ns) const noexcept
+{
+    motor_base::CommandTiming timing;
+    timing.produced_at_ns = produced_at_ns;
+    timing.valid_until_ns = produced_at_ns +
+        robot_base::seconds_to_ns(safety_.control_command_timeout_ms / 1000.0);
+    if (absolute_deadline_ns > 0) {
+        timing.valid_until_ns = std::min(timing.valid_until_ns, absolute_deadline_ns);
+    }
+    return timing;
+}
+
+bool RobotMotorSession::apply_targets_rad(const std::vector<double>& target_motor_rad,
+                                         std::int64_t absolute_deadline_ns)
 {
     if (!initialized_.load() || !controller_) {
         return false;
@@ -315,11 +360,10 @@ bool RobotMotorSession::apply_targets_rad(const std::vector<double>& target_moto
     }
 
     const std::int64_t produced_at_ns = robot_base::monotonic_now_ns();
-    command.timing.source_policy_seq = 0;
-    command.timing.produced_at_ns = produced_at_ns;
-    command.timing.valid_until_ns = produced_at_ns +
-        static_cast<std::int64_t>(std::llround(
-            safety_.control_command_timeout_ms * 1'000'000.0));
+    command.timing = target_command_timing(produced_at_ns, absolute_deadline_ns);
+    if (command.timing.valid_until_ns <= produced_at_ns) {
+        return false;
+    }
     const motor_base::CommandSubmitResult result =
         controller_->send_policy_setpoint(command);
     if (result.status != motor_base::CommandSubmitStatus::ACCEPTED) {

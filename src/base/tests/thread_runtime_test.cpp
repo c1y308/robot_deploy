@@ -29,11 +29,12 @@ int first_allowed_cpu()
     throw std::runtime_error("no allowed CPU");
 }
 
-void test_setup_before_body()
+void test_setup_before_body(std::size_t stack_prefault_bytes)
 {
     const int cpu = first_allowed_cpu();
     robot_base::ThreadRuntimeOptions options;
     options.cpu_ids = {cpu};
+    options.stack_prefault_bytes = stack_prefault_bytes;
     options.scheduling_policy = robot_base::ThreadSchedulingPolicy::OTHER;
 
     std::thread thread;
@@ -53,6 +54,39 @@ void test_setup_before_body()
            error);
     thread.join();
     expect(body_ran.load(), "configured thread body did not run");
+}
+
+void test_stack_prefault_sizes()
+{
+    expect(robot_base::prefault_current_thread_stack(0) == 0,
+           "zero-byte stack prefault failed");
+    expect(robot_base::prefault_current_thread_stack(64U * 1024U) == 0,
+           "64 KiB stack prefault failed");
+    expect(robot_base::prefault_current_thread_stack(128U * 1024U) == 0,
+           "128 KiB stack prefault failed");
+    expect(robot_base::prefault_current_thread_stack(
+               robot_base::kMaxStackPrefaultBytes + 1U) == E2BIG,
+           "excessive stack prefault did not return E2BIG");
+}
+
+void test_excessive_stack_prefault_blocks_body()
+{
+    robot_base::ThreadRuntimeOptions options;
+    options.stack_prefault_bytes = robot_base::kMaxStackPrefaultBytes + 1U;
+    options.scheduling_policy = robot_base::ThreadSchedulingPolicy::FIFO;
+    options.priority = -1;  // prefault failure must precede scheduler setup
+
+    std::thread thread;
+    std::atomic<bool> body_ran{false};
+    std::string error;
+    expect(!robot_base::start_configured_thread(
+               thread, "bad_prefault", options,
+               [&] { body_ran.store(true); }, error),
+           "excessive stack prefault unexpectedly succeeded");
+    expect(!body_ran.load(), "body ran after stack prefault failure");
+    expect(error.find("stack prefault") != std::string::npos,
+           "stack prefault failure did not identify the cause");
+    expect(!thread.joinable(), "failed prefault thread remained joinable");
 }
 
 void test_invalid_cpu_blocks_body()
@@ -106,7 +140,11 @@ void test_invalid_fifo_priority_blocks_body()
 
 int main()
 {
-    test_setup_before_body();
+    test_stack_prefault_sizes();
+    test_setup_before_body(0U);
+    test_setup_before_body(64U * 1024U);
+    test_setup_before_body(128U * 1024U);
+    test_excessive_stack_prefault_blocks_body();
     test_invalid_cpu_blocks_body();
     test_long_name_blocks_body();
     test_invalid_fifo_priority_blocks_body();

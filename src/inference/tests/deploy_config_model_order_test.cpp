@@ -3,7 +3,10 @@
 #include <yaml-cpp/yaml.h>
 
 #include <cmath>
+#include <chrono>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -47,7 +50,33 @@ int main()
                "damping was not converted from model to motor order");
     }
 
-    expect(!config.action.raw_action_clip.has_value(),
+    const YAML::Node raw_clip = root["actions"]["JointPositionAction"]["raw_action_clip"];
+    if (raw_clip.IsNull()) {
+        expect(!config.action.raw_action_clip.has_value(),
+               "raw_action_clip: null must disable raw action clipping");
+    } else {
+        expect(config.action.raw_action_clip.has_value() &&
+                   std::abs(*config.action.raw_action_clip - raw_clip.as<double>()) < 1e-12,
+               "raw_action_clip must match the deployment config");
+    }
+
+    // Test explicit null independently of the current deployment's clip value.
+    YAML::Node null_clip_config = YAML::Clone(root);
+    null_clip_config["actions"]["JointPositionAction"]["raw_action_clip"] =
+        YAML::Node(YAML::NodeType::Null);
+    const auto null_clip_path = std::filesystem::temp_directory_path() /
+        ("deploy-null-clip-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()) + ".yaml");
+    {
+        std::ofstream file(null_clip_path);
+        file << null_clip_config;
+        expect(file.good(), "failed to write null clip fixture");
+    }
+    inference::RobotInterfaceConfig null_clip_result;
+    const bool null_loaded = inference::load_deploy_config(null_clip_path.string(), null_clip_result, error);
+    std::filesystem::remove(null_clip_path);
+    expect(null_loaded, "failed to load null clip fixture: " + error);
+    expect(!null_clip_result.action.raw_action_clip.has_value(),
            "raw_action_clip: null must disable raw action clipping");
     expect(config.policy.gait.enabled,
            "gait_phase in deploy config must enable the 705-dimension layout");

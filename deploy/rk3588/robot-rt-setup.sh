@@ -9,9 +9,9 @@ readonly DEFAULT_ECAT_DEVICE_ID="fe1c0000.ethernet"
 readonly EXPECTED_ECAT_DRIVER="rk_gmac-dwmac-ethercat"
 
 # 启动参数分开保存，避免数组，同时让目标 RT CPU 布局一眼可见。
-readonly EXPECTED_ISOLCPUS="isolcpus=domain,managed_irq,6-7"
-readonly EXPECTED_RCU_NOCBS="rcu_nocbs=6-7"
-readonly EXPECTED_IRQAFFINITY="irqaffinity=0-5"
+readonly EXPECTED_ISOLCPUS="isolcpus=domain,managed_irq,4-7"
+readonly EXPECTED_RCU_NOCBS="rcu_nocbs=4-7"
+readonly EXPECTED_IRQAFFINITY="irqaffinity=0-3"
 
 PROC_ROOT="/proc"
 SYS_ROOT="/sys"
@@ -23,6 +23,10 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 READY_FILE="${RUN_ROOT}/robot-rt-layout.ready"
 ECAT_DEVICE_ID="${ROBOT_RT_ECAT_DEVICE_ID:-${DEFAULT_ECAT_DEVICE_ID}}"
 NM_UNMANAGED_CONFIG="${ETC_ROOT}/NetworkManager/conf.d/99-ethercat-unmanaged.conf"
+# Only sourced fixture tests override these; direct installs always target the
+# real system and retain the root/systemd checks.
+INSTALL_ROOT=""
+ROBOT_RT_SKIP_SYSTEMD=0
 
 fail()
 {
@@ -52,7 +56,7 @@ normalize_cpu_list()
 
     value="$1"
 
-    # 内核 CPU 列表可写成 6-7、6,7 或带 domain、managed_irq 等标记。
+    # 内核 CPU 列表可写成 4-7、4,5,6,7 或带 domain、managed_irq 等标记。
     # awk 在这里把它统一为逗号分隔的 CPU 编号，方便安全地做等价比较；
     printf '%s\n' "${value}" | awk -F ',' '
         {
@@ -151,7 +155,7 @@ check_boot_layout()
         return 1
     fi
 
-    # CPU6-7 留给 policy_cmd 与 ecat_rt，因此启动时必须隔离这两个 CPU。
+    # CPU4-7 留给策略推理、policy_cmd 与 ecat_rt，因此必须全部隔离。
     if ! isolcpus="$(cmdline_value isolcpus)"; then
         fail "isolcpus is missing"
         return 1
@@ -168,8 +172,8 @@ check_boot_layout()
         fail "invalid CPU list: ${isolcpus}"
         return 1
     fi
-    if [[ "${normalized}" != "6,7" ]]; then
-        fail "isolcpus CPU set must be exactly 6-7"
+    if [[ "${normalized}" != "4,5,6,7" ]]; then
+        fail "isolcpus CPU set must be exactly 4-7"
         return 1
     fi
 
@@ -181,8 +185,8 @@ check_boot_layout()
         fail "invalid CPU list: ${rcu_nocbs}"
         return 1
     fi
-    if [[ "${normalized}" != "6,7" ]]; then
-        fail "rcu_nocbs CPU set must be exactly 6-7"
+    if [[ "${normalized}" != "4,5,6,7" ]]; then
+        fail "rcu_nocbs CPU set must be exactly 4-7"
         return 1
     fi
 
@@ -194,8 +198,8 @@ check_boot_layout()
         fail "invalid CPU list: ${irqaffinity}"
         return 1
     fi
-    if [[ "${normalized}" != "0,1,2,3,4,5" ]]; then
-        fail "irqaffinity CPU set must be exactly 0-5"
+    if [[ "${normalized}" != "0,1,2,3" ]]; then
+        fail "irqaffinity CPU set must be exactly 0-3"
         return 1
     fi
 
@@ -218,8 +222,8 @@ check_boot_layout()
         fail "invalid CPU list: ${isolated}"
         return 1
     fi
-    if [[ "${normalized}" != "6,7" ]]; then
-        fail "effective isolated CPU set must be exactly 6-7"
+    if [[ "${normalized}" != "4,5,6,7" ]]; then
+        fail "effective isolated CPU set must be exactly 4-7"
         return 1
     fi
 }
@@ -356,7 +360,7 @@ check_workqueue()
 {
     local mask compact
 
-    # unbound workqueue 不能进入 CPU6-7，否则后台内核工作会干扰 RT 线程。
+    # unbound workqueue 不能进入 CPU4-7，否则后台内核工作会干扰策略与 RT 线程。
     if ! mask="$(read_one_line "${SYS_ROOT}/devices/virtual/workqueue/cpumask")"; then
         return 1
     fi
@@ -367,9 +371,9 @@ check_workqueue()
     fi
 
     # Bash 的 16# 表示十六进制。先验证只含十六进制字符，才可安全比较；
-    # 这样内核写出的补零或逗号分组掩码仍能与 CPU0-5 的 3f 等价。
-    if (( 16#${compact} != 16#3f )); then
-        fail "unbound workqueue cpumask is ${mask}, expected CPU0-5 (3f)"
+    # 这样内核写出的补零或逗号分组掩码仍能与 CPU0-3 的 0f 等价。
+    if (( 16#${compact} != 16#0f )); then
+        fail "unbound workqueue cpumask is ${mask}, expected CPU0-3 (0f)"
         return 1
     fi
 }
@@ -385,7 +389,7 @@ set_workqueue()
         return 1
     fi
 
-    printf '%s\n' 3f > "${path}"
+    printf '%s\n' 0f > "${path}"
 }
 
 
@@ -715,13 +719,17 @@ check_irqbalance_guard()
         return 0
     fi
 
-    # irqbalance 会动态迁移普通 IRQ，必须显式禁用它对 CPU6-7 的使用。
+    # irqbalance 会动态迁移普通 IRQ，必须显式禁用它对 CPU4-7 的使用。
     if [[ ! -r "${dropin}" ]]; then
         fail "irqbalance is active without the RT CPU ban drop-in"
         return 1
     fi
-    if ! grep -q 'IRQBALANCE_BANNED_CPULIST=6-7' "${dropin}"; then
-        fail "irqbalance drop-in does not ban CPUs 6-7"
+    if ! grep -Fxq 'Environment="IRQBALANCE_BANNED_CPULIST=4-7"' "${dropin}"; then
+        fail "irqbalance drop-in does not ban CPUs 4-7"
+        return 1
+    fi
+    if ! grep -Fxq 'Environment="IRQBALANCE_BANNED_CPUS=000000f0"' "${dropin}"; then
+        fail "irqbalance drop-in has the wrong CPU mask (expected 000000f0)"
         return 1
     fi
 }
@@ -1120,7 +1128,7 @@ install_layout()
 {
     local mac interface_name
 
-    if [[ "$(id -u)" -ne 0 ]]; then
+    if [[ -z "${INSTALL_ROOT}" && "$(id -u)" -ne 0 ]]; then
         fail "install must run as root"
         return 1
     fi
@@ -1142,30 +1150,33 @@ install_layout()
     rewrite_uenv "${BOOT_UENV}"
 
     if ! install -D -m 0755 "${SCRIPT_DIR}/robot-rt-setup.sh" \
-        "/usr/local/sbin/robot-rt-setup"; then
+        "${INSTALL_ROOT}/usr/local/sbin/robot-rt-setup"; then
         fail "cannot install robot-rt-setup"
         return 1
     fi
 
     if ! install -D -m 0644 "${SCRIPT_DIR}/robot-rt-setup.service" \
-        "/etc/systemd/system/robot-rt-setup.service"; then
+        "${INSTALL_ROOT}/etc/systemd/system/robot-rt-setup.service"; then
         fail "cannot install robot-rt-setup.service"
         return 1
     fi
 
-    if ! mkdir -p -- "/etc/systemd/system/irqbalance.service.d"; then
+    if ! mkdir -p -- \
+        "${INSTALL_ROOT}/etc/systemd/system/irqbalance.service.d"; then
         fail "cannot create irqbalance drop-in directory"
         return 1
     fi
 
     if ! install -m 0644 "${SCRIPT_DIR}/irqbalance-robot-rt.conf" \
-        "/etc/systemd/system/irqbalance.service.d/robot-rt.conf"; then
+        "${INSTALL_ROOT}/etc/systemd/system/irqbalance.service.d/robot-rt.conf"; then
         fail "cannot install irqbalance RT drop-in"
         return 1
     fi
 
-    systemctl daemon-reload
-    systemctl enable robot-rt-setup.service
+    if [[ "${ROBOT_RT_SKIP_SYSTEMD}" != "1" ]]; then
+        systemctl daemon-reload
+        systemctl enable robot-rt-setup.service
+    fi
 
     interface_name=""
     if interface_name="$(find_ethercat_netdev)"; then
@@ -1186,6 +1197,12 @@ usage()
     echo "Usage: $0 {check|install}" >&2
     exit 2
 }
+
+# Fixture tests source this file to exercise the same functions against a
+# temporary proc/sys tree. Direct executions continue through the command entry.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0
+fi
 
 
 # 正式脚本命令入口。

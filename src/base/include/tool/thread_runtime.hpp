@@ -2,8 +2,11 @@
 
 #include <pthread.h>
 #include <sched.h>
+#include <alloca.h>
+#include <unistd.h>
 
 #include <cerrno>
+#include <cstddef>
 #include <cstring>
 #include <future>
 #include <stdexcept>
@@ -27,6 +30,7 @@ struct ThreadRuntimeOptions {
     std::vector<int> cpu_ids;   // 允许线程运行的 CPU 集合
     ThreadSchedulingPolicy scheduling_policy{ThreadSchedulingPolicy::INHERIT};  // 调度策略 
     int priority{0};    // 调度优先级
+    std::size_t stack_prefault_bytes{0};  // 进入业务循环前预触碰的栈空间
 };
 
 // 线程设置结果（这里是否过度设计？）
@@ -49,8 +53,42 @@ inline ThreadSetupResult thread_setup_error(const std::string& operation,
     return result;
 }
 
+inline constexpr std::size_t kMaxStackPrefaultBytes = 1024U * 1024U;
 
-// 配置当前线程的名称、CPU 亲和性、调度策略、调度优先级
+// 预先建立当前线程的栈页映射。noinline 保证 alloca 的栈帧真实存在于本函数中，
+// volatile 写入保证逐页触碰不会被优化器消除。
+// 返回 0 或 errno 风格错误码；错误消息由调用者构造，使 helper 本身无堆分配。
+[[gnu::noinline]] inline int prefault_current_thread_stack(
+    std::size_t bytes) noexcept
+{
+    if (bytes == 0U) {
+        return 0;
+    }
+    if (bytes > kMaxStackPrefaultBytes) {
+        return E2BIG;
+    }
+
+    errno = 0;
+    const long page_size_value = ::sysconf(_SC_PAGESIZE);
+    if (page_size_value <= 0) {
+        return errno != 0 ? errno : EINVAL;
+    }
+
+    const std::size_t page_size = static_cast<std::size_t>(page_size_value);
+    const std::size_t rounded_bytes =
+        ((bytes + page_size - 1U) / page_size) * page_size;
+    volatile unsigned char* const stack_pages =
+        static_cast<volatile unsigned char*>(::alloca(rounded_bytes));
+    for (std::size_t offset = 0; offset < rounded_bytes; offset += page_size) {
+        stack_pages[offset] = 0U;
+    }
+    stack_pages[rounded_bytes - 1U] = 0U;
+
+    return 0;
+}
+
+
+// 配置顺序固定为：名称与 affinity -> 栈预触碰 -> 调度策略与优先级。
 inline ThreadSetupResult configure_current_thread(
     const char* name,
     const ThreadRuntimeOptions& options)
@@ -105,6 +143,13 @@ inline ThreadSetupResult configure_current_thread(
         if (!CPU_EQUAL(&expected, &actual)) {
             return thread_setup_error("thread affinity verification", 0);
         }
+    }
+
+    const int prefault_error =
+        prefault_current_thread_stack(options.stack_prefault_bytes);
+    if (prefault_error != 0) {
+        return thread_setup_error("stack prefault (maximum 1 MiB; valid page size required)",
+                                  prefault_error);
     }
 
     // 设置线程调度策略和优先级（采用带有时间片的是否更好？）

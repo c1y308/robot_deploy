@@ -38,15 +38,15 @@ public:
         paths.etc_root = (root / "etc").string();
 
         write_file(root / "proc/cmdline",
-                   "console=ttyS2 isolcpus=domain,managed_irq,6-7 "
-                   "rcu_nocbs=6-7 irqaffinity=0-5\n");
+                   "console=ttyS2 isolcpus=domain,managed_irq,4-7 "
+                   "rcu_nocbs=4-7 irqaffinity=0-3\n");
         write_file(root / "proc/interrupts",
                    " 77: 0 0 0 0 0 0 0 0 GIC can0\n");
         write_file(root / "proc/irq/77/effective_affinity_list", "2\n");
         write_file(root / "proc/sys/kernel/random/boot_id", "test-boot-id\n");
         write_file(root / "sys/devices/system/cpu/online", "0-7\n");
-        write_file(root / "sys/devices/system/cpu/isolated", "6-7\n");
-        write_file(root / "sys/devices/virtual/workqueue/cpumask", "0000003f\n");
+        write_file(root / "sys/devices/system/cpu/isolated", "4-7\n");
+        write_file(root / "sys/devices/virtual/workqueue/cpumask", "0000000f\n");
         const auto ethercat_device =
             root / "sys/bus/platform/devices/fe1c0000.ethernet";
         const auto ethercat_driver =
@@ -100,13 +100,75 @@ void test_nohz_full_is_rejected()
 {
     Fixture fixture;
     write_file(fixture.root / "proc/cmdline",
-               "isolcpus=domain,managed_irq,6-7 rcu_nocbs=6-7 "
-               "irqaffinity=0-5 nohz_full=7\n");
+               "isolcpus=domain,managed_irq,4-7 rcu_nocbs=4-7 "
+               "irqaffinity=0-3 nohz_full=7\n");
     std::string error;
     expect(!inference::verify_rk3588_host_layout(error, fixture.paths),
            "nohz_full unexpectedly passed");
     expect(error.find("nohz_full") != std::string::npos,
            "nohz_full failure was not reported");
+}
+
+void test_old_6_7_layout_is_rejected()
+{
+    Fixture fixture;
+    write_file(fixture.root / "proc/cmdline",
+               "isolcpus=domain,managed_irq,6-7 rcu_nocbs=6-7 "
+               "irqaffinity=0-5\n");
+    std::string error;
+    expect(!inference::verify_rk3588_host_layout(error, fixture.paths),
+           "old CPU6-7 isolation layout unexpectedly passed");
+    expect(error.find("isolcpus") != std::string::npos,
+           "old isolation layout failure was not identified");
+}
+
+void test_wrong_default_irq_mask_is_rejected()
+{
+    Fixture fixture;
+    write_file(fixture.root / "proc/cmdline",
+               "isolcpus=domain,managed_irq,4-7 rcu_nocbs=4-7 "
+               "irqaffinity=0-5\n");
+    std::string error;
+    expect(!inference::verify_rk3588_host_layout(error, fixture.paths),
+           "wrong default IRQ affinity unexpectedly passed");
+    expect(error.find("irqaffinity") != std::string::npos,
+           "wrong default IRQ affinity was not identified");
+}
+
+void test_wrong_rcu_mask_is_rejected()
+{
+    Fixture fixture;
+    write_file(fixture.root / "proc/cmdline",
+               "isolcpus=domain,managed_irq,4-7 rcu_nocbs=6-7 "
+               "irqaffinity=0-3\n");
+    std::string error;
+    expect(!inference::verify_rk3588_host_layout(error, fixture.paths),
+           "old RCU mask unexpectedly passed");
+    expect(error.find("rcu_nocbs") != std::string::npos,
+           "wrong RCU mask was not identified");
+}
+
+void test_wrong_effective_isolation_is_rejected()
+{
+    Fixture fixture;
+    write_file(fixture.root / "sys/devices/system/cpu/isolated", "6-7\n");
+    std::string error;
+    expect(!inference::verify_rk3588_host_layout(error, fixture.paths),
+           "old effective isolation unexpectedly passed");
+    expect(error.find("isolated CPU") != std::string::npos,
+           "wrong effective isolation was not identified");
+}
+
+void test_wrong_workqueue_mask_is_rejected()
+{
+    Fixture fixture;
+    write_file(fixture.root / "sys/devices/virtual/workqueue/cpumask",
+               "0000003f\n");
+    std::string error;
+    expect(!inference::verify_rk3588_host_layout(error, fixture.paths),
+           "old workqueue mask unexpectedly passed");
+    expect(error.find("workqueue") != std::string::npos,
+           "wrong workqueue mask was not identified");
 }
 
 void test_wrong_irq_affinity_is_rejected()
@@ -202,6 +264,11 @@ int main()
 {
     test_valid_layout();
     test_nohz_full_is_rejected();
+    test_old_6_7_layout_is_rejected();
+    test_wrong_default_irq_mask_is_rejected();
+    test_wrong_rcu_mask_is_rejected();
+    test_wrong_effective_isolation_is_rejected();
+    test_wrong_workqueue_mask_is_rejected();
     test_wrong_irq_affinity_is_rejected();
     test_stale_marker_is_rejected();
     test_wrong_ethercat_driver_is_rejected();

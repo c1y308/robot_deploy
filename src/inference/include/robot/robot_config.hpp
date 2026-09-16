@@ -94,7 +94,7 @@ struct SensorGuardConfig {
 
 /* 策略帧和 RT 连续命令的独立新鲜度预算。单位 ms。 */
 struct SafetyConfig {
-    double policy_target_timeout_ms   = 60.0;  // 最老的数据时刻 + 此值 之后视为过期（防止推理超时）
+    double policy_target_timeout_ms   = 60.0;  // 有效 target 发布后的最大 hold 时间；首帧前从首次推理起计
     double control_command_timeout_ms = 10.0;  // 控制命令的独立新鲜度预算，超过该值视为过期
 };
 
@@ -118,6 +118,7 @@ struct AnkleTorqueControlConfig {
 struct RuntimeThreadingConfig {
     bool enabled{false};
     bool require_host_preflight{false};
+    bool require_process_memory_lock{false};
 
     robot_base::ThreadRuntimeOptions policy_main;
     robot_base::ThreadRuntimeOptions motor_rt;

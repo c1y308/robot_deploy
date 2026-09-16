@@ -21,6 +21,20 @@ using robot_base::fits_i32;
 
 namespace {
 constexpr const char* kDefaultEthercatIfName = "enp8s0";
+constexpr uint32_t kStartupWkcStableCycles = 10;
+
+const char* wc_state_name(ec_wc_state_t state)
+{
+    switch (state) {
+        case EC_WC_ZERO:
+            return "ZERO";
+        case EC_WC_INCOMPLETE:
+            return "INCOMPLETE";
+        case EC_WC_COMPLETE:
+            return "COMPLETE";
+    }
+    return "UNKNOWN";
+}
 
 bool is_ankle_motor_index(int motor_index)
 {
@@ -201,7 +215,7 @@ bool MyActMotorController::connect_impl(const char* ifname)
 }
 
 
-/// @brief 阻塞等待所有电机进入 OP（每 1ms 检查一次）
+/// @brief 阻塞等待所有电机进入 OP 且过程数据连续稳定（每 1ms 检查一次）
 /// @param timeout_ms 超时时间 (ms)，0 表示仅检查一次
 /// @param poll_ms  日志打印间隔 (ms)
 bool MyActMotorController::wait_all_motors_ready(int timeout_ms, int poll_ms) const
@@ -220,6 +234,9 @@ bool MyActMotorController::wait_all_motors_ready(int timeout_ms, int poll_ms) co
     
     auto next_log_time = start_time;
     bool first_check = true;
+    uint32_t stable_wkc_cycles = 0;
+    const uint32_t required_stable_cycles =
+        timeout_ms == 0 ? 1U : kStartupWkcStableCycles;
 
     while (first_check || (timeout_ms > 0 && Clock::now() < deadline)) {
         first_check = false;
@@ -234,10 +251,22 @@ bool MyActMotorController::wait_all_motors_ready(int timeout_ms, int poll_ms) co
             }
         }
 
-        if (ready_count == static_cast<int>(_motors.size())) {
+        const EthercatBusHealthSnapshot health = _adapter->get_bus_health();
+        const bool all_slaves_ready =
+            ready_count == static_cast<int>(_motors.size());
+        const bool process_data_complete =
+            health.master_link_up && health.wc_state == EC_WC_COMPLETE;
+        if (all_slaves_ready && process_data_complete) {
+            ++stable_wkc_cycles;
+        } else {
+            stable_wkc_cycles = 0;
+        }
+
+        if (stable_wkc_cycles >= required_stable_cycles) {
             const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                 Clock::now() - start_time).count();
-            std::cout << "[MYACTUA] All slaves ready in "
+            std::cout << "[MYACTUA] All slaves and process data stable for "
+                      << required_stable_cycles << " cycle(s) in "
                       << elapsed_ms << " ms" << std::endl;
             return true;
         }
@@ -245,7 +274,12 @@ bool MyActMotorController::wait_all_motors_ready(int timeout_ms, int poll_ms) co
         const auto now = Clock::now();
         if (now >= next_log_time) {
             std::cout << "[MYACTUA] EtherCAT ready: "
-                      << ready_count << "/" << _motors.size() << std::endl;
+                      << ready_count << "/" << _motors.size()
+                      << ", link=" << (health.master_link_up ? "up" : "down")
+                      << ", wc=" << health.working_counter
+                      << ", wc_state=" << wc_state_name(health.wc_state)
+                      << ", stable=" << stable_wkc_cycles
+                      << "/" << required_stable_cycles << std::endl;
             next_log_time = now + std::chrono::milliseconds(poll_ms);
         }
 
@@ -314,6 +348,8 @@ void MyActMotorController::realtime_stop_callback() noexcept
 /// @brief 更新 motor.observed，处理通信、故障、模式切换和目标值设置
 void MyActMotorController::update()
 {
+    const bool communication_protection_enabled =
+        communication_protection_enabled_.load(std::memory_order_acquire);
     const EthercatBusHealthSnapshot health = _adapter->get_bus_health();
     const bool process_data_ok =
         health.master_link_up && health.wc_state == EC_WC_COMPLETE;
@@ -357,8 +393,12 @@ void MyActMotorController::update()
 
         MyactMotorFaultReason reason = MyactMotorFaultReason::None;
         uint32_t raw_value = 0;
+        // 避免正式推理前的启动通信瞬态被提前锁存为 OFFLINE；
+        // 不修改实际通信状态，推理开始后恢复原有保护。
         if (!motor.comm_ok) {
-            reason = MyactMotorFaultReason::Offline;
+            if (communication_protection_enabled) {
+                reason = MyactMotorFaultReason::Offline;
+            }
         } else if (motor.observed.sw_faulted) {
             reason = MyactMotorFaultReason::StatusWordFault;
             raw_value = motor.rx.status_word;
@@ -381,7 +421,8 @@ void MyActMotorController::update()
         }
     }
 
-    update_communication_watchdog(process_data_ok, health);
+    update_communication_watchdog(process_data_ok, health,
+                                  communication_protection_enabled);
     if (terminal_fault_latched()) {
         apply_whole_body_stop();
         return;
@@ -407,24 +448,40 @@ void MyActMotorController::update()
 
 void MyActMotorController::update_communication_watchdog(
     bool process_data_ok,
-    const EthercatBusHealthSnapshot& health)
+    const EthercatBusHealthSnapshot& health,
+    bool communication_protection_enabled)
 {
-    if (terminal_fault_latched()) {
-        return;
-    }
+    const MyactCommunicationFaultReason current_reason =
+        !health.master_link_up
+            ? MyactCommunicationFaultReason::LinkDown
+            : (health.wc_state != EC_WC_COMPLETE
+                   ? MyactCommunicationFaultReason::WkcIncomplete
+                   : MyactCommunicationFaultReason::None);
+    current_communication_fault_.store(current_reason,
+                                       std::memory_order_release);
 
-    if (process_data_ok) {
+    // 正式推理前不累计通信故障周期，避免启动期异常带入运行期阈值。
+    // 计数仅由 RT 线程修改，重复开启开关不重置计数。
+    if (!communication_protection_enabled || process_data_ok) {
         process_data_fail_count_ = 0;
         return;
     }
 
-    ++process_data_fail_count_;
-    if (process_data_fail_count_ >= options_.comm_watchdog_fault_cycles) {
-        const MyactCommunicationFaultReason reason = health.master_link_up
-            ? MyactCommunicationFaultReason::WkcIncomplete
-            : MyactCommunicationFaultReason::LinkDown;
-        latch_communication_fault(reason, health);
+    if (process_data_fail_count_ < options_.comm_watchdog_fault_cycles) {
+        ++process_data_fail_count_;
     }
+    if (process_data_fail_count_ >= options_.comm_watchdog_fault_cycles &&
+        !communication_fault_latched_.exchange(
+            true, std::memory_order_acq_rel)) {
+        latch_communication_fault(current_reason, health);
+    }
+}
+
+
+MyactCommunicationFaultReason
+MyActMotorController::current_communication_fault() const noexcept
+{
+    return current_communication_fault_.load(std::memory_order_acquire);
 }
 
 

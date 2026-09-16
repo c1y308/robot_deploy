@@ -22,6 +22,7 @@
 namespace {
 
 constexpr bool kPrintPolicyTiming = false;
+constexpr bool kPrintMotorsInfo   = false;
 
 std::atomic<bool> g_stop_requested{false};
 
@@ -48,6 +49,8 @@ void print_config_summary(const inference::RobotInterfaceConfig& cfg)
               << " can_bitrate: " << cfg.imu.can_bitrate << "\n"
               << "  model_path: " << cfg.policy.model_path << "\n"
               << "  step_dt: " << cfg.policy.step_dt << "\n"
+              << "  motor_info_print: "
+              << (cfg.motor.print_motors_info ? "enabled" : "disabled") << "\n"
               << "  raw_action_clip: ";
     if (cfg.action.raw_action_clip) {
         std::cout << *cfg.action.raw_action_clip;
@@ -60,12 +63,20 @@ void print_config_summary(const inference::RobotInterfaceConfig& cfg)
 
 bool safe_shutdown(inference::RobotInterface& robot)
 {
-    if (!robot.shutdown()) {
-        std::cerr << "[ERROR] Stop not confirmed; RT retained. Destruction will keep waiting.\n";
-        return false;
+    switch (robot.shutdown()) {
+        case inference::ShutdownResult::Confirmed:
+            std::cout << "[INFO] Shutdown complete.\n";
+            return true;
+        case inference::ShutdownResult::ReleasedAfterCommLoss:
+            std::cerr << "[ERROR] EtherCAT communication lost; STOP was not confirmed. "
+                         "Controller resources were released after the slave watchdog timeout.\n";
+            return false;
+        case inference::ShutdownResult::RetryRequired:
+            std::cerr << "[ERROR] Stop not confirmed; RT retained. "
+                         "Destruction will keep waiting.\n";
+            return false;
     }
-    std::cout << "[INFO] Shutdown complete.\n";
-    return true;
+    return false;
 }
 
 }  // namespace
@@ -86,6 +97,10 @@ int main(int argc, char** argv)
         return 1;
     }
     cfg.runtime = inference::make_rk3588_runtime_profile();
+    cfg.motor.print_motors_info = kPrintMotorsInfo;
+    if (!kPrintMotorsInfo) {
+        cfg.motor.print_motor_ids.clear();
+    }
 
     if (cfg.runtime.require_host_preflight &&
         !inference::verify_rk3588_host_layout(config_error)) {

@@ -18,6 +18,12 @@
 
 namespace inference {
 
+enum class ShutdownResult {
+    Confirmed,
+    ReleasedAfterCommLoss,
+    RetryRequired,
+};
+
 namespace robot_detail {
 class ActionProcessor;
 class JointMapping;
@@ -38,21 +44,45 @@ public:
     bool reset_joints();  /* 复位到模型 DOF 顺序配置的 action.default_joint_pos_rad，单位为 rad */
     bool policy_step();
     bool apply_action(const std::vector<double>& target_q_model_rad);  // 模型 DOF 顺序目标角(rad)
-    // False retains RT and resources; destruction waits until stop is confirmed.
-    bool shutdown();
+    // RetryRequired retains RT and resources for another confirmation attempt.
+    // ReleasedAfterCommLoss releases resources without claiming STOP confirmation.
+    ShutdownResult shutdown();
 
     void set_target_velocity(double vx, double vy, double yaw_rate);
     std::array<double, 3> get_target_velocity() const;
 
 
 private:
+    friend struct RobotInterfacePolicyTimingTestAccess;
+
+    enum class PolicyStepPhase : std::uint8_t {
+        Idle,
+        Precheck,
+        SensorSnapshot,
+        Observation,
+        Inference,
+        PostInference,
+        Publish,
+    };
+
     struct PolicyTargetFrame {
         std::array<double, policy_observation::kDof> target_q_model_rad{};
         std::uint64_t policy_seq{0};
+        std::uint64_t target_seq{0};
         std::int64_t  observation_time_ns{0};
+        std::int64_t  published_at_ns{0};
         std::int64_t  valid_until_ns{0};
         InferenceRecord inference_record{};
     };
+
+    struct PolicyResultAdmission {
+        std::int64_t obs_to_action_age_us{0};
+        std::int64_t target_hold_age_us{0};
+        bool dropped{false};
+    };
+
+    // B1 初始测试门限：只用于发布准入，不随策略周期动态调整。
+    static constexpr std::int64_t kMaxObsToActionAgeNs = 40'000'000;
 
     /* 机器人接口配置 */
     RobotInterfaceConfig config_;
@@ -77,8 +107,14 @@ private:
     std::atomic<bool> initialized_{false};
     std::atomic<bool> policy_command_worker_running_{false};
     std::atomic<bool> policy_command_worker_failed_{false};
+    std::atomic<PolicyStepPhase> policy_step_phase_{PolicyStepPhase::Idle};
+    std::atomic<std::int64_t> policy_step_phase_started_ns_{0};
 
-    std::uint64_t next_policy_seq_{1};  // 策略帧序号，1 起始，0 保留为无效值
+    std::uint64_t next_policy_seq_{1};  // 每轮正式推理递增，包括 drop
+    std::uint64_t next_target_seq_{1};  // 仅有效发布时递增，0 表示未发布
+    std::uint64_t stale_policy_drop_count_{0};
+    std::int64_t last_policy_target_published_ns_{0};  // 仅 policy 线程访问
+    std::atomic<std::int64_t> first_policy_inference_started_ns_{0};
 
     // reset_joints() 最后一次成功下发的电机目标，供首个策略帧前保持姿态。
     std::vector<double> startup_hold_target_motor_rad_;
@@ -101,6 +137,25 @@ private:
     bool initialize_model_processors();
 
     void initialize_policy_runtime_state();
+    void reset_policy_command_state() noexcept;
+
+    bool validate_policy_sensor_timing(std::int64_t motor_timestamp_ns,
+                                       std::int64_t imu_timestamp_ns,
+                                       std::int64_t now_ns,
+                                       std::string& error) const;
+    std::uint64_t begin_policy_inference(std::int64_t now_ns) noexcept;
+    PolicyResultAdmission admit_policy_result(std::int64_t observation_time_ns,
+                                              std::int64_t decision_now_ns) const noexcept;
+    // staged_target 必须属于 policy_target_channel_ 的生产者写槽。
+    void publish_policy_target(PolicyTargetFrame& staged_target,
+                               std::int64_t published_at_ns) noexcept;
+    void complete_policy_result(const InferenceRecord& record);
+    std::int64_t startup_policy_deadline_ns() const noexcept;
+    bool startup_policy_target_expired(std::int64_t now_ns) const noexcept;
+    static bool policy_deadline_expired(std::int64_t deadline_ns,
+                                        std::int64_t now_ns) noexcept;
+    motor_base::CommandTiming policy_command_timing(
+        const PolicyTargetFrame& target, std::int64_t produced_at_ns) const noexcept;
 
     void record_inference(const InferenceRecord& record);
 
@@ -113,6 +168,9 @@ private:
     void record_latest_completed_policy_frame();
     void fail_policy_command_worker(std::string message);
     bool policy_command_worker_healthy(std::string& error) const;
+    void set_policy_step_phase(PolicyStepPhase phase) noexcept;
+    std::string policy_deadline_error(const PolicyTargetFrame& target,
+                                      std::int64_t now_ns) const;
 };
 
 }  // namespace inference

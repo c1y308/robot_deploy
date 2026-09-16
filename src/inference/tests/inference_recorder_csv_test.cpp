@@ -93,13 +93,16 @@ void test_policy_observation_csv_columns(std::size_t observation_size)
     record.motor_sample_timestamp_ns = record.inference_start_ns - 10000;
     record.policy_seq = 42;
     record.policy_observation_time_ns = record.inference_start_ns - 20000;
-    record.policy_valid_until_ns = record.policy_observation_time_ns + 40000000;
+    record.policy_valid_until_ns = record.inference_end_ns + 60000000;
     record.command_produced_at_ns = record.inference_end_ns + 1000;
     record.command_valid_until_ns = record.command_produced_at_ns + 10000000;
     record.command_timestamp_ns = record.command_produced_at_ns;
     record.imu_receive_timestamp_ns = record.inference_start_ns - 8000;
     record.imu_sample_timestamp_ns = 123456789000ULL;
     record.command_applied = true;
+    record.target_seq = 30;
+    record.obs_to_action_age_us = 143;
+    record.target_hold_age_us = 25000;
 
     for (std::size_t i = 0; i < record.policy_observation.size(); ++i) {
         record.policy_observation[i] = static_cast<float>(i);
@@ -115,6 +118,20 @@ void test_policy_observation_csv_columns(std::size_t observation_size)
 
     expect(recorder.try_record(record),
            "failed to queue record: " + recorder.last_error());
+
+    inference::InferenceRecord drop = record;
+    drop.frame_index = 43;
+    drop.policy_seq = 43;
+    drop.target_seq = 0;
+    drop.command_applied = false;
+    drop.policy_result_dropped = true;
+    drop.obs_to_action_age_us = 44000;
+    drop.target_hold_age_us = 26000;
+    drop.command_timestamp_ns = 0;
+    drop.command_produced_at_ns = 0;
+    drop.command_valid_until_ns = 0;
+    drop.policy_valid_until_ns = 0;
+    expect(recorder.try_record(drop), "failed to queue drop record");
 
     const std::filesystem::path log_path = recorder.log_path();
     recorder.stop();
@@ -183,6 +200,20 @@ void test_policy_observation_csv_columns(std::size_t observation_size)
            "command timestamp value mismatch");
     expect(std::stoi(values[command_applied_index]) == 1,
            "command applied value mismatch");
+    const std::size_t target_seq_index = require_column(columns, "target_seq");
+    const std::size_t obs_age_index = require_column(columns, "obs_to_action_age_us");
+    const std::size_t hold_age_index = require_column(columns, "target_hold_age_us");
+    const std::size_t dropped_index = require_column(columns, "policy_result_dropped");
+    expect(target_seq_index == columns.size() - 4 &&
+               obs_age_index == target_seq_index + 1 &&
+               hold_age_index == target_seq_index + 2 &&
+               dropped_index == target_seq_index + 3,
+           "B1 columns must be appended without moving existing columns");
+    expect(std::stoull(values[target_seq_index]) == 30 &&
+               std::stoll(values[obs_age_index]) == 143 &&
+               std::stoll(values[hold_age_index]) == 25000 &&
+               std::stoi(values[dropped_index]) == 0,
+           "normal B1 record values mismatch");
     expect(std::stoll(values[policy_observation_time_index]) ==
                record.policy_observation_time_ns,
            "policy observation timestamp value mismatch");
@@ -214,6 +245,22 @@ void test_policy_observation_csv_columns(std::size_t observation_size)
     }
     expect(!has_column(columns, "policy_obs_" + std::to_string(observation_size)),
            "CSV contains a policy observation column past the configured size");
+
+    expect(static_cast<bool>(std::getline(file, data_line)), "missing drop CSV row");
+    const auto drop_values = split_csv_line(data_line);
+    expect(drop_values.size() == columns.size(), "drop CSV column count mismatch");
+    expect(std::stoull(drop_values[policy_seq_index]) == 43 &&
+               std::stoull(drop_values[target_seq_index]) == 0 &&
+               std::stoi(drop_values[command_applied_index]) == 0 &&
+               std::stoi(drop_values[dropped_index]) == 1 &&
+               std::stoll(drop_values[obs_age_index]) == 44000 &&
+               std::stoll(drop_values[hold_age_index]) == 26000,
+           "drop row must preserve policy_seq and admission ages");
+    expect(std::stoll(drop_values[command_timestamp_index]) == 0 &&
+               std::stoll(drop_values[command_produced_at_index]) == 0 &&
+               std::stoll(drop_values[command_valid_until_index]) == 0 &&
+               std::stoll(drop_values[policy_valid_until_index]) == 0,
+           "drop row must not claim a target or command deadline");
 
     std::error_code ignored;
     std::filesystem::remove_all(dir, ignored);

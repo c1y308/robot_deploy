@@ -24,6 +24,21 @@ namespace mb = motor_base;
 
 namespace {
 
+// ESC watchdog tick = (divider + 2) * 40 ns = 100 us.
+// 1000 ticks make the process-data watchdog expire after about 100 ms.
+constexpr uint16_t kProcessDataWatchdogDivider = 2498;
+constexpr uint16_t kProcessDataWatchdogIntervals = 1000;
+
+static_assert(
+    (static_cast<uint64_t>(kProcessDataWatchdogDivider) + 2U) * 40U ==
+        100'000U,
+    "process-data watchdog tick must be 100 us");
+static_assert(
+    (static_cast<uint64_t>(kProcessDataWatchdogDivider) + 2U) * 40U *
+            kProcessDataWatchdogIntervals ==
+        100'000'000U,
+    "process-data watchdog timeout must be 100 ms");
+
 bool parse_diag_enabled_from_env(bool default_value)
 {
     const char* env = std::getenv("MYACTUA_ECAT_DIAG");
@@ -151,6 +166,12 @@ bool EthercatAdapterIGH::init(const char* ifname)
                       << "，物理位置 " << position << "\n";
             return false;
         }
+
+        // SM2 has EC_WD_ENABLE. Configure its process-data watchdog explicitly
+        // instead of relying on the slave's power-on defaults.
+        ecrt_slave_config_watchdog(sc[i],
+                                   kProcessDataWatchdogDivider,
+                                   kProcessDataWatchdogIntervals);
 
         /* 配置从站DC时钟 */
         ecrt_slave_config_dc(sc[i], 0x0300, PERIOD_NS, PERIOD_NS / 2, 0, 0);

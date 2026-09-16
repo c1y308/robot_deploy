@@ -151,6 +151,12 @@ add_executable(inference_recorder_csv_test
 target_link_libraries(inference_recorder_csv_test PRIVATE inference_recorder)
 add_test(NAME inference_recorder_csv_test COMMAND inference_recorder_csv_test)
 
+add_executable(robot_policy_target_timing_test
+    tests/robot_policy_target_timing_test.cpp
+)
+target_link_libraries(robot_policy_target_timing_test PRIVATE robot_interface)
+add_test(NAME robot_policy_target_timing_test COMMAND robot_policy_target_timing_test)
+
 add_executable(deploy_config_model_order_test
     tests/deploy_config_model_order_test.cpp
 )
@@ -230,3 +236,14 @@ target_compile_definitions(policy_runtime_threading_test PRIVATE
 )
 target_link_libraries(policy_runtime_threading_test PRIVATE robot_interface)
 add_test(NAME policy_runtime_threading_test COMMAND policy_runtime_threading_test)
+
+add_executable(robot_initialization_memory_lock_test
+    tests/robot_initialization_memory_lock_test.cpp
+)
+target_link_libraries(robot_initialization_memory_lock_test PRIVATE
+    robot_interface
+    "-Wl,--wrap=mlockall"
+    "-Wl,--wrap=ecrt_request_master"
+)
+add_test(NAME robot_initialization_memory_lock_test
+         COMMAND robot_initialization_memory_lock_test)

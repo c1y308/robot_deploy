@@ -387,9 +387,9 @@ bool verify_rk3588_host_layout(std::string& error,
     }
     std::set<int> isolated_cpus;
     if (!parse_cpu_list(isolated, isolated_cpus, error) ||
-        isolated_cpus != std::set<int>({6, 7})) {
+        isolated_cpus != std::set<int>({4, 5, 6, 7})) {
         if (error.empty()) {
-            error = "isolated CPU list must be exactly CPUs 6-7";
+            error = "isolated CPU list must be exactly CPUs 4-7";
         }
         return false;
     }
@@ -411,25 +411,25 @@ bool verify_rk3588_host_layout(std::string& error,
         value.find("domain") == std::string::npos ||
         value.find("managed_irq") == std::string::npos ||
         !parse_cpu_list(value, parsed, error) ||
-        parsed != std::set<int>({6, 7})) {
+        parsed != std::set<int>({4, 5, 6, 7})) {
         if (error.empty()) {
-            error = "isolcpus must include domain,managed_irq and CPUs 6-7";
+            error = "isolcpus must include domain,managed_irq and CPUs 4-7";
         }
         return false;
     }
     if (!extract_cmdline_value(cmdline, "rcu_nocbs", value) ||
         !parse_cpu_list(value, parsed, error) ||
-        parsed != std::set<int>({6, 7})) {
+        parsed != std::set<int>({4, 5, 6, 7})) {
         if (error.empty()) {
-            error = "rcu_nocbs must include CPUs 6-7";
+            error = "rcu_nocbs must include CPUs 4-7";
         }
         return false;
     }
     if (!extract_cmdline_value(cmdline, "irqaffinity", value) ||
         !parse_cpu_list(value, parsed, error) ||
-        parsed != std::set<int>({0, 1, 2, 3, 4, 5})) {
+        parsed != std::set<int>({0, 1, 2, 3})) {
         if (error.empty()) {
-            error = "irqaffinity must be exactly CPUs 0-5";
+            error = "irqaffinity must be exactly CPUs 0-3";
         }
         return false;
     }
@@ -447,8 +447,8 @@ bool verify_rk3588_host_layout(std::string& error,
     try {
         std::size_t parsed_length = 0;
         const auto mask = std::stoull(workqueue_mask, &parsed_length, 16);
-        if (parsed_length != workqueue_mask.size() || mask != 0x3FULL) {
-            error = "unbound workqueue cpumask must be CPU0-5 (3f)";
+        if (parsed_length != workqueue_mask.size() || mask != 0x0FULL) {
+            error = "unbound workqueue cpumask must be CPU0-3 (0f)";
             return false;
         }
     } catch (const std::exception&) {

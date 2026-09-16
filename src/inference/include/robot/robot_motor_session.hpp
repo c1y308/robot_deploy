@@ -12,6 +12,7 @@
 
 namespace myactua {
 class EthercatAdapterIGH;
+class MyActMotorController;
 }
 
 namespace motor_base {
@@ -21,6 +22,12 @@ class MotorControllerBase;
 }
 
 namespace inference {
+
+enum class MotorCommunicationState {
+    Healthy,
+    LinkDown,
+    WkcIncomplete,
+};
 
 // inference层需要的电机数据，从底层的 MotorStatusSnapshot 获取
 struct MotorStateSnapshot {
@@ -45,7 +52,7 @@ public:
     RobotMotorSession(const RobotMotorSession&) = delete;
     RobotMotorSession& operator=(const RobotMotorSession&) = delete;
 
-    bool initialize();
+    bool initialize(bool defer_communication_protection = false);
     motor_base::CommandSubmitResult request_stop(int motor_index = -1);
     bool stop(int motor_index = -1);
     bool restart(int motor_index = -1);
@@ -54,9 +61,13 @@ public:
 
     bool is_initialized() const noexcept { return initialized_.load(); }
     bool motion_enabled() const noexcept { return motion_enabled_.load(); }
+    bool communication_fault_latched() const noexcept;
+    MotorCommunicationState communication_state() const noexcept;
 
     // 依据当前电机模式下发位置指令
-    bool apply_targets_rad(const std::vector<double>& target_motor_rad);
+    // absolute_deadline_ns=0 保持原有独立命令有效期；正值额外封顶截止期。
+    bool apply_targets_rad(const std::vector<double>& target_motor_rad,
+                           std::int64_t absolute_deadline_ns = 0);
     bool apply_impedance_setpoints_realtime(
         const std::array<motor_base::ImpedanceSetpoint,
                          motor_base::kMaxMotorCommandSetpoints>& setpoints,
@@ -72,8 +83,12 @@ public:
 
 private:
     friend class RobotInterface;
+    friend struct RobotInterfacePolicyTimingTestAccess;
+    motor_base::CommandTiming target_command_timing(
+        std::int64_t produced_at_ns, std::int64_t absolute_deadline_ns) const noexcept;
+    void enable_communication_protection() noexcept;
     bool wait_for_stop(const motor_base::CommandSubmitResult& request);
-    void release_stopped_controller();
+    void release_controller();
     bool submit_command(const motor_base::ControlCommand& command,
                         const char* context);
 
@@ -82,7 +97,7 @@ private:
     RuntimeThreadingConfig runtime_;
 
     std::shared_ptr<myactua::EthercatAdapterIGH>     adapter_;
-    std::unique_ptr<motor_base::MotorControllerBase> controller_;
+    std::unique_ptr<myactua::MyActMotorController> controller_;
 
     std::atomic<bool> initialized_{false};
     std::atomic<bool> motion_enabled_{false};

@@ -90,6 +90,25 @@ bool build_cpu_mask(const std::vector<int>& cpu_ids,
     return true;
 }
 
+std::string format_cpu_mask(const cpu_set_t& mask)
+{
+    std::ostringstream oss;
+    oss << "{";
+    bool first = true;
+    for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+        if (!CPU_ISSET(cpu, &mask)) {
+            continue;
+        }
+        if (!first) {
+            oss << ",";
+        }
+        oss << cpu;
+        first = false;
+    }
+    oss << "}";
+    return oss.str();
+}
+
 bool verify_task_affinity(pid_t task_id,
                           const cpu_set_t& expected,
                           bool exact,
@@ -107,7 +126,9 @@ bool verify_task_affinity(pid_t task_id,
     }
     if (exact) {
         if (!CPU_EQUAL(&actual, &expected)) {
-            error = "policy thread affinity readback does not match its profile";
+            error = "policy thread TID " + std::to_string(task_id) +
+                    " affinity=" + format_cpu_mask(actual) +
+                    " expected=" + format_cpu_mask(expected);
             return false;
         }
         return true;
@@ -115,9 +136,53 @@ bool verify_task_affinity(pid_t task_id,
     for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
         if (CPU_ISSET(cpu, &actual) && !CPU_ISSET(cpu, &expected)) {
             error = "Torch/OpenMP worker TID " + std::to_string(task_id) +
-                    " can run outside the configured policy CPU set";
+                    " affinity=" + format_cpu_mask(actual) +
+                    " expected subset of " + format_cpu_mask(expected);
             return false;
         }
+    }
+    return true;
+}
+
+bool verify_task_uses_normal_scheduler(pid_t task_id,
+                                       const char* role,
+                                       const cpu_set_t& expected_cpus,
+                                       std::string& error)
+{
+    errno = 0;
+    const int policy = ::sched_getscheduler(task_id);
+    if (policy < 0) {
+        if (errno == ESRCH) {
+            return true;
+        }
+        error = std::string("sched_getscheduler failed for ") + role +
+                " TID " + std::to_string(task_id) + ": " +
+                std::strerror(errno);
+        return false;
+    }
+
+    sched_param parameters{};
+    if (::sched_getparam(task_id, &parameters) != 0) {
+        if (errno == ESRCH) {
+            return true;
+        }
+        error = std::string("sched_getparam failed for ") + role +
+                " TID " + std::to_string(task_id) + ": " +
+                std::strerror(errno);
+        return false;
+    }
+    if (policy != SCHED_OTHER || parameters.sched_priority != 0) {
+        error = std::string(role) + " TID " + std::to_string(task_id) +
+                " scheduler=" + std::to_string(policy) +
+                " priority=" + std::to_string(parameters.sched_priority) +
+                " expected SCHED_OTHER/0";
+        cpu_set_t actual;
+        CPU_ZERO(&actual);
+        if (::sched_getaffinity(task_id, sizeof(actual), &actual) == 0) {
+            error += " affinity=" + format_cpu_mask(actual);
+        }
+        error += " expected CPU set=" + format_cpu_mask(expected_cpus);
+        return false;
     }
     return true;
 }
@@ -160,6 +225,10 @@ bool PolicyRuntime::load(const PolicyRuntimeConfig& config,
                                   expected_worker_mask,
                                   true,
                                   affinity_error) ||
+            !verify_task_uses_normal_scheduler(::gettid(),
+                                               "policy thread",
+                                               expected_worker_mask,
+                                               affinity_error) ||
             !list_process_task_ids(tasks_before, affinity_error)) {
             set_error(affinity_error);
             return false;
@@ -192,14 +261,19 @@ bool PolicyRuntime::load(const PolicyRuntimeConfig& config,
                 return false;
             }
             for (const pid_t task_id : tasks_after) {
-                if (tasks_before.count(task_id) == 0U &&
-                    !verify_task_affinity(task_id,
-                                          expected_worker_mask,
-                                          false,
-                                          affinity_error)) {
-                    set_error(affinity_error);
-                    unload();
-                    return false;
+                if (tasks_before.count(task_id) == 0U) {
+                    if (!verify_task_affinity(task_id,
+                                              expected_worker_mask,
+                                              false,
+                                              affinity_error) ||
+                        !verify_task_uses_normal_scheduler(task_id,
+                                                           "Torch/OpenMP worker",
+                                                           expected_worker_mask,
+                                                           affinity_error)) {
+                        set_error(affinity_error);
+                        unload();
+                        return false;
+                    }
                 }
             }
         }

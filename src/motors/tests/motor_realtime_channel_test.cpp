@@ -274,6 +274,73 @@ bool expect_start(myactua::MyActMotorController& controller, const char* message
     return true;
 }
 
+bool run_communication_protection_switch_scenario(bool offline, bool link_down)
+{
+    auto adapter = std::make_shared<FakeAdapter>(1);
+    adapter->set_configured(0, !offline);
+    std::vector<myactua::EthercatBusHealthSnapshot> script;
+    append_health(script, 500, health(!link_down, EC_WC_INCOMPLETE, 0));
+    adapter->set_health_script(script);
+    myactua::MyActMotorController controller(adapter, 1, test_options());
+    controller.set_communication_protection_enabled(false);
+    if (!expect_start(controller, "communication switch controller should start") ||
+        !expect(adapter->wait_for_cycles(20, std::chrono::seconds(1)),
+                "disabled communication protection should keep RT cycling") ||
+        !expect(!controller.terminal_fault_latched() &&
+                !controller.communication_fault_latched() &&
+                controller.current_communication_fault() ==
+                    (link_down ? myactua::MyactCommunicationFaultReason::LinkDown
+                               : myactua::MyactCommunicationFaultReason::WkcIncomplete),
+                "disabled protection must report startup communication loss without latching")) {
+        return false;
+    }
+    if (offline) {
+        const auto diagnostics = controller.get_myact_diagnostics();
+        if (!expect(diagnostics.size() == 1 && !diagnostics[0].comm_ok &&
+                    diagnostics[0].comm_offline_total_count > 0,
+                    "disabling OFFLINE protection must preserve real communication statistics")) {
+            return false;
+        }
+    }
+    const auto stop = controller.send_discrete_command(motor_base::ControlCommand::stop());
+    if (!expect(stop.status == motor_base::CommandSubmitStatus::ACCEPTED,
+                "communication switch must not gate STOP")) return false;
+
+    const auto baseline = adapter->cycles();
+    for (std::uint64_t i = 1; i <= 12; ++i) {
+        // Like repeated policy_step() calls: setting true must never reset RT's count.
+        controller.set_communication_protection_enabled(true);
+        if (!expect(adapter->wait_for_cycles(baseline + i, std::chrono::seconds(1)),
+                    "enabled protection should keep RT cycling")) return false;
+        if (offline && i == 2 &&
+            !expect(controller.terminal_fault_latched(),
+                    "enabling OFFLINE protection must latch without a watchdog delay")) {
+            return false;
+        }
+    }
+    if (!expect(controller.terminal_fault_latched() &&
+                controller.communication_fault_latched(),
+                "enabling and repeatedly re-enabling must restore communication latching")) {
+        return false;
+    }
+    return true;
+}
+
+bool run_drive_fault_with_communication_protection_disabled(bool error_code)
+{
+    auto adapter = std::make_shared<FakeAdapter>(2);
+    adapter->set_configured(0, false);
+    if (error_code) adapter->set_rx_error(1, 0x1234);
+    else adapter->set_rx_status_word(1, myactua::BIT_FAULT);
+    myactua::MyActMotorController controller(adapter, 2, test_options());
+    controller.set_communication_protection_enabled(false);
+    return expect_start(controller, "drive fault switch controller should start") &&
+           expect(adapter->wait_for_cycles(1, std::chrono::seconds(1)),
+                  "drive fault switch controller should complete its first cycle") &&
+           expect(controller.terminal_fault_latched(),
+                  "real drive faults must still latch with communication protection disabled");
+}
+
 enum class WholeBodyFaultInjection {
     STATUS_WORD,
     ERROR_CODE,
@@ -720,10 +787,196 @@ motor_base::MotorControllerBase::RealtimeOptions latest_channel_test_options()
     return options;
 }
 
+class PausingRecordingMotorController : public RecordingMotorController {
+public:
+    using RecordingMotorController::RecordingMotorController;
+    ~PausingRecordingMotorController() override
+    {
+        resume();
+        shutdown();
+    }
+
+    void pause_next_setpoint()
+    {
+        std::lock_guard<std::mutex> lock(pause_mutex_);
+        pause_next_ = true;
+        resumed_ = false;
+    }
+
+    bool wait_paused()
+    {
+        std::unique_lock<std::mutex> lock(pause_mutex_);
+        return pause_cv_.wait_for(lock, std::chrono::seconds(1), [this] { return paused_; });
+    }
+
+    void resume()
+    {
+        std::lock_guard<std::mutex> lock(pause_mutex_);
+        resumed_ = true;
+        pause_cv_.notify_all();
+    }
+
+protected:
+    void apply_setpoint_command_impl(const motor_base::ControlCommand& cmd) override
+    {
+        RecordingMotorController::apply_setpoint_command_impl(cmd);
+        std::unique_lock<std::mutex> lock(pause_mutex_);
+        if (pause_next_) {
+            pause_next_ = false;
+            paused_ = true;
+            pause_cv_.notify_all();
+            pause_cv_.wait(lock, [this] { return resumed_; });
+            paused_ = false;
+        }
+    }
+
+private:
+    std::mutex pause_mutex_;
+    std::condition_variable pause_cv_;
+    bool pause_next_{false};
+    bool paused_{false};
+    bool resumed_{false};
+};
+
+bool run_b1_provenance_and_deadline_scenarios()
+{
+    auto options = latest_channel_test_options();
+    options.rt_period_ns = 1'000'000;
+    options.setpoint_timeout_ns = 10'000'000;
+    {
+        std::atomic<int> rollback_events{0};
+        std::atomic<int> expiry_events{0};
+        std::atomic<std::uint32_t> expired_policy{0};
+        PausingRecordingMotorController controller(options);
+        controller.set_event_callback([&](const motor_base::RtEvent& event) {
+            if (event.type != motor_base::RtEventType::SETPOINT_TIMEOUT_FAULT) return;
+            if (event.reason == 4) rollback_events.fetch_add(1);
+            if (event.reason == 1) {
+                expiry_events.fetch_add(1);
+                expired_policy.store(event.value);
+            }
+        });
+        if (!expect(controller.start(), "B1 provenance controller should start")) return false;
+        const auto timeout = std::chrono::seconds(1);
+        // Policy 2 was dropped: source_policy_seq must jump from 1 to 3.
+        for (const auto seq : {1ULL, 3ULL, 3ULL}) {
+            const auto cmd = timed_policy_position(2.5, seq);
+            const auto count = controller.applied_setpoints().size();
+            if (!expect(controller.send_policy_setpoint(cmd).status == motor_base::CommandSubmitStatus::ACCEPTED &&
+                            controller.wait_for_applied_count(count + 1, timeout),
+                        "policy gaps and same-policy hold refreshes should be applied")) return false;
+        }
+        auto rollback = timed_policy_position(2.6, 2);
+        if (!expect(controller.send_policy_setpoint(rollback).status == motor_base::CommandSubmitStatus::ACCEPTED &&
+                        controller.wait_for_cycles(controller.cycles() + 3, timeout) &&
+                        controller.applied_setpoints().size() == 3 && !controller.terminal_fault_latched(),
+                    "a policy sequence rollback must be rejected without replacing the held target")) return false;
+        auto last = timed_policy_position(2.7, 3);
+        last.timing.valid_until_ns = last.timing.produced_at_ns + 10'000'000;
+        if (!expect(controller.send_policy_setpoint(last).status == motor_base::CommandSubmitStatus::ACCEPTED &&
+                        controller.wait_for_applied_count(4, timeout) &&
+                        controller.wait_for_cycles(controller.cycles() + 30, timeout),
+                    "B1 held command should expire when its worker stops refreshing")) return false;
+        controller.shutdown();
+        if (!expect(controller.terminal_fault_latched() && controller.safety_stop_count() > 0 &&
+                        rollback_events.load() == 1 && expiry_events.load() == 1 && expired_policy.load() == 3,
+                    "10ms expiry must latch STOP with the real source policy sequence")) return false;
+    }
+    {
+        std::atomic<std::uint32_t> expired_policy{0};
+        PausingRecordingMotorController controller(options);
+        controller.set_event_callback([&](const motor_base::RtEvent& event) {
+            if (event.type == motor_base::RtEventType::SETPOINT_TIMEOUT_FAULT && event.reason == 1) {
+                expired_policy.store(event.value);
+            }
+        });
+        controller.pause_next_setpoint();
+        if (!expect(controller.start(), "B1 delayed-consumption controller should start")) return false;
+        auto old = timed_policy_position(2.5, 1);
+        old.timing.valid_until_ns = old.timing.produced_at_ns + 100'000'000;
+        if (!expect(controller.send_policy_setpoint(old).status == motor_base::CommandSubmitStatus::ACCEPTED &&
+                        controller.wait_paused(), "old target should be active while RT is paused")) return false;
+        auto fresh = timed_policy_position(2.6, 3);
+        if (!expect(fresh.timing.produced_at_ns < old.timing.valid_until_ns &&
+                        controller.send_policy_setpoint(fresh).status == motor_base::CommandSubmitStatus::ACCEPTED,
+                    "fresh target should be submitted before the old deadline")) return false;
+        std::this_thread::sleep_until(std::chrono::steady_clock::time_point(
+            std::chrono::nanoseconds(old.timing.valid_until_ns + 1'000'000)));
+        controller.resume();
+        if (!expect(controller.wait_for_cycles(controller.cycles() + 3, std::chrono::seconds(1)),
+                    "RT should resume beyond the old deadline")) return false;
+        controller.shutdown();
+        if (!expect(controller.terminal_fault_latched() && controller.applied_setpoints().size() == 1 &&
+                        expired_policy.load() == 1,
+                    "an unconsumed fresh target must not bypass the old-command expiry latch")) return false;
+    }
+    return true;
+}
+
 } // namespace
 
 int main()
 {
+    if (!run_b1_provenance_and_deadline_scenarios() ||
+        !run_communication_protection_switch_scenario(true, false) ||
+        !run_communication_protection_switch_scenario(false, false) ||
+        !run_communication_protection_switch_scenario(false, true) ||
+        !run_drive_fault_with_communication_protection_disabled(false) ||
+        !run_drive_fault_with_communication_protection_disabled(true)) {
+        return 1;
+    }
+    {
+        auto startup_adapter = std::make_shared<FakeAdapter>(1);
+        std::vector<myactua::EthercatBusHealthSnapshot> startup_script;
+        append_health(startup_script, 9, health(true, EC_WC_COMPLETE, 1));
+        append_health(startup_script, 1, health(true, EC_WC_INCOMPLETE, 0));
+        append_health(startup_script, 10, health(true, EC_WC_COMPLETE, 1));
+        startup_adapter->set_health_script(startup_script);
+
+        myactua::MyActMotorController startup_controller(
+            startup_adapter, 1, test_options());
+        if (!expect(startup_controller.wait_all_motors_ready(100, 1000),
+                    "startup readiness should eventually reach stable WKC") ||
+            !expect(startup_adapter->cycles() == 20,
+                    "an incomplete startup cycle should reset WKC stability")) {
+            return 1;
+        }
+    }
+
+    {
+        auto startup_adapter = std::make_shared<FakeAdapter>(1);
+        std::vector<myactua::EthercatBusHealthSnapshot> startup_script;
+        append_health(startup_script, 100, health(true, EC_WC_INCOMPLETE, 0));
+        startup_adapter->set_health_script(startup_script);
+
+        myactua::MyActMotorController startup_controller(
+            startup_adapter, 1, test_options());
+        if (!expect(!startup_controller.wait_all_motors_ready(5, 1000),
+                    "persistent incomplete WKC should fail startup readiness")) {
+            return 1;
+        }
+    }
+
+    {
+        auto complete_adapter = std::make_shared<FakeAdapter>(1);
+        myactua::MyActMotorController complete_controller(
+            complete_adapter, 1, test_options());
+        if (!expect(complete_controller.wait_all_motors_ready(0, 1000),
+                    "zero-timeout readiness should accept one complete sample")) {
+            return 1;
+        }
+
+        auto incomplete_adapter = std::make_shared<FakeAdapter>(1);
+        incomplete_adapter->set_health_script(
+            {health(true, EC_WC_INCOMPLETE, 0)});
+        myactua::MyActMotorController incomplete_controller(
+            incomplete_adapter, 1, test_options());
+        if (!expect(!incomplete_controller.wait_all_motors_ready(0, 1000),
+                    "zero-timeout readiness should reject an incomplete sample")) {
+            return 1;
+        }
+    }
+
     myactua::MyActMotorController::Options options;
     options.command_queue_capacity = 3;
     options.discrete_queue_capacity_per_motor = 1;
@@ -1607,6 +1860,11 @@ int main()
               watchdog_controller.shutdown();
               return 1;
           }
+          if (!expect(!watchdog_controller.communication_fault_latched(),
+                      "9 consecutive bad process-data cycles should not latch state")) {
+              watchdog_controller.shutdown();
+              return 1;
+          }
           watchdog_controller.shutdown();
           if (!expect(fault_events.load(std::memory_order_relaxed) == 0,
                       "9 consecutive bad process-data cycles should not latch")) {
@@ -1640,6 +1898,11 @@ int main()
               watchdog_controller.shutdown();
               return 1;
           }
+          if (!expect(!watchdog_controller.communication_fault_latched(),
+                      "a good process-data cycle should reset the latch counter")) {
+              watchdog_controller.shutdown();
+              return 1;
+          }
           watchdog_controller.shutdown();
           if (!expect(fault_events.load(std::memory_order_relaxed) == 0,
                       "a good process-data cycle should reset the fail counter")) {
@@ -1650,7 +1913,7 @@ int main()
       {
           auto adapter = std::make_shared<FakeAdapter>(2);
           std::vector<myactua::EthercatBusHealthSnapshot> script;
-          append_health(script, 10, health(true, EC_WC_INCOMPLETE, 0));
+          append_health(script, 100, health(true, EC_WC_INCOMPLETE, 0));
           adapter->set_health_script(script);
 
           myactua::MyActMotorController watchdog_controller(adapter, 2, test_options());
@@ -1671,6 +1934,14 @@ int main()
           }
           if (!expect(adapter->wait_for_cycles(24, std::chrono::seconds(1)),
                       "watchdog WKC fault scenario should complete")) {
+              watchdog_controller.shutdown();
+              return 1;
+          }
+          if (!expect(
+                  watchdog_controller.communication_fault_latched() &&
+                      watchdog_controller.current_communication_fault() ==
+                          myactua::MyactCommunicationFaultReason::WkcIncomplete,
+                  "10 WKC failures should latch independently and remain currently unhealthy")) {
               watchdog_controller.shutdown();
               return 1;
           }
@@ -1738,7 +2009,7 @@ int main()
       {
           auto adapter = std::make_shared<FakeAdapter>(1);
           std::vector<myactua::EthercatBusHealthSnapshot> script;
-          append_health(script, 10, health(false, EC_WC_COMPLETE, 0));
+          append_health(script, 100, health(false, EC_WC_COMPLETE, 0));
           adapter->set_health_script(script);
 
           myactua::MyActMotorController watchdog_controller(adapter, 1, test_options());
@@ -1758,12 +2029,55 @@ int main()
               watchdog_controller.shutdown();
               return 1;
           }
+          if (!expect(
+                  watchdog_controller.communication_fault_latched() &&
+                      watchdog_controller.current_communication_fault() ==
+                          myactua::MyactCommunicationFaultReason::LinkDown,
+                  "10 link-down cycles should latch and report the current state")) {
+              watchdog_controller.shutdown();
+              return 1;
+          }
           watchdog_controller.shutdown();
           if (!expect(last_reason.load(std::memory_order_relaxed) ==
                           static_cast<int>(myactua::MyactCommunicationFaultReason::LinkDown),
                       "link-down fault should report LinkDown reason")) {
               return 1;
           }
+      }
+
+      {
+          auto adapter = std::make_shared<FakeAdapter>(1);
+          adapter->set_rx_error(0, 0x2310);
+
+          myactua::MyActMotorController watchdog_controller(adapter, 1, test_options());
+          if (!expect_start(watchdog_controller,
+                            "motor-fault-before-link-loss controller should start")) {
+              return 1;
+          }
+          if (!expect(adapter->wait_for_cycles(4, std::chrono::seconds(1)) &&
+                          watchdog_controller.terminal_fault_latched() &&
+                          !watchdog_controller.communication_fault_latched(),
+                      "motor fault should latch before communication fails")) {
+              watchdog_controller.shutdown();
+              return 1;
+          }
+
+          std::vector<myactua::EthercatBusHealthSnapshot> script;
+          append_health(script, 100, health(false, EC_WC_COMPLETE, 0));
+          adapter->set_health_script(script);
+          const std::uint64_t link_loss_cycle = adapter->cycles();
+          if (!expect(adapter->wait_for_cycles(link_loss_cycle + 12,
+                                               std::chrono::seconds(1)),
+                      "communication watchdog should keep running after a motor fault") ||
+              !expect(
+                  watchdog_controller.communication_fault_latched() &&
+                      watchdog_controller.current_communication_fault() ==
+                          myactua::MyactCommunicationFaultReason::LinkDown,
+                  "link loss after a motor fault should latch independently")) {
+              watchdog_controller.shutdown();
+              return 1;
+          }
+          watchdog_controller.shutdown();
       }
 
       {
@@ -1838,6 +2152,14 @@ int main()
           }
           if (!expect(adapter->wait_for_cycles(28, std::chrono::seconds(1)),
                       "healthy cycles after RESTART(-1) should continue running")) {
+              watchdog_controller.shutdown();
+              return 1;
+          }
+          if (!expect(
+                  watchdog_controller.communication_fault_latched() &&
+                      watchdog_controller.current_communication_fault() ==
+                          myactua::MyactCommunicationFaultReason::None,
+                  "communication recovery should clear current state but preserve history")) {
               watchdog_controller.shutdown();
               return 1;
           }
