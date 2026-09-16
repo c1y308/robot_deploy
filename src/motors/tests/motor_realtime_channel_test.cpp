@@ -284,21 +284,30 @@ enum class WholeBodyFaultInjection {
 
 bool run_whole_body_fault_scenario(WholeBodyFaultInjection injection)
 {
+    constexpr int32_t feedback0_raw = 123;
+    constexpr int32_t feedback1_raw = -456;
     auto adapter = std::make_shared<FakeAdapter>(2);
     for (int i = 0; i < 2; ++i) {
         adapter->set_rx_status_word(i, operation_enabled_status_word());
         adapter->set_rx_mode(i, myactua::MyactControlMode::CSP);
     }
+    adapter->set_rx_position(0, feedback0_raw);
+    adapter->set_rx_position(1, feedback1_raw);
 
     myactua::MyActMotorController controller(adapter, 2, test_options());
     controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
     std::atomic<int> fault_events{0};
+    std::atomic<int> fault_motor{-1};
+    std::atomic<int> fault_reason{0};
+    std::atomic<std::uint32_t> fault_raw_value{0};
     controller.set_event_callback(
-        [&fault_events](const motor_base::RtEvent& event) {
-            if (event.type == motor_base::RtEventType::COMM_WATCHDOG_FAULT ||
-                event.type == motor_base::RtEventType::SETPOINT_TIMEOUT_FAULT ||
-                event.type == motor_base::RtEventType::SETPOINT_COMMAND_REJECTED) {
+        [&fault_events, &fault_motor, &fault_reason, &fault_raw_value](
+            const motor_base::RtEvent& event) {
+            if (event.type == motor_base::RtEventType::MOTOR_FAULT_LATCHED) {
                 fault_events.fetch_add(1, std::memory_order_relaxed);
+                fault_motor.store(event.motor_index, std::memory_order_relaxed);
+                fault_reason.store(event.reason, std::memory_order_relaxed);
+                fault_raw_value.store(event.value, std::memory_order_relaxed);
             }
         });
     if (!expect_start(controller, "whole-body fault controller should start")) {
@@ -356,21 +365,39 @@ bool run_whole_body_fault_scenario(WholeBodyFaultInjection injection)
         return false;
     }
 
+    myactua::MyactMotorFaultReason expected_reason =
+        myactua::MyactMotorFaultReason::None;
+    std::uint32_t expected_raw_value = 0;
     switch (injection) {
         case WholeBodyFaultInjection::STATUS_WORD:
+            expected_reason = myactua::MyactMotorFaultReason::StatusWordFault;
+            expected_raw_value =
+                operation_enabled_status_word() | myactua::BIT_FAULT;
             adapter->set_rx_status_word(
-                0, operation_enabled_status_word() | myactua::BIT_FAULT);
+                0, static_cast<uint16_t>(expected_raw_value));
             break;
         case WholeBodyFaultInjection::ERROR_CODE:
+            expected_reason = myactua::MyactMotorFaultReason::ErrorCode;
+            expected_raw_value = 0x2310;
             adapter->set_rx_error(0, 0x2310);
             break;
         case WholeBodyFaultInjection::DISABLED:
+            expected_reason = myactua::MyactMotorFaultReason::UnexpectedDisabled;
+            expected_raw_value = myactua::BIT_READY_TO_SWITCH_ON;
             adapter->set_rx_status_word(0, myactua::BIT_READY_TO_SWITCH_ON);
             break;
         case WholeBodyFaultInjection::MODE_MISMATCH:
+            expected_reason = myactua::MyactMotorFaultReason::UnexpectedMode;
+            expected_raw_value =
+                (static_cast<std::uint32_t>(
+                     static_cast<std::uint8_t>(myactua::MyactControlMode::CSV))
+                 << 8U) |
+                static_cast<std::uint32_t>(
+                    static_cast<std::uint8_t>(myactua::MyactControlMode::CSP));
             adapter->set_rx_mode(0, myactua::MyactControlMode::CSV);
             break;
         case WholeBodyFaultInjection::OFFLINE:
+            expected_reason = myactua::MyactMotorFaultReason::Offline;
             adapter->set_configured(0, false);
             break;
     }
@@ -384,13 +411,14 @@ bool run_whole_body_fault_scenario(WholeBodyFaultInjection injection)
 
     for (int i = 0; i < 2; ++i) {
         const myactua::TxPDO tx = adapter->last_tx(i);
-        if (!expect(tx.control_word == myactua::CMD_QUICK_STOP &&
-                        tx.target_pos == 0 &&
+        if (!expect(tx.control_word == myactua::CMD_DISABLE_OPERATION &&
+                        tx.target_pos ==
+                            (i == 0 ? feedback0_raw : feedback1_raw) &&
                         tx.target_vel == 0 &&
                         tx.target_torque == 0 &&
                         tx.pvt_kp == 0 &&
                         tx.pvt_kd == 0,
-                    "one-axis fault should quick-stop and clear every axis target")) {
+                    "one-axis fault should STOP and clear every axis target")) {
             controller.shutdown();
             return false;
         }
@@ -398,14 +426,25 @@ bool run_whole_body_fault_scenario(WholeBodyFaultInjection injection)
 
     const std::vector<motor_base::MotorStatusSnapshot> fault_status =
         controller.get_status();
+    const std::vector<myactua::MotorState> diagnostics =
+        controller.get_myact_diagnostics();
     if (!expect(controller.terminal_fault_latched(),
                 "one-axis fault should latch the terminal fault") ||
-        !expect(fault_events.load(std::memory_order_relaxed) == 0,
-                "direct axis faults should not synthesize an RT fault event") ||
+        !expect(fault_events.load(std::memory_order_relaxed) == 1 &&
+                    fault_motor.load(std::memory_order_relaxed) == 0 &&
+                    fault_reason.load(std::memory_order_relaxed) ==
+                        static_cast<int>(expected_reason) &&
+                    fault_raw_value.load(std::memory_order_relaxed) ==
+                        expected_raw_value,
+                "direct axis fault should publish its first cause exactly once") ||
         !expect(fault_status.size() == 2 &&
                     fault_status[0].faulted && !fault_status[0].control_ready &&
-                    fault_status[1].faulted && !fault_status[1].control_ready,
-                "terminal latch should be visible on every status snapshot") ||
+                    !fault_status[1].faulted && !fault_status[1].control_ready,
+                "only the first fault axis should publish faulted status") ||
+        !expect(diagnostics.size() == 2 &&
+                    diagnostics[0].step == myactua::MyactMotorStep::FAULT &&
+                    diagnostics[1].step == myactua::MyactMotorStep::STOPPED,
+                "fault axis should remain FAULT while the other axis is STOPPED") ||
         !expect(controller.send_debug_setpoint(
                     motor_base::ControlCommand::set_position_targets_rad(
                         {3.0, 4.0})).status ==
@@ -418,27 +457,65 @@ bool run_whole_body_fault_scenario(WholeBodyFaultInjection injection)
         !expect(controller.send_discrete_command(
                     motor_base::ControlCommand::restart()).status ==
                     motor_base::CommandSubmitStatus::INVALID_COMMAND,
-                "whole-body RESTART after whole-body latch should be rejected") ||
-        !expect(controller.send_discrete_command(
-                    motor_base::ControlCommand::stop()).status ==
-                    motor_base::CommandSubmitStatus::ACCEPTED,
+                "whole-body RESTART after whole-body latch should be rejected")) {
+        controller.shutdown();
+        return false;
+    }
+
+    const motor_base::CommandSubmitResult stop_submit =
+        controller.send_discrete_command(motor_base::ControlCommand::stop());
+    if (!expect(stop_submit.status == motor_base::CommandSubmitStatus::ACCEPTED &&
+                    stop_submit.command_id.has_value(),
                 "STOP after whole-body latch should remain accepted")) {
         controller.shutdown();
         return false;
     }
 
     adapter->set_configured(0, true);
-    adapter->set_rx_status_word(0, operation_enabled_status_word());
+    adapter->set_rx_status_word(0, myactua::BIT_READY_TO_SWITCH_ON);
+    adapter->set_rx_status_word(1, myactua::BIT_READY_TO_SWITCH_ON);
     adapter->set_rx_error(0, 0);
     adapter->set_rx_mode(0, myactua::MyactControlMode::CSP);
-    if (!expect(adapter->wait_for_cycles(adapter->cycles() + 6,
+    if (!expect(adapter->wait_for_cycles(adapter->cycles() + 50,
                                          std::chrono::seconds(1)),
-                "cleared drive condition should be observed") ||
-        !expect(adapter->last_tx(0).control_word == myactua::CMD_QUICK_STOP &&
-                    adapter->last_tx(1).control_word == myactua::CMD_QUICK_STOP &&
-                    adapter->last_tx(0).target_pos == 0 &&
-                    adapter->last_tx(1).target_pos == 0,
-                "clearing the drive condition must not restore old targets")) {
+                "cleared drive condition should satisfy STOP confirmation") ||
+        !expect(controller.get_discrete_command_result(*stop_submit.command_id) ==
+                    motor_base::DiscreteCommandResult::SUCCEEDED,
+                "explicit STOP should retain its existing confirmation condition") ||
+        !expect(adapter->last_tx(0).control_word == myactua::CMD_DISABLE_OPERATION &&
+                    adapter->last_tx(1).control_word == myactua::CMD_DISABLE_OPERATION &&
+                    adapter->last_tx(0).target_pos == feedback0_raw &&
+                    adapter->last_tx(1).target_pos == feedback1_raw,
+                "clearing the drive condition must not restore old targets") ||
+        !expect(fault_events.load(std::memory_order_relaxed) == 1,
+                "later healthy samples must not replace the first fault event")) {
+        controller.shutdown();
+        return false;
+    }
+
+    adapter->set_rx_error(1, 0x3210);
+    if (!expect(adapter->wait_for_cycles(adapter->cycles() + 4,
+                                         std::chrono::seconds(1)),
+                "secondary drive fault should be observed") ||
+        !expect(fault_events.load(std::memory_order_relaxed) == 1 &&
+                    fault_motor.load(std::memory_order_relaxed) == 0 &&
+                    fault_reason.load(std::memory_order_relaxed) ==
+                        static_cast<int>(expected_reason) &&
+                    fault_raw_value.load(std::memory_order_relaxed) ==
+                        expected_raw_value,
+                "a later axis fault must not overwrite the first fault event")) {
+        controller.shutdown();
+        return false;
+    }
+
+    const std::vector<motor_base::MotorStatusSnapshot> secondary_fault_status =
+        controller.get_status();
+    if (!expect(secondary_fault_status.size() == 2 &&
+                    secondary_fault_status[0].faulted &&
+                    secondary_fault_status[1].faulted &&
+                    !secondary_fault_status[0].control_ready &&
+                    !secondary_fault_status[1].control_ready,
+                "a later real drive error should remain visible without replacing the root cause")) {
         controller.shutdown();
         return false;
     }
@@ -478,9 +555,9 @@ bool run_whole_body_reinitialization_scenario()
                     "restarted latched controller should continue STOP output") ||
             !expect(controller.terminal_fault_latched() &&
                         adapter->last_tx(0).control_word ==
-                            myactua::CMD_QUICK_STOP &&
+                            myactua::CMD_DISABLE_OPERATION &&
                         adapter->last_tx(1).control_word ==
-                            myactua::CMD_QUICK_STOP,
+                            myactua::CMD_DISABLE_OPERATION,
                     "shutdown and start on the same controller must preserve the terminal latch") ||
             !expect(controller.send_discrete_command(
                         motor_base::ControlCommand::restart()).status ==
@@ -1486,11 +1563,11 @@ int main()
                     "rejected setpoint frame should not partially update targets")) {
             return 1;
         }
-        if (!expect(adapter->last_tx(0).control_word == myactua::CMD_QUICK_STOP &&
-                        adapter->last_tx(1).control_word == myactua::CMD_QUICK_STOP &&
+        if (!expect(adapter->last_tx(0).control_word == myactua::CMD_DISABLE_OPERATION &&
+                        adapter->last_tx(1).control_word == myactua::CMD_DISABLE_OPERATION &&
                         adapter->last_tx(0).target_pos == 0 &&
                         adapter->last_tx(1).target_pos == 0,
-                    "RT setpoint rejection should quick-stop and reset the whole body")) {
+                    "RT setpoint rejection should STOP and reset the whole body")) {
             return 1;
         }
         if (!expect(next_setpoint_submit.status ==
@@ -1499,9 +1576,9 @@ int main()
             return 1;
         }
         if (!expect(fault_status.size() == 2 &&
-                        fault_status[0].faulted && !fault_status[0].control_ready &&
-                        fault_status[1].faulted && !fault_status[1].control_ready,
-                    "RT setpoint rejection should publish whole-body fault status")) {
+                        !fault_status[0].faulted && !fault_status[0].control_ready &&
+                        !fault_status[1].faulted && !fault_status[1].control_ready,
+                    "RT setpoint rejection should publish whole-body stopped status")) {
             return 1;
         }
     }
@@ -1571,12 +1648,12 @@ int main()
       }
 
       {
-          auto adapter = std::make_shared<FakeAdapter>(1);
+          auto adapter = std::make_shared<FakeAdapter>(2);
           std::vector<myactua::EthercatBusHealthSnapshot> script;
           append_health(script, 10, health(true, EC_WC_INCOMPLETE, 0));
           adapter->set_health_script(script);
 
-          myactua::MyActMotorController watchdog_controller(adapter, 1, test_options());
+          myactua::MyActMotorController watchdog_controller(adapter, 2, test_options());
           watchdog_controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
           std::atomic<int> fault_events{0};
           std::atomic<int> last_reason{0};
@@ -1599,7 +1676,8 @@ int main()
           }
           if (!expect(
                   watchdog_controller.send_debug_setpoint(
-                      motor_base::ControlCommand::set_position_targets_rad({0.0})).status ==
+                      motor_base::ControlCommand::set_position_targets_rad(
+                          {0.0, 0.0})).status ==
                       motor_base::CommandSubmitStatus::INVALID_COMMAND,
                   "setpoint commands should be rejected while communication fault is latched")) {
               watchdog_controller.shutdown();
@@ -1613,9 +1691,13 @@ int main()
               watchdog_controller.shutdown();
               return 1;
           }
-          watchdog_controller.shutdown();
-
           const myactua::TxPDO tx = adapter->last_tx(0);
+          const myactua::TxPDO tx1 = adapter->last_tx(1);
+          const std::vector<motor_base::MotorStatusSnapshot> watchdog_status =
+              watchdog_controller.get_status();
+          const std::vector<myactua::MotorState> watchdog_diagnostics =
+              watchdog_controller.get_myact_diagnostics();
+          watchdog_controller.shutdown();
           if (!expect(fault_events.load(std::memory_order_relaxed) == 1,
                       "10 consecutive WKC failures should latch once")) {
               return 1;
@@ -1625,12 +1707,30 @@ int main()
                       "WKC fault should report WkcIncomplete reason")) {
               return 1;
           }
-          if (!expect(tx.control_word == myactua::CMD_QUICK_STOP &&
+          if (!expect(tx.control_word == myactua::CMD_DISABLE_OPERATION &&
                           tx.target_vel == 0 &&
                           tx.target_torque == 0 &&
                           tx.pvt_kp == 0 &&
-                          tx.pvt_kd == 0,
-                      "latched communication fault should output safe quick-stop PDO")) {
+                          tx.pvt_kd == 0 &&
+                          tx1.control_word == myactua::CMD_DISABLE_OPERATION &&
+                          tx1.target_vel == 0 &&
+                          tx1.target_torque == 0 &&
+                          tx1.pvt_kp == 0 &&
+                          tx1.pvt_kd == 0,
+                      "latched communication fault should output safe STOP PDO")) {
+              return 1;
+          }
+          if (!expect(watchdog_status.size() == 2 &&
+                          !watchdog_status[0].faulted &&
+                          !watchdog_status[0].control_ready &&
+                          !watchdog_status[1].faulted &&
+                          !watchdog_status[1].control_ready &&
+                          watchdog_diagnostics.size() == 2 &&
+                          watchdog_diagnostics[0].step ==
+                              myactua::MyactMotorStep::STOPPED &&
+                          watchdog_diagnostics[1].step ==
+                              myactua::MyactMotorStep::STOPPED,
+                      "communication fault without a culprit axis should publish STOPPED")) {
               return 1;
           }
       }
@@ -1693,7 +1793,7 @@ int main()
               return 1;
           }
           watchdog_controller.shutdown();
-          if (!expect(adapter->last_tx(0).control_word == myactua::CMD_QUICK_STOP,
+          if (!expect(adapter->last_tx(0).control_word == myactua::CMD_DISABLE_OPERATION,
                       "RESTART(i) should keep communication fault latched")) {
               return 1;
           }
@@ -1743,7 +1843,7 @@ int main()
           }
           watchdog_controller.shutdown();
           if (!expect(fault_events.load(std::memory_order_relaxed) == 1 &&
-                          adapter->last_tx(0).control_word == myactua::CMD_QUICK_STOP,
+                          adapter->last_tx(0).control_word == myactua::CMD_DISABLE_OPERATION,
                       "RESTART(-1) and healthy cycles should keep communication fault latched")) {
               return 1;
           }
@@ -1779,7 +1879,7 @@ int main()
           watchdog_controller.shutdown();
 
           const myactua::TxPDO tx = adapter->last_tx(0);
-          if (!expect(tx.control_word == myactua::CMD_QUICK_STOP,
+          if (!expect(tx.control_word == myactua::CMD_DISABLE_OPERATION,
                       "RT thread restart should not clear communication latch")) {
               return 1;
           }
@@ -1896,6 +1996,10 @@ int main()
               setup_controller.shutdown();
               return 1;
           }
+          const std::vector<motor_base::MotorStatusSnapshot> timeout_status =
+              setup_controller.get_status();
+          const std::vector<myactua::MotorState> timeout_diagnostics =
+              setup_controller.get_myact_diagnostics();
           setup_controller.shutdown();
 
           if (!expect(setup_controller.terminal_fault_latched() &&
@@ -1906,13 +2010,22 @@ int main()
               return 1;
           }
           const myactua::TxPDO timeout_tx = adapter->last_tx(0);
-          if (!expect(timeout_tx.control_word == myactua::CMD_QUICK_STOP &&
+          if (!expect(timeout_tx.control_word == myactua::CMD_DISABLE_OPERATION &&
                           timeout_tx.target_pos == 0 &&
                           timeout_tx.target_vel == 0 &&
                           timeout_tx.target_torque == 0 &&
                           timeout_tx.pvt_kp == 0 &&
                           timeout_tx.pvt_kd == 0,
-                      "expired startup hold should quick-stop and clear its target")) {
+                      "expired startup hold should STOP and clear its target")) {
+              return 1;
+          }
+          if (!expect(timeout_status.size() == 1 &&
+                          !timeout_status[0].faulted &&
+                          !timeout_status[0].control_ready &&
+                          timeout_diagnostics.size() == 1 &&
+                          timeout_diagnostics[0].step ==
+                              myactua::MyactMotorStep::STOPPED,
+                      "setpoint timeout without a culprit axis should publish STOPPED")) {
               return 1;
           }
       }

@@ -20,6 +20,15 @@ enum class MyactCommunicationFaultReason : int {
     WkcIncomplete = 2,
 };
 
+enum class MyactMotorFaultReason : int {
+    None = 0,
+    Offline = 1,
+    StatusWordFault = 2,
+    ErrorCode = 3,
+    UnexpectedDisabled = 4,
+    UnexpectedMode = 5,
+};
+
 enum class MyactMotorStep {
     IDLE,
     ENABLING,

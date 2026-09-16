@@ -26,7 +26,9 @@ public:
 
     struct Options : motor_base::MotorControllerBase::RealtimeOptions {
         uint32_t comm_watchdog_fault_cycles = 10;
-        ControlWordCommand comm_fault_control_word = CMD_QUICK_STOP;
+        // Retained for source compatibility. Terminal protection always sends
+        // CMD_DISABLE_OPERATION, matching the explicit STOP command.
+        ControlWordCommand comm_fault_control_word = CMD_DISABLE_OPERATION;
     };
 
     MyActMotorController(std::shared_ptr<EthercatAdapter> adapter, int num_motors);
@@ -53,6 +55,8 @@ private:
 
     uint32_t process_data_fail_count_{0};
     MyactCommunicationFaultReason fault_reason_{MyactCommunicationFaultReason::None};
+    int terminal_fault_motor_index_{-1};
+    MyactMotorFaultReason terminal_motor_fault_reason_{MyactMotorFaultReason::None};
     std::int64_t current_cycle_host_timestamp_ns_{0};
     bool process_data_ok_{false}; // Most recent received cycle, RT thread only.
 
@@ -92,7 +96,11 @@ private:
     void latch_communication_fault(
         MyactCommunicationFaultReason reason,
         const EthercatBusHealthSnapshot& health);
-    void apply_whole_body_quick_stop();
+    bool latch_motor_fault(
+        MotorState& motor,
+        MyactMotorFaultReason reason,
+        uint32_t raw_value);
+    void apply_whole_body_stop();
     void reset_motor_setpoints_to_feedback(MotorState& motor);
 
     void push_status_channel_busy_event();

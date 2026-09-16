@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <iomanip>
 #include <iostream>
 
 #include "driver/myact/motor_units.hpp"
@@ -48,6 +49,20 @@ const char* control_mode_name(MyactControlMode mode)
         case MyactControlMode::CSP: return "CSP";
         case MyactControlMode::CSV: return "CSV";
         case MyactControlMode::CST: return "CST";
+    }
+    return "UNKNOWN";
+}
+
+const char* motor_fault_reason_name(MyactMotorFaultReason reason)
+{
+    switch (reason) {
+        case MyactMotorFaultReason::None: return "NONE";
+        case MyactMotorFaultReason::Offline: return "OFFLINE";
+        case MyactMotorFaultReason::StatusWordFault: return "STATUS_WORD_FAULT";
+        case MyactMotorFaultReason::ErrorCode: return "ERROR_CODE";
+        case MyactMotorFaultReason::UnexpectedDisabled:
+            return "UNEXPECTED_DISABLED";
+        case MyactMotorFaultReason::UnexpectedMode: return "UNEXPECTED_MODE";
     }
     return "UNKNOWN";
 }
@@ -223,6 +238,41 @@ void print_myact_event(const mb::RtEvent& event)
                       << ", reason=" << event.reason
                       << ", policy_seq=" << event.value << "\n";
             break;
+
+        case mb::RtEventType::MOTOR_FAULT_LATCHED: {
+            const auto reason =
+                static_cast<MyactMotorFaultReason>(event.reason);
+            std::cerr << "[MYACTUA] motor fault latched on motor "
+                      << event.motor_index
+                      << ", reason=" << motor_fault_reason_name(reason);
+            switch (reason) {
+                case MyactMotorFaultReason::StatusWordFault:
+                case MyactMotorFaultReason::UnexpectedDisabled:
+                    std::cerr << ", status_word=0x" << std::hex << event.value
+                              << std::dec;
+                    break;
+                case MyactMotorFaultReason::ErrorCode:
+                    std::cerr << ", error_code=0x" << std::hex << event.value
+                              << std::dec;
+                    break;
+                case MyactMotorFaultReason::UnexpectedMode: {
+                    const auto actual = static_cast<MyactControlMode>(
+                        static_cast<uint8_t>((event.value >> 8U) & 0xffU));
+                    const auto target = static_cast<MyactControlMode>(
+                        static_cast<uint8_t>(event.value & 0xffU));
+                    std::cerr << ", actual_mode=" << control_mode_name(actual)
+                              << ", target_mode=" << control_mode_name(target);
+                    break;
+                }
+                case MyactMotorFaultReason::Offline:
+                    std::cerr << ", configured=" << event.value;
+                    break;
+                case MyactMotorFaultReason::None:
+                    break;
+            }
+            std::cerr << "\n";
+            break;
+        }
     }
 }
 

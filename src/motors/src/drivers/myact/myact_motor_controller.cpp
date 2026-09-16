@@ -103,6 +103,12 @@ bool control_ready_for_current_target(const MotorState& motor,
         terminal_fault);
 }
 
+uint32_t encode_mode_fault_value(MyactControlMode actual, MyactControlMode target)
+{
+    return (static_cast<uint32_t>(static_cast<uint8_t>(actual)) << 8U) |
+           static_cast<uint32_t>(static_cast<uint8_t>(target));
+}
+
 }
 
 MyactControlMode MyActMotorController::to_myact_mode(mb::MotorControlMode mode)
@@ -343,30 +349,41 @@ void MyActMotorController::update()
 
     /* 任一轴退出稳定运行状态时，锁存整机保护。主动 STOP、RESTART 和模式切换
        会先改变 desired/step，因此不会被视为意外失能或模式漂移。 */
-    for (const auto& motor : _motors) {
+    for (auto& motor : _motors) {
         const bool expected_running =
             motor.step == MyactMotorStep::RUNNING &&
             motor.desired.enabled &&
             motor.mode_switch_step == MyactModeSwitchStep::IDLE;
-        const bool drive_fault =
-            motor.comm_ok &&
-            (motor.observed.sw_faulted || motor.rx.error != 0);
-        const bool unexpectedly_disabled =
-            motor.comm_ok && expected_running &&
-            !motor.observed.operation_enabled;
-        const bool unexpected_mode =
-            motor.comm_ok && expected_running &&
-            motor.observed.observed_mode != motor.desired.mode;
 
-        if (!motor.comm_ok || drive_fault || unexpectedly_disabled || unexpected_mode) {
-            latch_terminal_fault();
+        MyactMotorFaultReason reason = MyactMotorFaultReason::None;
+        uint32_t raw_value = 0;
+        if (!motor.comm_ok) {
+            reason = MyactMotorFaultReason::Offline;
+        } else if (motor.observed.sw_faulted) {
+            reason = MyactMotorFaultReason::StatusWordFault;
+            raw_value = motor.rx.status_word;
+        } else if (motor.rx.error != 0) {
+            reason = MyactMotorFaultReason::ErrorCode;
+            raw_value = motor.rx.error;
+        } else if (expected_running && !motor.observed.operation_enabled) {
+            reason = MyactMotorFaultReason::UnexpectedDisabled;
+            raw_value = motor.rx.status_word;
+        } else if (expected_running &&
+                   motor.observed.observed_mode != motor.desired.mode) {
+            reason = MyactMotorFaultReason::UnexpectedMode;
+            raw_value = encode_mode_fault_value(
+                motor.observed.observed_mode, motor.desired.mode);
+        }
+
+        if (reason != MyactMotorFaultReason::None) {
+            latch_motor_fault(motor, reason, raw_value);
             break;
         }
     }
 
     update_communication_watchdog(process_data_ok, health);
     if (terminal_fault_latched()) {
-        apply_whole_body_quick_stop();
+        apply_whole_body_stop();
         return;
     }
 
@@ -431,15 +448,46 @@ void MyActMotorController::latch_communication_fault(
 }
 
 
-void MyActMotorController::apply_whole_body_quick_stop()
+bool MyActMotorController::latch_motor_fault(
+    MotorState& motor,
+    MyactMotorFaultReason reason,
+    uint32_t raw_value)
+{
+    if (!latch_terminal_fault()) {
+        return false;
+    }
+
+    terminal_fault_motor_index_ = motor.motor_index;
+    terminal_motor_fault_reason_ = reason;
+
+    mb::RtEvent event;
+    event.type = mb::RtEventType::MOTOR_FAULT_LATCHED;
+    event.tick = discrete_command_tick();
+    event.motor_index = motor.motor_index;
+    event.reason = static_cast<int>(terminal_motor_fault_reason_);
+    event.value = raw_value;
+    push_event(event);
+    return true;
+}
+
+
+void MyActMotorController::apply_whole_body_stop()
 {
     for (auto& motor : _motors) {
-        motor.step = MyactMotorStep::FAULT;
+        const bool is_latched_fault_motor =
+            motor.motor_index == terminal_fault_motor_index_;
+        const bool has_current_drive_fault =
+            motor.comm_ok &&
+            (motor.observed.sw_faulted || motor.rx.error != 0);
+
+        motor.step = (is_latched_fault_motor || has_current_drive_fault)
+            ? MyactMotorStep::FAULT
+            : MyactMotorStep::STOPPED;
         motor.mode_switch_step = MyactModeSwitchStep::IDLE;
         motor.desired.enabled = false;
 
         reset_motor_setpoints_to_feedback(motor);
-        motor.tx.control_word = options_.comm_fault_control_word;
+        motor.tx.control_word = CMD_DISABLE_OPERATION;
         motor.tx.op_mode = static_cast<int8_t>(motor.desired.mode);
 
         _adapter->send(motor.motor_index, motor.tx);
@@ -950,15 +998,21 @@ void MyActMotorController::update_realtime_feedback()
         feedback[i].torque_percent    = motor.observed.torque_percent;
         feedback[i].comm_ok           = motor.comm_ok;
 
+        const bool is_latched_fault_motor =
+            terminal_fault &&
+            motor.motor_index == terminal_fault_motor_index_;
+        const bool has_current_drive_fault =
+            motor.comm_ok &&
+            (motor.observed.sw_faulted || motor.rx.error != 0);
+
         if (motor.comm_ok) {
             feedback[i].enabled = motor.observed.operation_enabled;
-            feedback[i].faulted = terminal_fault ||
-                                  motor.observed.sw_faulted ||
-                                  (motor.rx.error != 0);
+            feedback[i].faulted =
+                is_latched_fault_motor || has_current_drive_fault;
             feedback[i].mode = to_motor_control_mode(motor.observed.observed_mode);
         } else {
             feedback[i].enabled = false;
-            feedback[i].faulted = terminal_fault;
+            feedback[i].faulted = is_latched_fault_motor;
             feedback[i].mode    = mb::MotorControlMode::NONE;
         }
         feedback[i].control_ready =
@@ -993,13 +1047,17 @@ void MyActMotorController::update_status_snapshot()
         s.velocity_rad_s = m.observed.velocity_rad_s;
         s.torque_percent = m.observed.torque_percent;
         s.comm_ok = m.comm_ok;
+        const bool is_latched_fault_motor =
+            terminal_fault && m.motor_index == terminal_fault_motor_index_;
+        const bool has_current_drive_fault =
+            m.comm_ok && (m.observed.sw_faulted || m.rx.error != 0);
         if (m.comm_ok) {
             s.enabled = m.observed.operation_enabled;
-            s.faulted = terminal_fault || m.observed.sw_faulted || (m.rx.error != 0);
+            s.faulted = is_latched_fault_motor || has_current_drive_fault;
             s.mode = to_motor_control_mode(m.observed.observed_mode);
         } else {
             s.enabled = false;
-            s.faulted = terminal_fault;
+            s.faulted = is_latched_fault_motor;
             s.mode = mb::MotorControlMode::NONE;
         }
         s.control_ready = control_ready_for_current_target(m, terminal_fault);
