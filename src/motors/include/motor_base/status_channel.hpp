@@ -35,7 +35,7 @@ struct MotorStatusSnapshot {
 
     MotorControlMode mode;
     MotorControlMode target_mode;
-    std::int64_t host_timestamp_ns;
+    std::int64_t host_timestamp_ns; // CLOCK_MONOTONIC time of the last valid PDO; zero before the first.
 
     MotorStatusSnapshot()
         : motor_index(-1), position_rad(0.0), velocity_rad_s(0.0),

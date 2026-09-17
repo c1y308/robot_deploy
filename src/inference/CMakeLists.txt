@@ -83,6 +83,7 @@ target_link_libraries(deploy_config PUBLIC robot_base yaml-cpp)
 
 add_library(robot_interface STATIC
     src/robot/robot_interface.cpp
+    src/robot/policy_command_worker.cpp
     src/robot/action_processor.cpp
     src/robot/observation_builder.cpp
     src/robot/robot_motor_session.cpp

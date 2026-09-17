@@ -76,7 +76,7 @@ void write_header(std::ostream& stream, std::size_t observation_size)
     stream << ",imu_receive_timestamp_ns"
            << ",imu_sample_timestamp_ns"
            << ",motor_age_us"
-           << ",target_seq,obs_to_action_age_us,target_hold_age_us,policy_result_dropped"
+           << ",obs_to_action_age_us,target_hold_age_us,policy_result_dropped"
            << '\n';
 }
 
@@ -154,7 +154,6 @@ void write_record(std::ostream&          stream,
     stream << ',' << record.imu_receive_timestamp_ns
            << ',' << record.imu_sample_timestamp_ns
            << ',' << record.motor_age_us
-           << ',' << record.target_seq
            << ',' << record.obs_to_action_age_us
            << ',' << record.target_hold_age_us
            << ',' << (record.policy_result_dropped ? 1 : 0);

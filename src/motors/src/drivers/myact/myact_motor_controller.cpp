@@ -363,8 +363,8 @@ void MyActMotorController::update()
         }
         _motors[i].comm_ok = comm_ok;
         
-        /* 只接受通信正常的电机数据 */
-        if (comm_ok) {
+        /* 只有完整的本周期 PDO 才更新观测及采样时间。 */
+        if (process_data_ok && comm_ok) {
             MotorState& motor = _motors[i];
             motor.rx = _adapter->receive(motor.motor_index);
             const uint16_t sw = motor.rx.status_word;
@@ -379,6 +379,7 @@ void MyActMotorController::update()
                 vel_raw_to_rad_s_for_motor(motor.motor_index);
             motor.observed.torque_percent =
                 static_cast<double>(motor.rx.torque) * kRawTorqueToPercent;
+            motor.last_valid_host_timestamp_ns = current_cycle_host_timestamp_ns_;
         }
     }
 
@@ -1006,7 +1007,7 @@ void MyActMotorController::update_realtime_feedback()
         const auto& motor = _motors[i];
 
         feedback[i].motor_index       = motor.motor_index;
-        feedback[i].host_timestamp_ns = current_cycle_host_timestamp_ns_;
+        feedback[i].host_timestamp_ns = motor.last_valid_host_timestamp_ns;
         feedback[i].position_rad      = motor.observed.position_rad;
         feedback[i].velocity_rad_s    = motor.observed.velocity_rad_s;
         feedback[i].torque_percent    = motor.observed.torque_percent;

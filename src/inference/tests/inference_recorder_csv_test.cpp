@@ -101,7 +101,6 @@ void test_policy_observation_csv_columns(std::size_t observation_size)
     record.imu_receive_timestamp_ns = record.inference_start_ns - 8000;
     record.imu_sample_timestamp_ns = 123456789000ULL;
     record.command_applied = true;
-    record.target_seq = 30;
     record.obs_to_action_age_us = 143;
     record.target_hold_age_us = 25000;
 
@@ -123,7 +122,6 @@ void test_policy_observation_csv_columns(std::size_t observation_size)
     inference::InferenceRecord drop = record;
     drop.frame_index = 43;
     drop.policy_seq = 43;
-    drop.target_seq = 0;
     drop.command_applied = false;
     drop.policy_result_dropped = true;
     drop.obs_to_action_age_us = 44000;
@@ -200,17 +198,15 @@ void test_policy_observation_csv_columns(std::size_t observation_size)
            "command timestamp value mismatch");
     expect(std::stoi(values[command_applied_index]) == 1,
            "command applied value mismatch");
-    const std::size_t target_seq_index = require_column(columns, "target_seq");
+    expect(!has_column(columns, "target_seq"), "CSV still contains the removed target sequence");
     const std::size_t obs_age_index = require_column(columns, "obs_to_action_age_us");
     const std::size_t hold_age_index = require_column(columns, "target_hold_age_us");
     const std::size_t dropped_index = require_column(columns, "policy_result_dropped");
-    expect(target_seq_index == columns.size() - 4 &&
-               obs_age_index == target_seq_index + 1 &&
-               hold_age_index == target_seq_index + 2 &&
-               dropped_index == target_seq_index + 3,
+    expect(obs_age_index == columns.size() - 3 &&
+               hold_age_index == obs_age_index + 1 &&
+               dropped_index == obs_age_index + 2,
            "B1 columns must be appended without moving existing columns");
-    expect(std::stoull(values[target_seq_index]) == 30 &&
-               std::stoll(values[obs_age_index]) == 143 &&
+    expect(std::stoll(values[obs_age_index]) == 143 &&
                std::stoll(values[hold_age_index]) == 25000 &&
                std::stoi(values[dropped_index]) == 0,
            "normal B1 record values mismatch");
@@ -247,7 +243,6 @@ void test_policy_observation_csv_columns(std::size_t observation_size)
     const auto drop_values = split_csv_line(data_line);
     expect(drop_values.size() == columns.size(), "drop CSV column count mismatch");
     expect(std::stoull(drop_values[policy_seq_index]) == 43 &&
-               std::stoull(drop_values[target_seq_index]) == 0 &&
                std::stoi(drop_values[command_applied_index]) == 0 &&
                std::stoi(drop_values[dropped_index]) == 1 &&
                std::stoll(drop_values[obs_age_index]) == 44000 &&

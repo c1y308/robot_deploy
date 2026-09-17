@@ -60,6 +60,7 @@ struct MotorState {
 
     TxPDO tx;
     RxPDO rx;
+    std::int64_t last_valid_host_timestamp_ns;
 
     bool     comm_ok;
     uint32_t comm_offline_total_count;
@@ -73,6 +74,7 @@ struct MotorState {
           mode_switch_step(MyactModeSwitchStep::IDLE),
           tx({}),
           rx({}),
+          last_valid_host_timestamp_ns(0),
           comm_ok(false),
           comm_offline_total_count(0)
     {

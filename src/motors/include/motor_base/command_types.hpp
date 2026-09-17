@@ -63,8 +63,8 @@ using CommandId = std::uint64_t;
  */
 struct CommandTiming {
     std::uint64_t source_policy_seq{0};
-    std::int64_t produced_at_ns{0};
-    std::int64_t valid_until_ns{0};
+    std::int64_t  produced_at_ns{0};
+    std::int64_t  valid_until_ns{0};
 
     bool is_well_formed() const noexcept
     {

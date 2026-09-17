@@ -12,10 +12,8 @@
 #include <cstdint>
 #include <cmath>
 #include <cstring>
-#include <exception>
 #include <filesystem>
 #include <iostream>
-#include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -25,31 +23,12 @@
 
 namespace inference {
 
-namespace {
-
-void fill_record_motor_state(const MotorStateSnapshot& motor_state,
-                             std::size_t motor_count,
-                             InferenceRecord& record)
-{
-    record.motor_sample_timestamp_ns = motor_state.timestamp_ns;
-
-    for (std::size_t i = 0; i < motor_count; ++i) {
-        record.rx_pos_rad[i]     = motor_state.position_rad[i];
-        record.rx_vel_rad_s[i]   = motor_state.velocity_rad_s[i];
-        record.torque_percent[i] = motor_state.torque_percent[i];
-        record.comm_ok[i]        = motor_state.comm_ok[i];
-        record.enabled[i]        = motor_state.enabled[i];
-    }
-    
-}
-
-}  // namespace
-
 /* 保存外部传入的接口配置，后续由初始化函数按模块使用。 */
 RobotInterface::RobotInterface(RobotInterfaceConfig config)
     : config_(std::move(config)),
       motor_session_(config_.motor, config_.safety, config_.runtime),
-      imu_session_(config_.imu, config_.runtime)
+      imu_session_(config_.imu, config_.runtime),
+      worker_(config_, motor_session_, first_policy_inference_started_ns_)
 {
 }
 
@@ -62,10 +41,13 @@ RobotInterface::~RobotInterface() {
 
 /* 编排机器人完整运行态：电机、策略、IMU 和站立姿态复位。 */
 bool RobotInterface::initialize() {
-    if (initialized_.load()) {
+
+    // 如果已经初始化，直接返回成功。
+    if (is_initialized()) {
         return true;
     }
 
+    // 如果上次初始化失败，先尝试释放资源。
     if (shutdown() != ShutdownResult::Confirmed) return false;
 
     if (!initialize_model_processors()) {
@@ -78,6 +60,8 @@ bool RobotInterface::initialize() {
         shutdown();
         return false;
     }
+
+    // 初始化电机
     if (!motor_session_.initialize(/*defer_communication_protection=*/true)) {
         shutdown();
         return false;
@@ -89,6 +73,7 @@ bool RobotInterface::initialize() {
 
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
+    // 初始化 IMU
     if (!imu_session_.initialize()) {
         shutdown();
         return false;
@@ -96,15 +81,18 @@ bool RobotInterface::initialize() {
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
-    if (!reset_joints()) {
+    // 恢复到初始位置
+    std::vector<double> startup_hold_target_motor_rad;
+    if (!reset_joints(startup_hold_target_motor_rad)) {
         shutdown();
         return false;
     }
 
-    // std::this_thread::sleep_for(std::chrono::seconds(10));
-
+    // 初始化完成
     initialized_.store(true);
-    if (!start_policy_command_worker()) {
+
+    // 开启策略命令线程
+    if (!worker_.start(*action_processor_, std::move(startup_hold_target_motor_rad))) {
         initialized_.store(false);
         shutdown();
         return false;
@@ -118,7 +106,7 @@ bool RobotInterface::initialize() {
 ShutdownResult RobotInterface::shutdown() {
     const auto request = motor_session_.request_stop();
     initialized_.store(false);
-    policy_command_worker_running_.store(false);
+    worker_.request_stop();
 
     bool stop_confirmed = true;
     if (motor_session_.rt_started_) {
@@ -134,7 +122,8 @@ ShutdownResult RobotInterface::shutdown() {
         }
     }
 
-    stop_policy_command_worker();
+    worker_.stop();
+    record_completed_policy_frame();
     unload_policy();
     imu_session_.deinitialize();
     motor_session_.release_controller();
@@ -187,15 +176,20 @@ bool RobotInterface::load_policy() {
 
     initialize_policy_runtime_state();
 
+    // 配置运行时线程数和 CPU 亲和性
     const int intra_op_threads = config_.runtime.enabled
                                      ? config_.runtime.torch_intra_op_threads
                                      : 0;
+
     const int inter_op_threads = config_.runtime.enabled
                                      ? config_.runtime.torch_inter_op_threads
                                      : 0;
+
     const int openblas_threads = config_.runtime.enabled
                                      ? config_.runtime.openblas_threads
                                      : 0;
+
+    // 加载模型
     if (!policy_runtime_.load(config_.policy,
                               intra_op_threads,
                               inter_op_threads,
@@ -208,6 +202,7 @@ bool RobotInterface::load_policy() {
         return false;
     }
 
+    // 进行锁页
     if (config_.runtime.require_process_memory_lock) {
         // 解决 MCL_FUTURE 在创建线程时一次性填充并锁定整个默认栈，
         // 拉长 EtherCAT 启动收发交接空档并导致失同步的问题。
@@ -235,12 +230,16 @@ bool RobotInterface::load_policy() {
         }
     }
 
+    // 是否开启日志记录
     if (config_.recorder.enabled) {
+
         config_.recorder.policy_observation_size =
             policy_observation::observation_size(config_.policy.gait.enabled);
+
         const robot_base::ThreadRuntimeOptions recorder_thread =
             config_.runtime.enabled ? config_.runtime.background
                                     : robot_base::ThreadRuntimeOptions{};
+
         if (!inference_recorder_.start(config_.recorder, recorder_thread)) {
             std::cerr << "[RobotInterface] failed to open inference log: "
                       << inference_recorder_.last_error() << "\n";
@@ -252,6 +251,7 @@ bool RobotInterface::load_policy() {
             std::cout << "[RobotInterface] inference log: "
                       << inference_recorder_.log_path() << "\n";
         }
+
     }
     return true;
 }
@@ -271,7 +271,7 @@ std::array<double, 3> RobotInterface::get_target_velocity() const {
 
 
 /* 按平滑插值将关节恢复到 default_joint_pos_rad 初始姿态。 */
-bool RobotInterface::reset_joints() {
+bool RobotInterface::reset_joints(std::vector<double>& final_target_motor_rad) {
     if (!motor_session_.is_initialized()) {
         return false;
     }
@@ -331,7 +331,7 @@ bool RobotInterface::reset_joints() {
         }
     }
 
-    startup_hold_target_motor_rad_ = target_rad;
+    final_target_motor_rad = std::move(target_rad);
     return true;
 }
 
@@ -343,6 +343,7 @@ void RobotInterface::unload_policy() {
     inference_recorder_failed_ = false;
     initialize_policy_runtime_state();
 }
+
 
 void RobotInterface::initialize_policy_runtime_state() {
     reset_policy_command_state();
@@ -356,17 +357,20 @@ void RobotInterface::initialize_policy_runtime_state() {
 
 void RobotInterface::reset_policy_command_state() noexcept
 {
+    policy_step_phase_ = PolicyStepPhase::Idle;
+    policy_step_phase_started_ns_ = 0;
     next_policy_seq_ = 1;
-    next_target_seq_ = 1;
     last_policy_target_published_ns_ = 0;
     first_policy_inference_started_ns_.store(0, std::memory_order_release);
-    policy_target_channel_.reset_empty();
-    completed_policy_record_channel_.reset_empty();
+    worker_.reset_channels();
 }
 
+// 检测传感器的时间戳是否过期或不一致
 bool RobotInterface::validate_policy_sensor_timing(
-    std::int64_t motor_timestamp_ns, std::int64_t imu_timestamp_ns,
-    std::int64_t now_ns, std::string& error) const
+    std::int64_t motor_timestamp_ns,
+    std::int64_t imu_timestamp_ns,
+    std::int64_t now_ns,
+    std::string& error) const
 {
     error.clear();
     if (motor_timestamp_ns <= 0) {
@@ -378,13 +382,13 @@ bool RobotInterface::validate_policy_sensor_timing(
         return false;
     }
 
-    const std::int64_t imu_age_ns = now_ns - imu_timestamp_ns;
+    const std::int64_t imu_age_ns   = now_ns - imu_timestamp_ns;
     const std::int64_t motor_age_ns = now_ns - motor_timestamp_ns;
     const std::int64_t skew_ns = imu_timestamp_ns - motor_timestamp_ns;
-    if (imu_age_ns > robot_base::seconds_to_ns(config_.sensor_guard.max_imu_sample_age_s) ||
+
+    if (imu_age_ns   > robot_base::seconds_to_ns(config_.sensor_guard.max_imu_sample_age_s) ||
         motor_age_ns > robot_base::seconds_to_ns(config_.sensor_guard.max_motor_sample_age_s) ||
-        robot_base::abs_ns(skew_ns) >
-            robot_base::seconds_to_ns(config_.sensor_guard.max_sensor_state_skew_s)) {
+        robot_base::abs_ns(skew_ns) > robot_base::seconds_to_ns(config_.sensor_guard.max_sensor_state_skew_s)) {
         error = "sensor timing guard failed: imu_age_us=" +
             std::to_string(robot_base::ns_to_us(imu_age_ns)) +
             ", motor_age_us=" + std::to_string(robot_base::ns_to_us(motor_age_ns)) +
@@ -394,6 +398,7 @@ bool RobotInterface::validate_policy_sensor_timing(
     return true;
 }
 
+
 std::uint64_t RobotInterface::begin_policy_inference(std::int64_t now_ns) noexcept
 {
     if (first_policy_inference_started_ns_.load(std::memory_order_relaxed) == 0) {
@@ -402,84 +407,36 @@ std::uint64_t RobotInterface::begin_policy_inference(std::int64_t now_ns) noexce
     return next_policy_seq_++;
 }
 
+
 RobotInterface::PolicyResultAdmission RobotInterface::admit_policy_result(
-    std::int64_t observation_time_ns, std::int64_t decision_now_ns) const noexcept
+    std::int64_t observation_time_ns,
+    std::int64_t decision_now_ns) const noexcept
 {
-    const std::int64_t obs_age_ns = decision_now_ns - observation_time_ns;
+    const std::int64_t obs_age_ns      = decision_now_ns - observation_time_ns;
     const std::int64_t hold_started_ns = last_policy_target_published_ns_ != 0
         ? last_policy_target_published_ns_
         : first_policy_inference_started_ns_.load(std::memory_order_acquire);
+
     PolicyResultAdmission admission;
+
     admission.obs_to_action_age_us = robot_base::ns_to_us(obs_age_ns);
-    admission.target_hold_age_us = robot_base::ns_to_us(decision_now_ns - hold_started_ns);
+    admission.target_hold_age_us   = robot_base::ns_to_us(decision_now_ns - hold_started_ns);
     admission.dropped = obs_age_ns > kMaxObsToActionAgeNs;
     return admission;
 }
 
-void RobotInterface::publish_policy_target(
-    PolicyTargetFrame& staged_target, std::int64_t published_at_ns) noexcept
-{
-    staged_target.target_seq = next_target_seq_;
-    staged_target.published_at_ns = published_at_ns;
-    staged_target.valid_until_ns = published_at_ns +
-        robot_base::seconds_to_ns(config_.safety.policy_target_timeout_ms / 1000.0);
-    staged_target.inference_record.target_seq = staged_target.target_seq;
-    staged_target.inference_record.policy_valid_until_ns = staged_target.valid_until_ns;
-    // publish_written() 返回是否覆盖旧帧，不是发布成功与否。
-    policy_target_channel_.publish_written();
-    ++next_target_seq_;
-    last_policy_target_published_ns_ = published_at_ns;
-}
 
-void RobotInterface::complete_policy_result(const InferenceRecord& record)
+void RobotInterface::record_completed_policy_frame()
 {
-    if (!record.policy_result_dropped) {
-        observation_builder_->commit_policy_action(record.raw_action);
+    InferenceRecord record;
+    if (worker_.try_consume_completed_record(record)) {
+        record_policy_frame(record);
     }
-    observation_builder_->advance_frame();
-
-    // recorder 加锁、队列复制及错误字符串处理均在控制发布/丢弃之后。
-    record_latest_completed_policy_frame();
-    if (record.policy_result_dropped) {
-        record_inference(record);
-    }
-    set_policy_step_phase(PolicyStepPhase::Idle);
 }
 
-std::int64_t RobotInterface::startup_policy_deadline_ns() const noexcept
-{
-    const std::int64_t started_ns =
-        first_policy_inference_started_ns_.load(std::memory_order_acquire);
-    return started_ns == 0 ? 0 : started_ns +
-        robot_base::seconds_to_ns(config_.safety.policy_target_timeout_ms / 1000.0);
-}
 
-bool RobotInterface::startup_policy_target_expired(std::int64_t now_ns) const noexcept
-{
-    const std::int64_t deadline_ns = startup_policy_deadline_ns();
-    return deadline_ns != 0 && policy_deadline_expired(deadline_ns, now_ns);
-}
-
-bool RobotInterface::policy_deadline_expired(
-    std::int64_t deadline_ns, std::int64_t now_ns) noexcept
-{
-    return now_ns >= deadline_ns;
-}
-
-motor_base::CommandTiming RobotInterface::policy_command_timing(
-    const PolicyTargetFrame& target, std::int64_t produced_at_ns) const noexcept
-{
-    motor_base::CommandTiming timing;
-    timing.source_policy_seq = target.policy_seq;
-    timing.produced_at_ns = produced_at_ns;
-    timing.valid_until_ns = std::min(target.valid_until_ns, produced_at_ns +
-        robot_base::seconds_to_ns(config_.safety.control_command_timeout_ms / 1000.0));
-    return timing;
-}
-
-void RobotInterface::record_inference(const InferenceRecord& record) {
-    if (!config_.recorder.enabled  ||
-        inference_recorder_failed_) {
+void RobotInterface::record_policy_frame(const InferenceRecord& record) {
+    if (!config_.recorder.enabled  || inference_recorder_failed_) {
         return;
     }
 
@@ -490,288 +447,13 @@ void RobotInterface::record_inference(const InferenceRecord& record) {
     }
 }
 
-void RobotInterface::record_latest_completed_policy_frame()
-{
-    InferenceRecord record;
-    if (completed_policy_record_channel_.try_consume_latest(record)) {
-        record_inference(record);
-    }
-}
-
-bool RobotInterface::start_policy_command_worker()
-{
-    if (policy_command_worker_running_.load()) {
-        return true;
-    }
-    if (!action_processor_) {
-        std::cerr << "[RobotInterface] policy command worker rejected: model processors are not initialized\n";
-        return false;
-    }
-    if (!motor_session_.is_initialized() || !motor_session_.motion_enabled()) {
-        std::cerr << "[RobotInterface] policy command worker rejected: motors are not running\n";
-        return false;
-    }
-
-    reset_policy_command_state();
-    {
-        std::lock_guard<std::mutex> lock(policy_command_error_mutex_);
-        policy_command_worker_error_.clear();
-    }
-
-    // 在线程接管前刷新一次复位命令，为首次 worker 调度保留完整有效期。
-    if (!motor_session_.apply_targets_rad(startup_hold_target_motor_rad_)) {
-        std::cerr << "[RobotInterface] policy command worker rejected: "
-                     "failed to refresh startup reset pose\n";
-        return false;
-    }
-
-    policy_command_worker_failed_.store(false);
-    policy_command_worker_running_.store(true);
-
-    const robot_base::ThreadRuntimeOptions worker_options =
-        config_.runtime.enabled ? config_.runtime.policy_command
-                                : robot_base::ThreadRuntimeOptions{};
-    std::string thread_error;
-    if (!robot_base::start_configured_thread(
-            policy_command_worker_thread_, "policy_cmd", worker_options,
-            [this] { policy_command_worker_loop(); }, thread_error)) {
-        policy_command_worker_running_.store(false);
-        std::cerr << "[RobotInterface] failed to start policy command worker: "
-                  << thread_error << "\n";
-        return false;
-    }
-
-    return true;
-}
-
-void RobotInterface::stop_policy_command_worker()
-{
-    policy_command_worker_running_.store(false);
-    if (policy_command_worker_thread_.joinable() &&
-        policy_command_worker_thread_.get_id() != std::this_thread::get_id()) {
-        policy_command_worker_thread_.join();
-    }
-    record_latest_completed_policy_frame();
-}
-
-void RobotInterface::policy_command_worker_loop()
-{
-    const auto period = std::chrono::nanoseconds(
-        std::max<std::int64_t>(
-            1,
-            static_cast<std::int64_t>(
-               std::llround(config_.ankle_torque.filter_dt_s * 1'000'000'000.0))));
-
-    auto next_wake = std::chrono::steady_clock::now();
-
-    PolicyTargetFrame current_target;
-    bool has_current_target = false;
-
-    std::array<motor_base::MotorStatusSnapshot,
-               motor_base::kMaxMotorCommandSetpoints> motor_feedback;
-    bool has_motor_feedback = false;
-    robot_detail::ActionProcessor::FixedPolicyMotorCommand command;
-    std::string error;
-    std::uint64_t last_logged_policy_seq = 0;
-
-    try {
-        while (policy_command_worker_running_.load()) {
-            next_wake += period;
-
-            if (policy_target_channel_.try_consume_latest(current_target)) {
-                has_current_target = true;
-            }
-
-            if (!has_current_target) {
-                const std::int64_t deadline_ns = startup_policy_deadline_ns();
-                const std::int64_t now_ns = robot_base::monotonic_now_ns();
-                if (startup_policy_target_expired(now_ns)) {
-                    PolicyTargetFrame startup_target;
-                    startup_target.valid_until_ns = startup_policy_deadline_ns();
-                    startup_target.published_at_ns = startup_target.valid_until_ns -
-                        robot_base::seconds_to_ns(config_.safety.policy_target_timeout_ms / 1000.0);
-                    fail_policy_command_worker(policy_deadline_error(startup_target, now_ns));
-                    break;
-                }
-                // 首帧前复位命令也封顶首次正式推理的截止期。
-                if (!motor_session_.apply_targets_rad(
-                        startup_hold_target_motor_rad_, deadline_ns)) {
-                    const std::int64_t failed_now_ns = robot_base::monotonic_now_ns();
-                    if (startup_policy_target_expired(failed_now_ns)) {
-                        PolicyTargetFrame startup_target;
-                        startup_target.valid_until_ns = startup_policy_deadline_ns();
-                        startup_target.published_at_ns = startup_target.valid_until_ns -
-                            robot_base::seconds_to_ns(config_.safety.policy_target_timeout_ms / 1000.0);
-                        fail_policy_command_worker(policy_deadline_error(startup_target, failed_now_ns));
-                    } else {
-                        fail_policy_command_worker("failed to refresh startup reset pose");
-                    }
-                    break;
-                }
-                std::this_thread::sleep_until(next_wake);
-                const auto now = std::chrono::steady_clock::now();
-                if (now > next_wake + period) {
-                    next_wake = now;
-                }
-                continue;
-            }
-
-            const std::int64_t now_ns = robot_base::monotonic_now_ns();
-            if (policy_deadline_expired(current_target.valid_until_ns, now_ns)) {
-                fail_policy_command_worker(
-                    policy_deadline_error(current_target, now_ns));
-                break;
-            }
-
-            if (motor_session_.try_consume_latest_status_command(motor_feedback)) {
-                has_motor_feedback = true;
-            }
-            if (!has_motor_feedback) {
-                fail_policy_command_worker("policy motor feedback is not initialized");
-                break;
-            }
-
-            error.clear();
-            if (!action_processor_->build_policy_impedance_command(
-                    current_target.target_q_model_rad,
-                    motor_feedback,
-                    command,
-                    error)) {
-                fail_policy_command_worker("failed to build policy impedance command: " + error);
-                break;
-            }
-
-            const std::int64_t produced_at_ns = robot_base::monotonic_now_ns();
-            if (policy_deadline_expired(current_target.valid_until_ns, produced_at_ns)) {
-                fail_policy_command_worker(
-                    policy_deadline_error(current_target, produced_at_ns));
-                break;
-            }
-            const motor_base::CommandTiming timing =
-                policy_command_timing(current_target, produced_at_ns);
-
-            const bool applied =
-                motor_session_.apply_impedance_setpoints_realtime(
-                    command.setpoints,
-                    command.setpoint_count,
-                    timing);
-
-            if (!applied) {
-                fail_policy_command_worker("failed to apply policy impedance command");
-                break;
-            }
-
-            if (current_target.policy_seq != last_logged_policy_seq) {
-                InferenceRecord completed_record = current_target.inference_record;
-                completed_record.command_timestamp_ns = produced_at_ns;
-                completed_record.command_valid_until_ns = timing.valid_until_ns;
-                completed_record.command_applied = true;
-                for (std::size_t i = 0; i < PolicyRuntime::kDof; ++i) {
-                    completed_record.target_pos_rad[i] =
-                        command.setpoints[i].position_rad;
-                    completed_record.target_effort_permille[i] =
-                        command.setpoints[i].effort_ff;
-                }
-                completed_policy_record_channel_.publish(completed_record);
-                last_logged_policy_seq = current_target.policy_seq;
-            }
-
-            std::this_thread::sleep_until(next_wake);
-            const auto now = std::chrono::steady_clock::now();
-            if (now > next_wake + period) {
-                next_wake = now;
-            }
-        }
-    } catch (const std::exception& error) {
-        fail_policy_command_worker(
-            std::string("policy command worker exception: ") + error.what());
-    } catch (...) {
-        fail_policy_command_worker("policy command worker exception");
-    }
-}
-
-void RobotInterface::fail_policy_command_worker(std::string message)
-{
-    motor_session_.request_stop();
-    policy_command_worker_running_.store(false);
-    initialized_.store(false);
-    const std::string printable_message = message;
-    const bool already_failed = policy_command_worker_failed_.exchange(true);
-    {
-        std::lock_guard<std::mutex> lock(policy_command_error_mutex_);
-        policy_command_worker_error_ = std::move(message);
-    }
-
-    if (!already_failed) {
-        std::cerr << "[RobotInterface] policy command worker failed: "
-                  << printable_message << "\n";
-    }
-}
-
-bool RobotInterface::policy_command_worker_healthy(std::string& error) const
-{
-    if (policy_command_worker_failed_.load()) {
-        std::lock_guard<std::mutex> lock(policy_command_error_mutex_);
-        error = policy_command_worker_error_.empty()
-                    ? "policy command worker failed"
-                    : policy_command_worker_error_;
-        return false;
-    }
-    if (!policy_command_worker_running_.load()) {
-        error = "policy command worker is not running";
-        return false;
-    }
-
-    error.clear();
-
-    return true;
-}
 
 void RobotInterface::set_policy_step_phase(PolicyStepPhase phase) noexcept
 {
-    policy_step_phase_started_ns_.store(robot_base::monotonic_now_ns(),
-                                        std::memory_order_relaxed);
-    policy_step_phase_.store(phase, std::memory_order_release);
+    policy_step_phase_started_ns_ = robot_base::monotonic_now_ns();
+    policy_step_phase_ = phase;
 }
 
-std::string RobotInterface::policy_deadline_error(
-    const PolicyTargetFrame& target,
-    std::int64_t now_ns) const
-{
-    const PolicyStepPhase phase =
-        policy_step_phase_.load(std::memory_order_acquire);
-    const std::int64_t phase_started_ns =
-        policy_step_phase_started_ns_.load(std::memory_order_relaxed);
-
-    const char* phase_name = "unknown";
-    switch (phase) {
-        case PolicyStepPhase::Idle:           phase_name = "idle"; break;
-        case PolicyStepPhase::Precheck:       phase_name = "precheck"; break;
-        case PolicyStepPhase::SensorSnapshot: phase_name = "sensor_snapshot"; break;
-        case PolicyStepPhase::Observation:    phase_name = "observation"; break;
-        case PolicyStepPhase::Inference:      phase_name = "inference"; break;
-        case PolicyStepPhase::PostInference:  phase_name = "post_inference"; break;
-        case PolicyStepPhase::Publish:        phase_name = "publish"; break;
-    }
-
-    std::ostringstream stream;
-    stream << "policy target deadline expired: policy_seq="
-           << target.policy_seq
-           << ", target_seq=" << target.target_seq
-           << ", target_hold_age_us="
-           << robot_base::ns_to_us(now_ns - target.published_at_ns)
-           << ", obs_to_action_age_us=" << target.inference_record.obs_to_action_age_us
-           << ", overdue_us="
-           << robot_base::ns_to_us(now_ns - target.valid_until_ns)
-           << ", policy_step_phase=" << phase_name
-           << ", phase_elapsed_us=";
-    if (phase_started_ns > 0 && now_ns >= phase_started_ns) {
-        stream << robot_base::ns_to_us(now_ns - phase_started_ns);
-    } else {
-        stream << "unknown";
-    }
-    return stream.str();
-}
 
 /* 执行一次策略闭环：使用保存的目标速度构建观测、模型推理并下发目标关节角。 */
 bool RobotInterface::policy_step() {
@@ -782,7 +464,7 @@ bool RobotInterface::policy_step() {
 
     std::string worker_error;
 
-    if (!policy_command_worker_healthy(worker_error)) {
+    if (!worker_.healthy(worker_error)) {
         return handle_policy_step_failure(worker_error);
     }
     if (!policy_runtime_.is_loaded()) {
@@ -805,7 +487,7 @@ bool RobotInterface::policy_step() {
     const std::int64_t imu_receive_timestamp_ns = ahrs_state.receive_timestamp_ns;
 
     if (!validate_policy_sensor_timing(motor_state.timestamp_ns,
-                                       imu_receive_timestamp_ns,
+                                         imu_receive_timestamp_ns,
                                        timing_now_ns, worker_error)) {
         return handle_policy_step_failure(worker_error);
     }
@@ -837,7 +519,7 @@ bool RobotInterface::policy_step() {
     }
 
     set_policy_step_phase(PolicyStepPhase::PostInference);
-    if (!policy_command_worker_healthy(worker_error)) {
+    if (!worker_.healthy(worker_error)) {
         return handle_policy_step_failure(worker_error);
     }
 
@@ -872,7 +554,14 @@ bool RobotInterface::policy_step() {
     // 两项年龄固定在 decision_now；后续日志处理不追溯改变准入结论。
     InferenceRecord record;
     record.frame_index = observation_builder_->frame_index();
-    fill_record_motor_state(motor_state, motor_count, record);
+    record.motor_sample_timestamp_ns = motor_state.timestamp_ns;
+    for (std::size_t i = 0; i < motor_count; ++i) {
+        record.rx_pos_rad[i]     = motor_state.position_rad[i];
+        record.rx_vel_rad_s[i]   = motor_state.velocity_rad_s[i];
+        record.torque_percent[i] = motor_state.torque_percent[i];
+        record.comm_ok[i]        = motor_state.comm_ok[i];
+        record.enabled[i]        = motor_state.enabled[i];
+    }
     record.imu_sample_timestamp_ns = ahrs_state.sample_timestamp_ns;
     record.imu_receive_timestamp_ns = imu_receive_timestamp_ns;
     record.motor_age_us = robot_base::ns_to_us(timing_now_ns - motor_state.timestamp_ns);
@@ -883,33 +572,56 @@ bool RobotInterface::policy_step() {
     record.policy_observation = policy_observation;
     record.raw_action         = policy_result.raw_action;
     record.target_q_model_rad = target_q_model_rad;
-    record.obs_to_action_age_us = admission.obs_to_action_age_us;
-    record.target_hold_age_us = admission.target_hold_age_us;
+    record.obs_to_action_age_us  = admission.obs_to_action_age_us;
+    record.target_hold_age_us    = admission.target_hold_age_us;
     record.policy_result_dropped = admission.dropped;
 
-    if (admission.dropped) {
-        // 无 target 可发布：不分配 target_seq，也不刷新发布时间。
-        complete_policy_result(record);
-        return true;
+    // 丢弃的结果不发布，不刷新发布时间。
+    if (!admission.dropped) {
+        robot_detail::PolicyTargetFrame target;
+        target.policy_seq       = policy_seq;
+        target.inference_record = record;
+        last_policy_target_published_ns_ = worker_.publish_target(target);
+        observation_builder_->commit_policy_action(record.raw_action);
     }
 
-    PolicyTargetFrame* staged_target = policy_target_channel_.acquire_write_slot();
-    staged_target->target_q_model_rad = target_q_model_rad;
-    staged_target->policy_seq = policy_seq;
-    staged_target->inference_record = record;
-    // 大块固定日志复制已完成；采样后只写时间/序号标量并发布写槽。
-    publish_policy_target(*staged_target, robot_base::monotonic_now_ns());
-    complete_policy_result(staged_target->inference_record);
+    // 推进观测帧计数；丢弃结果也会推进。
+    observation_builder_->advance_frame();
+
+    // 尝试收取 worker 完成的记录。
+    record_completed_policy_frame();
+
+    // 如果本次结果被丢弃，直接提交本次记录(worker 线程无法获取到丢弃的记录，因为没有在SPSC通道发布)
+    if (record.policy_result_dropped) {
+        record_policy_frame(record);
+    }
+    set_policy_step_phase(PolicyStepPhase::Idle);
     return true;
 }
 
 /* 故障入口先请求停止，再进行可能阻塞的诊断及 join。 */
 bool RobotInterface::handle_policy_step_failure(const std::string& message) {
+
     motor_session_.request_stop();
+
     initialized_.store(false);
-    policy_command_worker_running_.store(false);
-    std::cerr << "[RobotInterface] policy_step failed: " << message << "\n";
-    stop_policy_command_worker();
+
+    worker_.request_stop();
+
+    // 这里记录 Interface 处理故障时的阶段，worker 的停止请求已经发出。
+    const std::int64_t diagnostic_now_ns = robot_base::monotonic_now_ns();
+    constexpr const char* phase_names[] = {
+        "idle", "precheck", "sensor_snapshot", "observation",
+        "inference", "post_inference", "publish"};
+    std::cerr << "[RobotInterface] policy_step failed: " << message
+              << ", policy_step_phase=" << phase_names[static_cast<std::size_t>(policy_step_phase_)]
+              << ", phase_elapsed_us="
+              << robot_base::ns_to_us(diagnostic_now_ns - policy_step_phase_started_ns_) << "\n";
+    
+    worker_.stop();
+
+    record_completed_policy_frame();
+
     set_policy_step_phase(PolicyStepPhase::Idle);
     return false;
 }

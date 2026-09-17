@@ -104,9 +104,9 @@ hold 60 ms；重复下发命令不能延长该期限。首帧前从第一次正�
 60 ms，复位命令也受其封顶。底层命令继续受独立 10 ms 截止期和目标截止期
 共同限制。新目标须及时送达底层，发布本身不保证避开旧命令的到期锁存。
 
-`policy_seq` 每轮正式推理递增，包括 drop；`target_seq` 仅有效发布时连续
-递增，drop 行为 0。CSV 追加 `target_seq`、`obs_to_action_age_us`、
-`target_hold_age_us`、`policy_result_dropped`。两项年龄在 admission 时采样，
+`policy_seq` 每轮正式推理递增，包括 drop；目标和电机命令沿用该序号，
+允许因 drop 跳号。CSV 追加 `obs_to_action_age_us`、`target_hold_age_us`、
+`policy_result_dropped`。两项年龄在 admission 时采样，
 hold age 表示更新前距上次有效发布时间的间隔；首帧前距首次推理起点计时。
 事后日志处理不重算年龄或改变准入结论。CSV 不是连续 watchdog 采样，
 超时应结合错误文本中的实时 hold age 判断。

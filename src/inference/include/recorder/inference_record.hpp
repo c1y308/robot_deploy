@@ -38,7 +38,6 @@ struct InferenceRecord {
     std::uint64_t imu_sample_timestamp_ns{0};
     std::int64_t  motor_age_us{0};
 
-    std::uint64_t target_seq{0};  // 有效 target 独立序号；drop 行为 0
     std::int64_t obs_to_action_age_us{0};  // admission 时采样，事后日志不重算
     std::int64_t target_hold_age_us{0};    // admission 前距上一有效发布的间隔
     bool policy_result_dropped{false};

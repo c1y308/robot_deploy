@@ -50,6 +50,7 @@ void fill_motor_snapshot_from_range(MotorStateSnapshot& snapshot,
 
     for (auto it = begin; it != end; ++it) {
         const auto& motor = *it;
+        snapshot.timestamp_ns = std::min(snapshot.timestamp_ns, motor.host_timestamp_ns);
         snapshot.position_rad.push_back(motor.position_rad);
         snapshot.velocity_rad_s.push_back(motor.velocity_rad_s);
         snapshot.torque_percent.push_back(motor.torque_percent);

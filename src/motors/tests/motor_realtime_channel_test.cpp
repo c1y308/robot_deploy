@@ -22,6 +22,14 @@
 namespace motor_base {
 
 struct MotorControllerTimingTestAccess {
+    static void cycle(MotorControllerBase& controller)
+    {
+        ++controller.discrete_cmd_tick_;
+        controller.process_queued_commands();
+        controller.service_discrete_commands();
+        controller.realtime_cycle_callback();
+    }
+
     static bool validate(const MotorControllerBase& controller,
                          const ControlCommand& command,
                          std::int64_t sampled_now_ns,
@@ -187,6 +195,12 @@ public:
         }
     }
 
+    void set_rx_pdo(int index, const myactua::RxPDO& pdo)
+    {
+        std::lock_guard<std::mutex> lock(rx_mutex_);
+        rx_[static_cast<std::size_t>(index)] = pdo;
+    }
+
     void set_rx_status_word(int index, uint16_t status_word)
     {
         if (index >= 0 && index < motor_count_) {
@@ -307,6 +321,123 @@ bool expect_start(myactua::MyActMotorController& controller, const char* message
         return false;
     }
     return true;
+}
+
+bool run_wkc_feedback_validity_scenario()
+{
+    using Access = motor_base::MotorControllerTimingTestAccess;
+    auto adapter = std::make_shared<FakeAdapter>(2);
+    myactua::MyActMotorController controller(adapter, 2, test_options());
+    std::array<motor_base::MotorStatusSnapshot,
+               motor_base::kMaxMotorCommandSetpoints> feedback{}, policy_feedback{};
+    myactua::RxPDO good{};
+    good.status_word = operation_enabled_status_word();
+    good.op_mode = static_cast<int8_t>(myactua::MyactControlMode::CSP);
+    good.pos = 123;
+    good.vel = 456;
+    good.torque = 789;
+    adapter->set_rx_pdo(0, good);
+    adapter->set_rx_pdo(1, good);
+    adapter->set_health_script({health(true, EC_WC_INCOMPLETE, 0)});
+    Access::cycle(controller);
+    if (!expect(controller.try_consume_latest_status_command(feedback) &&
+                    feedback[0].host_timestamp_ns == 0 &&
+                    feedback[1].host_timestamp_ns == 0 &&
+                    feedback[0].position_rad == 0 &&
+                    feedback[0].velocity_rad_s == 0 &&
+                    feedback[0].torque_percent == 0,
+                "incomplete first PDO must leave observations and sample times empty")) return false;
+
+    if (!expect(controller.send_discrete_command(motor_base::ControlCommand::restart()).status ==
+                    motor_base::CommandSubmitStatus::ACCEPTED,
+                "manual cycle setup RESTART should be accepted")) return false;
+    for (int i = 0; i < 60; ++i) Access::cycle(controller);
+    if (!expect(controller.try_consume_latest_status_command(feedback) &&
+                    feedback[0].host_timestamp_ns > 0 && feedback[0].control_ready &&
+                    feedback[1].control_ready,
+                "complete PDO should initialize control-ready feedback")) return false;
+
+    for (int group = 0; group < 2; ++group) {
+        const auto valid = feedback;
+        for (int bad = 1; bad <= 9; ++bad) {
+            auto invalid = good;
+            invalid.pos += bad * 1000;
+            invalid.vel += bad * 2000;
+            invalid.torque = -1000;
+            invalid.status_word = myactua::BIT_FAULT;
+            invalid.error = 0x2310;
+            invalid.op_mode = static_cast<int8_t>(myactua::MyactControlMode::PVT);
+            adapter->set_rx_pdo(0, invalid);
+            adapter->set_rx_pdo(1, invalid);
+            adapter->set_health_script({health(true, EC_WC_INCOMPLETE, 0)});
+            Access::cycle(controller);
+            if (!expect(controller.try_consume_latest_status_command(feedback) &&
+                            controller.try_consume_latest_status_policy(policy_feedback),
+                        "both feedback consumers should receive the frozen sample")) return false;
+            for (int axis = 0; axis < 2; ++axis) {
+                if (!expect(feedback[axis].host_timestamp_ns == valid[axis].host_timestamp_ns &&
+                                policy_feedback[axis].host_timestamp_ns == valid[axis].host_timestamp_ns &&
+                                feedback[axis].position_rad == valid[axis].position_rad &&
+                                feedback[axis].velocity_rad_s == valid[axis].velocity_rad_s &&
+                                feedback[axis].torque_percent == valid[axis].torque_percent &&
+                                feedback[axis].mode == valid[axis].mode &&
+                                feedback[axis].enabled && feedback[axis].comm_ok &&
+                                feedback[axis].control_ready && !feedback[axis].faulted,
+                            "1-9 incomplete cycles must preserve valid PDO and readiness semantics")) return false;
+            }
+            if (!expect(!controller.terminal_fault_latched(),
+                        "invalid raw fault/status data must not be decoded or latch early")) return false;
+        }
+        good.pos += 100;
+        good.vel += 200;
+        good.torque += 10;
+        adapter->set_rx_pdo(0, good);
+        adapter->set_rx_pdo(1, good);
+        Access::cycle(controller);
+        if (!expect(controller.try_consume_latest_status_command(feedback) &&
+                        feedback[0].host_timestamp_ns > valid[0].host_timestamp_ns &&
+                        feedback[0].position_rad == good.pos * myactua::kRawPosToRad &&
+                        feedback[0].velocity_rad_s == good.vel * myactua::kRawVelToRadPerSec &&
+                        feedback[0].torque_percent == good.torque * myactua::kRawTorqueToPercent &&
+                        !controller.communication_fault_latched(),
+                    "9-bad/1-good groups must refresh only on complete PDO and reset the watchdog")) return false;
+    }
+
+    const auto before_link_loss = feedback;
+    adapter->set_health_script({health(false, EC_WC_COMPLETE, 2)});
+    Access::cycle(controller);
+    if (!expect(controller.try_consume_latest_status_command(feedback) &&
+                    feedback[0].host_timestamp_ns == before_link_loss[0].host_timestamp_ns,
+                "link loss must freeze even a complete-WKC sample")) return false;
+
+    controller.set_communication_protection_enabled(false);
+    adapter->set_configured(1, false);
+    Access::cycle(controller);
+    if (!expect(controller.try_consume_latest_status_command(feedback) &&
+                    feedback[0].host_timestamp_ns > before_link_loss[0].host_timestamp_ns &&
+                    feedback[1].host_timestamp_ns == before_link_loss[1].host_timestamp_ns &&
+                    !feedback[1].comm_ok,
+                "configured axes must not refresh an offline axis timestamp")) return false;
+    adapter->set_configured(1, true);
+    controller.set_communication_protection_enabled(true);
+    Access::cycle(controller);
+    if (!expect(controller.try_consume_latest_status_command(feedback) &&
+                    feedback[1].host_timestamp_ns > before_link_loss[1].host_timestamp_ns,
+                "recovered axis must refresh on its next valid PDO")) return false;
+
+    const auto last_valid = feedback;
+    for (int i = 0; i < 10; ++i) {
+        adapter->set_health_script({health(true, EC_WC_INCOMPLETE, 0)});
+        Access::cycle(controller);
+    }
+    if (!expect(controller.try_consume_latest_status_command(feedback) &&
+                    feedback[0].host_timestamp_ns == last_valid[0].host_timestamp_ns &&
+                    controller.communication_fault_latched() && !feedback[0].control_ready,
+                "10 bad cycles must retain sample times and latch the existing watchdog")) return false;
+    Access::cycle(controller);
+    return expect(controller.try_consume_latest_status_command(feedback) &&
+                      controller.communication_fault_latched() && !feedback[0].control_ready,
+                  "bus recovery must not clear the terminal latch or re-enable control");
 }
 
 bool run_communication_protection_switch_scenario(bool offline, bool link_down)
@@ -959,7 +1090,8 @@ bool run_b1_provenance_and_deadline_scenarios()
 
 int main()
 {
-    if (!run_post_sample_publication_scenario() ||
+    if (!run_wkc_feedback_validity_scenario() ||
+        !run_post_sample_publication_scenario() ||
         !run_b1_provenance_and_deadline_scenarios() ||
         !run_communication_protection_switch_scenario(true, false) ||
         !run_communication_protection_switch_scenario(false, false) ||

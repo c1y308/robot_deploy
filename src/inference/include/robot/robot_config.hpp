@@ -85,10 +85,10 @@ struct PolicyRuntimeConfig {
     } gait;
 };
 
-/* 传感器时序守卫：RobotInterface::policy_step 消费。 */
+/* 传感器时序守卫：策略入口和命令线程共用电机反馈年龄上限。 */
 struct SensorGuardConfig {
     double max_imu_sample_age_s    = 0.050; // IMU 数据最大延迟，超过该值视为过期
-    double max_motor_sample_age_s  = 0.050; // 电机状态最大延迟，超过该值视为过期
+    double max_motor_sample_age_s  = 0.020; // 电机状态最大延迟，超过该值视为过期
     double max_sensor_state_skew_s = 0.030; // IMU 与电机状态的时间戳差值最大允许值，超过该值视为不同步
 };
 
