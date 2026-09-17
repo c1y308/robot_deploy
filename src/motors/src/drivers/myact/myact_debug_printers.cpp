@@ -198,11 +198,6 @@ void print_myact_event(const mb::RtEvent& event)
                       << "\n";
             break;
 
-        case mb::RtEventType::STATUS_CHANNEL_BUSY:
-            std::cerr << "[MYACTUA] status channel busy; unavailable writes="
-                      << event.value << "\n";
-            break;
-
         case mb::RtEventType::BUS_DIAG_SAMPLE:
             std::cout << "[BUS_DIAG] cycle=" << event.tick
                       << " wc=" << event.value

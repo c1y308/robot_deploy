@@ -2,6 +2,7 @@
 #include "protocol/ethercat/ethercat_adapter_igh.hpp"
 #include "kinematics/ankle_motor_ik.hpp"
 #include "driver/myact/myact_motor_controller.hpp"
+#include "tool/tool.hpp"
 
 #include <algorithm>
 #include <array>
@@ -366,8 +367,11 @@ std::vector<motor_base::ImpedanceSetpoint> make_impedance_setpoints(
 void send_impedance_targets(myactua::MyActMotorController& controller,
                             const std::array<double, kNumMotors>& target_rad)
 {
-    controller.send_debug_setpoint(
-        motor_base::ControlCommand::set_impedance_targets(make_impedance_setpoints(target_rad)));
+    auto command = motor_base::ControlCommand::set_impedance_targets(
+        make_impedance_setpoints(target_rad));
+    command.timing.produced_at_ns = robot_base::monotonic_now_ns();
+    command.timing.valid_until_ns = command.timing.produced_at_ns + 10'000'000;
+    controller.send_policy_setpoint(command);
 }
 
 bool read_motor_positions(myactua::MyActMotorController& controller,
@@ -681,7 +685,6 @@ int main()
     myactua::MyActMotorController controller(adapter, kNumMotors);
     bool controller_started = false;
 
-    controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
     controller.set_print_info({});
     controller.set_status_callback([](const std::vector<motor_base::MotorStatusSnapshot>& status) {
         g_recorder.record(status);

@@ -39,7 +39,6 @@ struct MotorStateSnapshot {
 
     std::vector<std::uint8_t> comm_ok;
     std::vector<std::uint8_t> enabled;
-    std::vector<std::uint8_t> faulted;
 };
 
 class RobotMotorSession {

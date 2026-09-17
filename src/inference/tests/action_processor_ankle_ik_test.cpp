@@ -251,23 +251,9 @@ void test_policy_command_rejects_unhealthy_motor_feedback()
         motor.control_ready = true;
     }
 
-    for (int condition = 0; condition < 4; ++condition) {
+    {
         auto unhealthy_feedback = feedback;
-        auto& motor = unhealthy_feedback[3];
-        switch (condition) {
-            case 0:
-                motor.comm_ok = false;
-                break;
-            case 1:
-                motor.enabled = false;
-                break;
-            case 2:
-                motor.faulted = true;
-                break;
-            case 3:
-                motor.control_ready = false;
-                break;
-        }
+        unhealthy_feedback[3].control_ready = false;
 
         auto processor = make_processor();
         inference::robot_detail::ActionProcessor::FixedModelTarget target{};
@@ -275,8 +261,7 @@ void test_policy_command_rejects_unhealthy_motor_feedback()
         std::string error;
         expect(!processor.build_policy_impedance_command(
                    target, unhealthy_feedback, command, error),
-               "policy command should reject unhealthy motor feedback condition " +
-                   std::to_string(condition));
+               "policy command should reject feedback that is not control-ready");
         expect(error.find("index 3") != std::string::npos,
                "policy health rejection should identify the unhealthy motor");
     }

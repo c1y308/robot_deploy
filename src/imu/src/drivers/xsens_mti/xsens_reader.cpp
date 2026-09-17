@@ -90,7 +90,7 @@ void XsensMtiCanReader::read_loop()
                               receive_timestamp_ns);
 
                 imu_base::AHRSData ahrs_data;
-                if (parser_->get_ahrs_data(ahrs_data) && config_.print_ahrs) {
+                if (config_.print_ahrs && parser_->get_ahrs_data(ahrs_data)) {
                     XsensMtiCanParser::print_ahrs_data(ahrs_data);
                 }
             }

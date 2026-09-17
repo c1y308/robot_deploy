@@ -8,9 +8,7 @@ IMUReader::IMUReader()
     : serial_port_(std::make_unique<SerialPort>()),
       parser_(std::make_unique<IMUParser>()),
       running_(false),
-      start_time_(std::chrono::steady_clock::now()),
-      has_yaw_offset_(false),
-      yaw_offset_(0.0F) {
+      start_time_(std::chrono::steady_clock::now()) {
 }
 
 
@@ -26,8 +24,6 @@ bool IMUReader::start(const Config_t& config) {
 
     config_ = config;
     start_time_ = std::chrono::steady_clock::now();
-    has_yaw_offset_ = false;
-    yaw_offset_ = 0.0F;
     print_configuration();
 
     parser_->reset();
@@ -87,20 +83,12 @@ void IMUReader::read_loop() {
             AHRSData_t ahrs_data;
             
             /* 获取 IMU 数据并判断是否打印 */
-            if (parser_->get_imu_data(imu_data)) {
-                if (config_.print_imu) {
-                    IMUParser::print_imu_data(imu_data);
-                }
+            if (config_.print_imu && parser_->get_imu_data(imu_data)) {
+                IMUParser::print_imu_data(imu_data);
             }
             /* 获取 AHRS 数据并判断是否打印 */
-            if (parser_->get_ahrs_data(ahrs_data)) {
-                if (!has_yaw_offset_) {
-                    yaw_offset_ = ahrs_data.heading;
-                    has_yaw_offset_ = true;
-                }
-                if (config_.print_ahrs) {
-                    IMUParser::print_ahrs_data(ahrs_data);
-                }
+            if (config_.print_ahrs && parser_->get_ahrs_data(ahrs_data)) {
+                IMUParser::print_ahrs_data(ahrs_data);
             }
         }
     }
@@ -159,11 +147,6 @@ void IMUReader::print_statistics() const {
     std::cout << "--- Statistics ---" << std::endl;
     std::cout << std::fixed << std::setprecision(3);
     std::cout << "Runtime: " << runtime << " s" << std::endl;
-    if (has_yaw_offset_) {
-        std::cout << "Yaw offset: " << yaw_offset_ << " rad" << std::endl;
-    } else {
-        std::cout << "Yaw offset: N/A" << std::endl;
-    }
     std::cout << "Total bytes: " << stats.total_bytes << std::endl;
     std::cout << "Total frames: " << stats.total_frames << std::endl;
     std::cout << "IMU frames: " << stats.imu_frames << std::endl;

@@ -1,4 +1,5 @@
 #include "driver/myact/myact_motor_controller.hpp"
+#include "tool/tool.hpp"
 #include "protocol/ethercat/ethercat_adapter_igh.hpp"
 #include "motor_base/command_types.hpp"
 #include "motor_base/rt_event_dispatcher.hpp"
@@ -47,12 +48,8 @@ int main() {
     auto adapter = std::make_shared<myactua::EthercatAdapterIGH>();
     // 实例化控制类，与适配器关联
     myactua::MyActMotorController controller(adapter, motors_nums);
-    controller.set_active_setpoint_source(motor_base::SetpointSource::DEBUG);
     controller.set_print_info({-1});
     controller.set_event_callback([](const motor_base::RtEvent& event) {
-        if (event.type == motor_base::RtEventType::STATUS_CHANNEL_BUSY) {
-            return;
-        }
         std::cerr << "[MYACTUA] rt event type=" << static_cast<int>(event.type)
                   << ", motor=" << event.motor_index
                   << ", reason=" << event.reason
@@ -111,10 +108,11 @@ int main() {
     };
 
     std::cout << "[阶段3] 所有电机回到零位..." << std::endl;
-    if (controller.send_debug_setpoint(
-            motor_base::ControlCommand::set_position_targets_rad_fixed(
-                zero_positions_rad.data(),
-                zero_positions_rad.size())).status !=
+    auto zero_command = motor_base::ControlCommand::set_position_targets_rad_fixed(
+        zero_positions_rad.data(), zero_positions_rad.size());
+    zero_command.timing.produced_at_ns = robot_base::monotonic_now_ns();
+    zero_command.timing.valid_until_ns = zero_command.timing.produced_at_ns + 10'000'000;
+    if (controller.send_policy_setpoint(zero_command).status !=
         motor_base::CommandSubmitStatus::ACCEPTED) {
         std::cerr << "[错误] 零位目标提交失败。" << std::endl;
         return -1;
@@ -122,10 +120,11 @@ int main() {
     std::this_thread::sleep_for(std::chrono::seconds(5));
 
     std::cout << "[阶段4] 下发一次目标位置数组..." << std::endl;
-    if (controller.send_debug_setpoint(
-            motor_base::ControlCommand::set_position_targets_rad_fixed(
-                target_positions_rad.data(),
-                target_positions_rad.size())).status !=
+    auto target_command = motor_base::ControlCommand::set_position_targets_rad_fixed(
+        target_positions_rad.data(), target_positions_rad.size());
+    target_command.timing.produced_at_ns = robot_base::monotonic_now_ns();
+    target_command.timing.valid_until_ns = target_command.timing.produced_at_ns + 10'000'000;
+    if (controller.send_policy_setpoint(target_command).status !=
         motor_base::CommandSubmitStatus::ACCEPTED) {
         std::cerr << "[错误] 目标位置数组提交失败。" << std::endl;
         return -1;

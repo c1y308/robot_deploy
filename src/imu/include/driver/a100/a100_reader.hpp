@@ -40,8 +40,6 @@ private:
     std::thread worker_thread_;
     std::atomic<bool> running_;
     std::chrono::steady_clock::time_point start_time_;
-    bool  has_yaw_offset_;
-    float yaw_offset_;
 };
 
 }

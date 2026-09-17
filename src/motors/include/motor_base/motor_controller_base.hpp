@@ -35,12 +35,9 @@ public:
         std::size_t max_commands_per_cycle            = 16;
 
         long rt_period_ns = 1000000;
-        int rt_priority   = 80;
-        robot_base::ThreadRuntimeOptions rt_thread_options;
+        robot_base::ThreadRuntimeOptions rt_thread_options{
+            {}, robot_base::ThreadSchedulingPolicy::FIFO, 80, 0};
         robot_base::ThreadRuntimeOptions background_thread_options;
-
-        // Used to stamp legacy debug setpoints at the controller boundary.
-        std::int64_t setpoint_timeout_ns = 10'000'000;
 
         std::size_t rt_event_queue_capacity = 256;
         int status_publish_period_ms = 1;
@@ -75,7 +72,7 @@ public:
 
 
     /// @brief 启动实时控制线程（1 kHz 典型周期）
-    /// @return RT 调度前置条件是否满足；rt_priority<=0 表示显式非 RT 模式
+    /// @return 线程配置和调度前置条件是否满足
     bool start();
 
 
@@ -107,16 +104,8 @@ public:
     DiscreteCommandResult get_discrete_command_result(CommandId id) const;
 
     /// @brief policy_command_worker 专用的 latest-value setpoint 提交入口。
-    ///        仅允许单 producer 调用，底层为 SPSC 通道；策略流启动前
-    ///        的 setup 命令可使用序号 0。
-    CommandSubmitResult send_policy_setpoint(const ControlCommand& cmd);
-
-    /// @brief 测试/手动调试专用的 latest-value setpoint 提交入口。
     ///        仅允许单 producer 调用，底层为 SPSC 通道。
-    CommandSubmitResult send_debug_setpoint(const ControlCommand& cmd);
-
-    /// @brief 选择 RT 线程当前消费的 SETPOINT 来源。仅在 start() 前生效。
-    void set_active_setpoint_source(SetpointSource source);
+    CommandSubmitResult send_policy_setpoint(const ControlCommand& cmd);
 
 
 
@@ -149,14 +138,12 @@ public:
 
     // ──────────────────── 终端监控 ────────────────────
 
-    /// @brief 配置终端状态打印
+    /// @brief 在 start() 前配置终端状态打印，运行期不切换
     /// @param motor_index 需要打印的电机索引，空列表关闭，-1 表示全部
     virtual void set_print_info(const std::vector<int>& motor_index) = 0;
 
 
 protected:
-    using StatusWriteToken = LatestStatusChannel<MotorStatusSnapshot>::WriteToken;
-
     // ============================================================
     // 派生类可使用的基类能力
     // ============================================================
@@ -164,8 +151,6 @@ protected:
     std::size_t motor_count() const noexcept { return motor_count_; }
     uint64_t    discrete_command_tick() const noexcept { return discrete_cmd_tick_; }
 
-    bool write_status(StatusWriteToken& token);
-    void publish_status(const StatusWriteToken& token);
     void publish_feedback(
         const std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback);
 
@@ -212,6 +197,8 @@ protected:
     virtual void realtime_stop_callback() noexcept;
 
 private:
+    friend struct MotorControllerTimingTestAccess;
+
     // One mailbox per single-axis target plus one all-axis target. Pending
     // requests are coalesced; ordinary command history cannot evict them.
     struct StopRequest {
@@ -285,12 +272,8 @@ private:
     robot_base::SpscLatestChannel<
         std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>> policy_feedback_channel_;
     
-    // 调试 SETPOINT 专通道（仅测试/手动调试单 producer，电机驱动层线程消费）
-    robot_base::SpscLatestChannel<ControlCommand> setpoint_channel_debug_;
-
     // policy SETPOINT 专通道（仅 policy_command_worker 生产，电机驱动层线程消费）
     robot_base::SpscLatestChannel<ControlCommand> setpoint_channel_policy_;
-    SetpointSource active_setpoint_source_{SetpointSource::POLICY};
 
     // 离散命令队列的全局时钟，单位 tick，1 tick = 1 ms
     uint64_t discrete_cmd_tick_{0};
@@ -301,13 +284,8 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> rt_scheduling_ready_{false};
     std::atomic<bool> terminal_fault_latched_{false};
-    // Startup/setup setpoints may use sequence zero until the first policy
-    // frame has been accepted; policy traffic thereafter must be sequenced.
-    std::atomic<bool> policy_sequence_started_{false};
     bool has_active_setpoint_{false};
     ControlCommand active_setpoint_{};
-    std::uint64_t last_policy_seq_{0};
-    std::int64_t last_produced_at_ns_{0};
     mutable std::mutex lifecycle_mutex_;
 };
 

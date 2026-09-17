@@ -50,7 +50,6 @@ std::shared_ptr<const JointMapping> JointMapping::create(
 
 bool JointMapping::configure(int dof_count)
 {
-    configured_ = false;
     dof_count_ = 0;
     parallel_model_dof_.clear();
     direct_motor_for_model_dof_.clear();
@@ -173,7 +172,6 @@ bool JointMapping::configure(int dof_count)
     motor_to_model_direction_ = std::move(next_motor_to_model_direction);
     left_ankle_parallel_ = config_.left_ankle_parallel;
     right_ankle_parallel_ = config_.right_ankle_parallel;
-    configured_ = true;
     last_error_.clear();
     return true;
 }

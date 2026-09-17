@@ -284,7 +284,7 @@ void EthercatAdapterIGH::receive_physical() {
     clock_gettime(CLOCK_TO_USE, &time);
     ecrt_master_application_time(master, TIMESPEC2NS(time));
 
-    diag_cycle_counter.fetch_add(1, std::memory_order_relaxed);
+    if (diag_enabled) ++diag_cycle_counter;
 
     ecrt_master_receive(master);
     ecrt_domain_process(domain1);
@@ -323,7 +323,7 @@ void EthercatAdapterIGH::send_physical() {
     }
     ecrt_master_sync_slave_clocks(master);
 
-    const uint64_t cycle = diag_cycle_counter.load(std::memory_order_relaxed);
+    const uint64_t cycle = diag_cycle_counter;
     const bool sample_diag = diag_enabled &&
                              (cycle > 0) &&
                              (diag_interval_cycles > 0) &&

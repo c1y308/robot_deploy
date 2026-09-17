@@ -27,13 +27,13 @@ public:
     struct FixedPolicyMotorCommand {
         std::array<motor_base::ImpedanceSetpoint,
                    motor_base::kMaxMotorCommandSetpoints> setpoints{};
-        std::array<double, policy_observation::kDof> target_effort_permille{};
         std::size_t setpoint_count{0};
     };
 
     using FixedModelTarget =
         std::array<double, policy_observation::kDof>;
 
+    // mapping 由 JointMapping::create() 成功构造，运行期不可变。
     ActionProcessor(std::shared_ptr<const JointMapping> mapping,
                     ActionConfig action_config,
                     AnkleMotorLimitConfig ankle_motor_limits,

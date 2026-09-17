@@ -30,7 +30,6 @@ const char* command_submit_status_name(motor_base::CommandSubmitStatus status)
         case motor_base::CommandSubmitStatus::QUEUE_FULL: return "QUEUE_FULL";
         case motor_base::CommandSubmitStatus::INVALID_COMMAND: return "INVALID_COMMAND";
         case motor_base::CommandSubmitStatus::INVALID_PAYLOAD: return "INVALID_PAYLOAD";
-        case motor_base::CommandSubmitStatus::SOURCE_INACTIVE: return "SOURCE_INACTIVE";
     }
     return "UNKNOWN";
 }
@@ -48,7 +47,6 @@ void fill_motor_snapshot_from_range(MotorStateSnapshot& snapshot,
     snapshot.torque_percent.reserve(count);
     snapshot.comm_ok.reserve(count);
     snapshot.enabled.reserve(count);
-    snapshot.faulted.reserve(count);
 
     for (auto it = begin; it != end; ++it) {
         const auto& motor = *it;
@@ -57,7 +55,6 @@ void fill_motor_snapshot_from_range(MotorStateSnapshot& snapshot,
         snapshot.torque_percent.push_back(motor.torque_percent);
         snapshot.comm_ok.push_back(motor.comm_ok ? 1U : 0U);
         snapshot.enabled.push_back(motor.enabled ? 1U : 0U);
-        snapshot.faulted.push_back(motor.faulted ? 1U : 0U);
     }
 }
 
@@ -88,11 +85,7 @@ bool RobotMotorSession::initialize(bool defer_communication_protection)
 
     adapter_ = std::make_shared<myactua::EthercatAdapterIGH>();
     myactua::MyActMotorController::Options controller_options;
-    controller_options.setpoint_timeout_ns =
-        static_cast<std::int64_t>(std::llround(
-            safety_.control_command_timeout_ms * 1'000'000.0));
     if (runtime_.enabled) {
-        controller_options.rt_priority = runtime_.motor_rt.priority;
         controller_options.rt_thread_options = runtime_.motor_rt;
         controller_options.background_thread_options = runtime_.background;
     }

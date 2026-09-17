@@ -32,7 +32,6 @@ bool RobotImuSession::initialize()
         imu_cfg.thread_options = runtime_.imu_reader;
     }
 
-    ahrs_ready_.store(false);
     ahrs_state_channel_.reset_empty();
     latest_ahrs_state_cache_ = AhrsStateSnapshot();
     has_ahrs_state_cache_ = false;
@@ -45,9 +44,6 @@ bool RobotImuSession::initialize()
             reader_ = std::make_unique<imu::XsensMtiCanReader>();
             break;
     }
-    reader_->set_imu_callback([](const imu_base::IMUData& data) {
-        (void)data;
-    });
     reader_->set_ahrs_callback([this](const imu_base::AHRSData& data) {
         AhrsStateSnapshot state;
         state.receive_timestamp_ns = data.receive_timestamp_ns;
@@ -61,18 +57,11 @@ bool RobotImuSession::initialize()
         state.euler[1] = static_cast<double>(data.pitch);
         state.euler[2] = static_cast<double>(data.heading);
 
-        state.quat[0] = static_cast<double>(data.qw);
-        state.quat[1] = static_cast<double>(data.qx);
-        state.quat[2] = static_cast<double>(data.qy);
-        state.quat[3] = static_cast<double>(data.qz);
-
         state.projected_gravity[0] = static_cast<double>(data.projected_gravity_x);
         state.projected_gravity[1] = static_cast<double>(data.projected_gravity_y);
         state.projected_gravity[2] = static_cast<double>(data.projected_gravity_z);
         state.projected_gravity_valid = data.projected_gravity_valid;
-        state.ahrs_ready = true;
         ahrs_state_channel_.publish(state);
-        ahrs_ready_.store(true);
     });
 
     if (!reader_->start(imu_cfg)) {
@@ -93,7 +82,6 @@ void RobotImuSession::deinitialize()
     }
     reader_.reset();
     initialized_.store(false);
-    ahrs_ready_.store(false);
     ahrs_state_channel_.reset_empty();
     latest_ahrs_state_cache_ = AhrsStateSnapshot();
     has_ahrs_state_cache_ = false;

@@ -22,6 +22,7 @@ public:
     using MotorStateArray = std::array<double, kDof>;
     using JointTermArray  = std::array<float,  kDof>;
 
+    // mapping 由 JointMapping::create() 成功构造，运行期不可变。
     ObservationBuilder(std::shared_ptr<const JointMapping> mapping,
                        ObservationScaleConfig scales,
                        std::array<double, policy_observation::kDof> default_joint_pos_rad,
@@ -31,7 +32,6 @@ public:
     void reset_runtime_state();
     void commit_policy_action(const PolicyAction& raw_action) noexcept;
     void advance_frame() noexcept;
-    void advance_episode() noexcept;
     std::uint64_t frame_index() const noexcept { return frame_index_; }
 
 
@@ -42,18 +42,12 @@ public:
                std::string& error);
 
 private:
-    struct AnkleFkState {
-        ankle_motor_fk::Solver solver;
-
-        void reset(double roll = 0.0, double pitch = 0.0);
-    };
-
-    AnkleFkState left_ankle_fk_;
-    AnkleFkState right_ankle_fk_;
+    ankle_motor_fk::Solver left_ankle_fk_;
+    ankle_motor_fk::Solver right_ankle_fk_;
 
 
     void reset_ankle_state(const AnkleParallelMap& ankle_map,
-                                 AnkleFkState&     state);
+                                 ankle_motor_fk::Solver& state);
                         
     bool fill_joint_terms(const MotorStateArray& q_motor_rad,
                           const MotorStateArray& dq_motor_rad_s,
@@ -65,7 +59,7 @@ private:
     bool fill_ankle_fk_joint_terms(const MotorStateArray& q_motor_rad,
                                    const MotorStateArray& dq_motor_rad_s,
                                    const AnkleParallelMap& ankle_map,
-                                   AnkleFkState& state,
+                                   ankle_motor_fk::Solver& state,
                                    JointTermArray& joint_pos_rel,
                                    JointTermArray& joint_vel_rel,
                                    std::string& error) const;
@@ -77,7 +71,6 @@ private:
     PolicyAction last_action_raw_{};
     PolicyObservation observation_history_{};
     bool observation_history_ready_{false};
-    std::uint64_t episode_length_{0};
     std::uint64_t frame_index_{0};
 };
 

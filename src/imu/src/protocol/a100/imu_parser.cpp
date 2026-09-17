@@ -1,7 +1,6 @@
 #include "protocol/a100/imu_parser.hpp"
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 #include <iostream>
 #include <iomanip>
 
@@ -28,7 +27,6 @@ IMUParser::IMUParser()
       payload_length_(0),
       last_byte_(0),
       parsing_state_(false),
-      frame_buffer_(MAX_BUFFER_SIZE, 0),
       imu_ready_(false),
       ahrs_ready_(false) {
 }
@@ -51,7 +49,6 @@ void IMUParser::reset() {
     stats_ = ParserInfo_t();
 
     std::fill(rx_buffer_.begin(), rx_buffer_.end(), 0);
-    std::fill(frame_buffer_.begin(), frame_buffer_.end(), 0);
 }
 
 void IMUParser::reset_frame_state() {
@@ -112,8 +109,7 @@ void IMUParser::feed(const uint8_t* data,
 
             /* 进行CRC8校验 */
             if(rx_index_ == 5){
-                std::vector<uint8_t> crc8_data(rx_buffer_.begin(), rx_buffer_.begin() + 4);
-                uint8_t calculated_crc8 = crc8_table(crc8_data);
+                uint8_t calculated_crc8 = crc8_table(rx_buffer_.data(), 4);
                 uint8_t received_crc8 = rx_buffer_[4];
 
                 if (calculated_crc8 != received_crc8) {
@@ -128,8 +124,7 @@ void IMUParser::feed(const uint8_t* data,
 
             /* 进行CRC16校验 */
             if (frame_length_ > 0 && rx_index_ == frame_length_ - 1) {
-                std::vector<uint8_t> crc16_data(rx_buffer_.begin() + 7, rx_buffer_.begin() + 7 + payload_length_);
-                uint16_t calculated_crc16 = crc16_table(crc16_data);
+                uint16_t calculated_crc16 = crc16_table(rx_buffer_.data() + 7, payload_length_);
                 uint16_t received_crc16 = rx_buffer_[5] << 8 | rx_buffer_[6];
 
                 if (calculated_crc16 != received_crc16) {
@@ -146,15 +141,13 @@ void IMUParser::feed(const uint8_t* data,
             /* 接受到帧尾 */
             if (frame_length_ > 0 && rx_index_ >= frame_length_) {
                 if (rx_buffer_[rx_index_ - 1] == FRAME_END) {
-                    std::memcpy(frame_buffer_.data(), rx_buffer_.data(), rx_index_);
-                    
-                    switch (frame_buffer_[1]) {
+                    switch (rx_buffer_[1]) {
                         case TYPE_IMU:
-                            parse_imu_frame(frame_buffer_.data(),
+                            parse_imu_frame(rx_buffer_.data(),
                                             receive_timestamp_ns);
                             break;
                         case TYPE_AHRS:
-                            parse_ahrs_frame(frame_buffer_.data(),
+                            parse_ahrs_frame(rx_buffer_.data(),
                                              receive_timestamp_ns);
                             break;
                     }
@@ -415,20 +408,20 @@ uint64_t IMUParser::data_to_u64(uint8_t d1, uint8_t d2, uint8_t d3, uint8_t d4,
 }
 
 
-uint8_t IMUParser::crc8_table(const std::vector<uint8_t>& data) {
+uint8_t IMUParser::crc8_table(const uint8_t* data, std::size_t size) {
     uint8_t crc8 = 0x00;
-    for (uint8_t value : data) {
-        crc8 = CRC8Table[crc8 ^ value];
+    for (std::size_t i = 0; i < size; ++i) {
+        crc8 = CRC8Table[crc8 ^ data[i]];
     }
     return crc8;
 }
 
-uint16_t IMUParser::crc16_table(const std::vector<uint8_t>& data)
+uint16_t IMUParser::crc16_table(const uint8_t* data, std::size_t size)
 {
     uint16_t crc16 = 0;
-    for (uint8_t value : data) 
+    for (std::size_t i = 0; i < size; ++i)
     {
-        crc16 = CRC16Table[((crc16 >> 8) ^ value) & 0xff] ^ (crc16 << 8);
+        crc16 = CRC16Table[((crc16 >> 8) ^ data[i]) & 0xff] ^ (crc16 << 8);
     }
     return crc16;
 }

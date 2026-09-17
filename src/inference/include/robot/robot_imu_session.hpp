@@ -19,12 +19,10 @@ struct AhrsStateSnapshot {
     std::int64_t receive_timestamp_ns{0};
     std::uint64_t sample_timestamp_ns{0};
 
-    std::array<double, 4> quat{1.0, 0.0, 0.0, 0.0};
     std::array<double, 3> body_ang_vel{0.0, 0.0, 0.0};
     std::array<double, 3> euler{0.0, 0.0, 0.0};
     std::array<double, 3> projected_gravity{0.0, 0.0, -1.0};
 
-    bool ahrs_ready{false};
     bool projected_gravity_valid{false};
 };
 
@@ -57,7 +55,6 @@ public:
     void deinitialize();
 
     bool is_initialized() const noexcept { return initialized_.load(); }
-    bool ahrs_ready() const noexcept { return ahrs_ready_.load(); }
 
     bool get_ahrs_snapshot(AhrsStateSnapshot& out);
 
@@ -67,7 +64,6 @@ private:
     std::unique_ptr<imu_base::IMUReaderBase> reader_;
 
     std::atomic<bool> initialized_{false};
-    std::atomic<bool> ahrs_ready_{false};
 
     robot_base::SpscLatestChannel<AhrsStateSnapshot> ahrs_state_channel_;
     AhrsStateSnapshot latest_ahrs_state_cache_;

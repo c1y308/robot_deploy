@@ -4,7 +4,6 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include "motor_base/motor_controller_base.hpp"
 #include "protocol/ethercat/ethercat_types.hpp"
 #include "protocol/ethercat/ethercat_adapter.hpp"
@@ -22,13 +21,8 @@ namespace myactua{
 /// 继承 MotorControllerBase，实现 CiA 402 状态机与 PDO 收发。
 class MyActMotorController : public motor_base::MotorControllerBase {
 public:
-    using MyactDiagnosticsCallback = std::function<void(const std::vector<MotorState>&)>;
-
     struct Options : motor_base::MotorControllerBase::RealtimeOptions {
         uint32_t comm_watchdog_fault_cycles = 10;
-        // Retained for source compatibility. Terminal protection always sends
-        // CMD_DISABLE_OPERATION, matching the explicit STOP command.
-        ControlWordCommand comm_fault_control_word = CMD_DISABLE_OPERATION;
     };
 
     MyActMotorController(std::shared_ptr<EthercatAdapter> adapter, int num_motors);
@@ -38,10 +32,7 @@ public:
 
     bool wait_all_motors_ready(int timeout_ms = 30000, int poll_ms = 100) const override;
 
-    std::vector<MotorState> get_myact_diagnostics();
-
-    void set_myact_diagnostics_callback(MyactDiagnosticsCallback cb);
-
+    // 仅在 start() 前配置；运行期不切换打印。
     void set_print_info(const std::vector<int>& motor_index) override;
 
     bool communication_fault_latched() const noexcept
@@ -60,7 +51,6 @@ private:
     std::shared_ptr<EthercatAdapter> _adapter;
     std::vector<MotorState> _motors;
 
-    std::atomic<uint64_t> status_channel_busy_count_{0};
     motor_base::LatestStatusChannel<MotorState> diagnostics_channel_;
     motor_base::MotorStatusMonitor<MotorState>  status_monitor_;
 
@@ -69,9 +59,7 @@ private:
     std::atomic<bool> communication_fault_latched_{false};
     std::atomic<MyactCommunicationFaultReason> current_communication_fault_{
         MyactCommunicationFaultReason::None};
-    MyactCommunicationFaultReason fault_reason_{MyactCommunicationFaultReason::None};
     int terminal_fault_motor_index_{-1};
-    MyactMotorFaultReason terminal_motor_fault_reason_{MyactMotorFaultReason::None};
     std::int64_t current_cycle_host_timestamp_ns_{0};
     bool process_data_ok_{false}; // Most recent received cycle, RT thread only.
 
@@ -103,7 +91,6 @@ private:
 
     void update();
     void update_realtime_feedback();
-    void update_status_snapshot();
     void update_diagnostics_snapshot();
     void update_communication_watchdog(
         bool process_data_ok,
@@ -118,8 +105,6 @@ private:
         uint32_t raw_value);
     void apply_whole_body_stop();
     void reset_motor_setpoints_to_feedback(MotorState& motor);
-
-    void push_status_channel_busy_event();
 
     static void event_sink_trampoline(
         void* context,

@@ -4,8 +4,6 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <mutex>
-#include <optional>
 
 #include "ringbuffer/ring_buffer.hpp"
 #include "motor_base/command_types.hpp"
@@ -25,9 +23,10 @@ inline std::uint32_t discrete_command_target_mask(
 
 class DiscreteCommandSubmissionQueue {
 public:
+    // 多生产者由 MotorControllerBase 的提交锁串行化；RT 线程为唯一消费者。
     struct Entry {
         ControlCommand command;
-        std::optional<CommandId> command_id;
+        CommandId command_id;
     };
 
     explicit DiscreteCommandSubmissionQueue(std::size_t capacity)
@@ -37,7 +36,6 @@ public:
 
     bool try_push(const Entry& value)
     {
-        std::lock_guard<std::mutex> lock(push_mutex_);
         const std::size_t head = head_.load(std::memory_order_relaxed);
         const std::size_t tail = tail_.load(std::memory_order_acquire);
         if (head - tail >= buffer_.capacity()) {
@@ -67,7 +65,6 @@ public:
 
     void clear()
     {
-        std::lock_guard<std::mutex> lock(push_mutex_);
         const std::size_t head = head_.load(std::memory_order_acquire);
         tail_.store(head, std::memory_order_release);
     }
@@ -76,7 +73,6 @@ private:
     robot_base::RingBuffer<Entry> buffer_;
     std::atomic<std::size_t> head_{0};
     std::atomic<std::size_t> tail_{0};
-    std::mutex push_mutex_;
 };
 
 

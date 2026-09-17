@@ -12,7 +12,6 @@ namespace inference::robot_detail {
 
 using robot_base::finite_array;
 using robot_base::finite_vector;
-using robot_base::index_in_range;
 
 namespace {
 
@@ -111,20 +110,11 @@ ObservationBuilder::ObservationBuilder(std::shared_ptr<const JointMapping> mappi
 
 void ObservationBuilder::reset_runtime_state()
 {
-    // 如果mapping_存在且已配置，则重置左右ankle_fk的状态
-    if (mapping_ && mapping_->configured()) {
-        reset_ankle_state(mapping_->left_ankle(),  left_ankle_fk_);
-        reset_ankle_state(mapping_->right_ankle(), right_ankle_fk_);
-    } 
-    // 否则，重置左右ankle_fk的状态为默认值
-    else {
-        left_ankle_fk_.reset();
-        right_ankle_fk_.reset();
-    }
+    reset_ankle_state(mapping_->left_ankle(),  left_ankle_fk_);
+    reset_ankle_state(mapping_->right_ankle(), right_ankle_fk_);
     last_action_raw_.fill(0.0F);
     observation_history_.fill(0.0F);
     observation_history_ready_ = false;
-    episode_length_ = 0;
     frame_index_ = 0;
 }
 
@@ -138,30 +128,13 @@ void ObservationBuilder::advance_frame() noexcept
     ++frame_index_;
 }
 
-void ObservationBuilder::advance_episode() noexcept
-{
-    ++episode_length_;
-}
-
 // 从default_joint_pos_rad_中获取roll和pitch值，调用ankle_fk的reset函数，重置ankle_fk
 void ObservationBuilder::reset_ankle_state(const AnkleParallelMap& ankle_map,
-                                                 AnkleFkState&     state)
+                                                 ankle_motor_fk::Solver& state)
 {
-    double pitch = 0.0;
-    double roll  = 0.0;
-    if (index_in_range(ankle_map.model_pitch_dof, static_cast<int>(kDof)) &&
-        index_in_range(ankle_map.model_roll_dof, static_cast<int>(kDof)))
-    {
-        pitch = default_joint_pos_rad_[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
-        roll  = default_joint_pos_rad_[static_cast<std::size_t>(ankle_map.model_roll_dof)];
-    }
+    const double pitch = default_joint_pos_rad_[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
+    const double roll  = default_joint_pos_rad_[static_cast<std::size_t>(ankle_map.model_roll_dof)];
     state.reset(roll, pitch);
-}
-
-// fk没有额外操作，直接转发 solver 的 reset 函数
-void ObservationBuilder::AnkleFkState::reset(double roll, double pitch)
-{
-    solver.reset(roll, pitch);
 }
 
 
@@ -174,10 +147,6 @@ bool ObservationBuilder::build(
 {
     if (motor_state.position_rad.size() != kDof || motor_state.velocity_rad_s.size() != kDof) {
         error = "motor state position/velocity size mismatch";
-        return false;
-    }
-    if (!ahrs_state.ahrs_ready) {
-        error = "AHRS data is not ready";
         return false;
     }
     if (!ahrs_state.projected_gravity_valid) {
@@ -270,7 +239,7 @@ bool ObservationBuilder::build(
             const std::array<float, 2> gait_phase =
                 gated_gait_phase_observation(current_terms,
                                              policy_config_,
-                                             episode_length_);
+                                             frame_index_);
             fill_term_history(observation_history_, kGaitPhaseOffset,
                               policy_observation::kFrameStack, gait_phase);
         }
@@ -292,7 +261,7 @@ bool ObservationBuilder::build(
             const std::array<float, 2> gait_phase =
                 gated_gait_phase_observation(current_terms,
                                              policy_config_,
-                                             episode_length_);
+                                             frame_index_);
             append_term_history(observation_history_, kGaitPhaseOffset,
                                 policy_observation::kFrameStack, gait_phase);
         }
@@ -328,12 +297,6 @@ bool ObservationBuilder::fill_joint_terms(
 
         // 得到对应电机索引
         const int motor_index = mapping_->direct_motor_for_model_dof(model_index);
-        if (!index_in_range(motor_index, kDof)) {
-            error = "joint mapping missing direct motor for model index " +
-                    std::to_string(model_index);
-            return false;
-        }
-
         // 根据方向进行转换
         const double direction = static_cast<double>(mapping_->direction_for_motor(motor_index));
         const double q_model   = direction * q_motor_rad[motor_index];
@@ -375,7 +338,7 @@ bool ObservationBuilder::fill_ankle_fk_joint_terms(
     const MotorStateArray& q_motor_rad,
     const MotorStateArray& dq_motor_rad_s,
     const AnkleParallelMap& ankle_map,
-    AnkleFkState& state,
+    ankle_motor_fk::Solver& state,
     JointTermArray& joint_pos_rel,
     JointTermArray& joint_vel_rel,
     std::string& error) const
@@ -401,7 +364,7 @@ bool ObservationBuilder::fill_ankle_fk_joint_terms(
         dq_motor_rad_s[static_cast<std::size_t>(ankle_map.lower_motor_index)];
 
     const ankle_motor_fk::FootAngles foot =
-        state.solver.solve(upper_motor, lower_motor);
+        state.solve(upper_motor, lower_motor);
     if (!foot.reachable ||
         !std::isfinite(foot.pitch) ||
         !std::isfinite(foot.roll)) {

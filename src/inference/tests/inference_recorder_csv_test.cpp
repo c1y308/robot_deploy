@@ -4,12 +4,14 @@
 #include <cstddef>
 #include <cmath>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -94,9 +96,8 @@ void test_policy_observation_csv_columns(std::size_t observation_size)
     record.policy_seq = 42;
     record.policy_observation_time_ns = record.inference_start_ns - 20000;
     record.policy_valid_until_ns = record.inference_end_ns + 60000000;
-    record.command_produced_at_ns = record.inference_end_ns + 1000;
-    record.command_valid_until_ns = record.command_produced_at_ns + 10000000;
-    record.command_timestamp_ns = record.command_produced_at_ns;
+    record.command_timestamp_ns = record.inference_end_ns + 1000;
+    record.command_valid_until_ns = record.command_timestamp_ns + 10000000;
     record.imu_receive_timestamp_ns = record.inference_start_ns - 8000;
     record.imu_sample_timestamp_ns = 123456789000ULL;
     record.command_applied = true;
@@ -128,7 +129,6 @@ void test_policy_observation_csv_columns(std::size_t observation_size)
     drop.obs_to_action_age_us = 44000;
     drop.target_hold_age_us = 26000;
     drop.command_timestamp_ns = 0;
-    drop.command_produced_at_ns = 0;
     drop.command_valid_until_ns = 0;
     drop.policy_valid_until_ns = 0;
     expect(recorder.try_record(drop), "failed to queue drop record");
@@ -162,8 +162,8 @@ void test_policy_observation_csv_columns(std::size_t observation_size)
         require_column(columns, "policy_observation_time_ns");
     const std::size_t policy_valid_until_index =
         require_column(columns, "policy_valid_until_ns");
-    const std::size_t command_produced_at_index =
-        require_column(columns, "command_produced_at_ns");
+    expect(!has_column(columns, "command_produced_at_ns"),
+           "duplicate command production timestamp column must be removed");
     const std::size_t command_valid_until_index =
         require_column(columns, "command_valid_until_ns");
     const std::size_t target_pos_index = require_column(columns, "target_pos_rad_M0");
@@ -220,9 +220,6 @@ void test_policy_observation_csv_columns(std::size_t observation_size)
     expect(std::stoll(values[policy_valid_until_index]) ==
                record.policy_valid_until_ns,
            "policy deadline value mismatch");
-    expect(std::stoll(values[command_produced_at_index]) ==
-               record.command_produced_at_ns,
-           "command production timestamp value mismatch");
     expect(std::stoll(values[command_valid_until_index]) ==
                record.command_valid_until_ns,
            "command deadline value mismatch");
@@ -257,13 +254,55 @@ void test_policy_observation_csv_columns(std::size_t observation_size)
                std::stoll(drop_values[hold_age_index]) == 26000,
            "drop row must preserve policy_seq and admission ages");
     expect(std::stoll(drop_values[command_timestamp_index]) == 0 &&
-               std::stoll(drop_values[command_produced_at_index]) == 0 &&
                std::stoll(drop_values[command_valid_until_index]) == 0 &&
                std::stoll(drop_values[policy_valid_until_index]) == 0,
            "drop row must not claim a target or command deadline");
 
     std::error_code ignored;
     std::filesystem::remove_all(dir, ignored);
+}
+
+void test_idle_recorder_waits_and_resumes()
+{
+    const std::filesystem::path dir = unique_test_dir();
+    inference::InferenceRecorderConfig config;
+    config.directory = dir;
+    config.flush_interval = std::chrono::milliseconds(50);
+
+    inference::InferenceRecorder recorder;
+    expect(recorder.start(config), "failed to start idle recorder");
+
+    // The header is flushed once, then two idle flush deadlines must pass.
+    std::this_thread::sleep_for(config.flush_interval * 3);
+    const auto wall_start = std::chrono::steady_clock::now();
+    const auto cpu_start = std::clock();
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    const double cpu_ms = 1000.0 * (std::clock() - cpu_start) / CLOCKS_PER_SEC;
+    const double wall_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - wall_start).count();
+    expect(cpu_ms < wall_ms * 0.25,
+           "idle recorder is spinning: CPU ms=" + std::to_string(cpu_ms) +
+           ", wall ms=" + std::to_string(wall_ms));
+
+    inference::InferenceRecord record;
+    record.frame_index = 42;
+    expect(recorder.try_record(record), "idle recorder did not resume recording");
+    const auto log_path = recorder.log_path();
+    recorder.stop();
+
+    std::ifstream file(log_path);
+    std::string header;
+    std::string data;
+    expect(static_cast<bool>(std::getline(file, header)) &&
+               static_cast<bool>(std::getline(file, data)),
+           "record queued after idle was lost on shutdown");
+    const auto columns = split_csv_line(header);
+    const auto values = split_csv_line(data);
+    expect(values.size() == columns.size() &&
+               values[require_column(columns, "frame_index")] == "42",
+           "record queued after idle was corrupted");
+    file.close();
+    std::filesystem::remove_all(dir);
 }
 
 void test_invalid_policy_observation_size_is_rejected()
@@ -291,6 +330,7 @@ int main()
     test_policy_observation_csv_columns(
         inference::policy_observation::kObservationSizeWithGaitPhase);
     test_invalid_policy_observation_size_is_rejected();
+    test_idle_recorder_waits_and_resumes();
     std::cout << "inference_recorder_csv_test passed\n";
     return 0;
 }

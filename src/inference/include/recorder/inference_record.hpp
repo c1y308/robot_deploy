@@ -33,7 +33,6 @@ struct InferenceRecord {
     std::uint64_t policy_seq{0};
     std::int64_t policy_observation_time_ns{0};
     std::int64_t policy_valid_until_ns{0};
-    std::int64_t command_produced_at_ns{0};
     std::int64_t command_valid_until_ns{0};
     std::int64_t  imu_receive_timestamp_ns{0};
     std::uint64_t imu_sample_timestamp_ns{0};

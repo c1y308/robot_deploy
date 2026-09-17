@@ -2,6 +2,7 @@
 #define __IMU_PARSER_HPP__
 
 #include "protocol/a100/types.hpp"
+#include <cstddef>
 #include <functional>
 #include <vector>
 
@@ -36,8 +37,8 @@ public:
     static void print_ahrs_data(const AHRSData_t& ahrs);
 
 private:
-    uint8_t  crc8_table(const std::vector<uint8_t>& data);
-    uint16_t crc16_table(const std::vector<uint8_t>& data);
+    uint8_t  crc8_table(const uint8_t* data, std::size_t size);
+    uint16_t crc16_table(const uint8_t* data, std::size_t size);
 
     void reset_frame_state();
 
@@ -62,9 +63,6 @@ private:
     uint8_t last_byte_;
     bool parsing_state_;
 
-    /* 存储正确数据的缓冲区 */
-    std::vector<uint8_t> frame_buffer_;
-    
     /* 存储解析好的数据 */
     IMUData_t imu_data_;
     AHRSData_t ahrs_data_;

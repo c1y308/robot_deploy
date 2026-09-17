@@ -48,7 +48,7 @@ struct MotorStatusSnapshot {
 /// @brief 仅保留最新状态的发布-订阅通道（triple-buffer 实现）。
 ///
 /// 三个槽对应三个固定 ownership role：Writing / Middle / Reading。
-/// 实时写入线程通过 write / publish 发布快照；
+/// 实时写入线程通过 acquire_write_slot / publish_written 发布快照；
 /// 非实时发布线程按固定周期通过 copy_latest_status 消费最新快照。
 ///
 /// @tparam Snapshot channel 传输的数据类型
@@ -56,14 +56,6 @@ template <typename Snapshot>
 class LatestStatusChannel {
 public:
     using StatusCallback = std::function<void(const std::vector<Snapshot>&)>;
-
-    /// @brief 写入槽预留凭证。由 write 填充，publish 消费。
-    struct WriteToken {
-        std::size_t slot;
-        Snapshot*   data;
-
-        WriteToken() : slot(0), data(nullptr) {}
-    };
 
     LatestStatusChannel();
     ~LatestStatusChannel();
@@ -79,11 +71,10 @@ public:
     // ──────────────────── 实时写入 API ────────────────────
 
     /// @brief 获取写入槽。Producer 独占，绝不阻塞。
-    /// @return 总是成功（除非未配置 motor_count）。
-    bool write(WriteToken& token);
+    Snapshot* acquire_write_slot();
 
     /// @brief 发布写入槽，对 Consumer 可见。绝不阻塞、不用 mutex、无 CAS retry。
-    void publish(const WriteToken& token);
+    void publish_written();
 
     // ──────────────────── 非实时读取 API ────────────────────
 
@@ -175,36 +166,24 @@ void LatestStatusChannel<Snapshot>::configure(
 
 
 // ---------------------------------------------------------------------------
-// write — Producer 获取写入槽（RT 路径，永不阻塞）
+// acquire_write_slot — Producer 获取写入槽（RT 路径，永不阻塞）
 // ---------------------------------------------------------------------------
 
 template <typename Snapshot>
-bool LatestStatusChannel<Snapshot>::write(WriteToken& token)
+Snapshot* LatestStatusChannel<Snapshot>::acquire_write_slot()
 {
-    token = WriteToken();
-    if (motor_count_ == 0)
-        return false;
-
     StatusFrame* frame = latest_frame_.acquire_write_slot();
     frame->count = motor_count_;
-    token.slot = 0;
-    token.data = frame->values.data();
-    return true;
+    return frame->values.data();
 }
 
 // ---------------------------------------------------------------------------
-// publish — Producer 发布写入槽（RT 路径，O(1) 无 CAS 循环）
+// publish_written — Producer 发布写入槽（RT 路径，O(1) 无 CAS 循环）
 // ---------------------------------------------------------------------------
 
 template <typename Snapshot>
-void LatestStatusChannel<Snapshot>::publish(const WriteToken& token)
+void LatestStatusChannel<Snapshot>::publish_written()
 {
-    if (!token.data ||
-        token.slot != 0 ||
-        token.data != latest_frame_.acquire_write_slot()->values.data()) {
-        return;
-    }
-
     latest_frame_.publish_written();
 }
 

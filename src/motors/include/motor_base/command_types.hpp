@@ -1,7 +1,6 @@
 #pragma once
 
 #include <array>
-#include <cmath>
 #include <cstdint>
 #include <cstddef>
 #include <optional>
@@ -67,12 +66,6 @@ struct CommandTiming {
     std::int64_t produced_at_ns{0};
     std::int64_t valid_until_ns{0};
 
-    bool is_unset() const noexcept
-    {
-        return source_policy_seq == 0 && produced_at_ns == 0 &&
-               valid_until_ns == 0;
-    }
-
     bool is_well_formed() const noexcept
     {
         return produced_at_ns > 0 && valid_until_ns > produced_at_ns;
@@ -84,17 +77,11 @@ enum class CommandSubmitStatus {
     QUEUE_FULL,
     INVALID_COMMAND,
     INVALID_PAYLOAD,
-    SOURCE_INACTIVE
 };
 
 struct CommandSubmitResult {
     CommandSubmitStatus status;
     std::optional<CommandId> command_id;
-};
-
-enum class SetpointSource {
-    POLICY,
-    DEBUG
 };
 
 enum class DiscreteCommandResult {
@@ -198,30 +185,8 @@ struct ControlCommand {
         }
         cmd.payload_size = count;
         for (std::size_t i = 0; i < count; ++i) {
-            if (!std::isfinite(values[i])) {
-                cmd.payload_valid = false;
-                return cmd;
-            }
             cmd.setpoints[i] = values[i];
         }
-        return cmd;
-    }
-
-
-    static ControlCommand set_position_targets_rad(double value, int motor_index) {
-        ControlCommand cmd;
-
-        cmd.kind = ControlCommandKind::SETPOINT;
-        cmd.setpoint_type = SetpointCommandType::POSITION_TARGETS;
-        cmd.motor_index   = motor_index;
-
-        if (!std::isfinite(value)) {
-            cmd.payload_valid = false;
-            return cmd;
-        }
-        cmd.payload_size = 1;
-        cmd.setpoints[0] = value;
-
         return cmd;
     }
 
@@ -247,30 +212,8 @@ struct ControlCommand {
         cmd.payload_size = count;
 
         for (std::size_t i = 0; i < count; ++i) {
-            if (!std::isfinite(values[i])) {
-                cmd.payload_valid = false;
-                return cmd;
-            }
             cmd.setpoints[i] = values[i];
         }
-
-        return cmd;
-    }
-
-
-    static ControlCommand set_velocity_targets_rad_s(double value, int motor_index) {
-        ControlCommand cmd;
-
-        cmd.kind = ControlCommandKind::SETPOINT;
-        cmd.setpoint_type = SetpointCommandType::VELOCITY_TARGETS;
-        cmd.motor_index   = motor_index;
-
-        if (!std::isfinite(value)) {
-            cmd.payload_valid = false;
-            return cmd;
-        }
-        cmd.payload_size = 1;
-        cmd.setpoints[0] = value;
 
         return cmd;
     }
@@ -298,41 +241,12 @@ struct ControlCommand {
         cmd.payload_size = count;
 
         for (std::size_t i = 0; i < count; ++i) {
-            const auto& value = values[i];
-            if (!std::isfinite(value.position_rad) ||
-                !std::isfinite(value.velocity_rad_s) ||
-                !std::isfinite(value.effort_ff) ||
-                !std::isfinite(value.kp) ||
-                !std::isfinite(value.kd)) {
-                cmd.payload_valid = false;
-                return cmd;
-            }
             cmd.impedance_setpoints[i] = values[i];
         }
 
         return cmd;
     }
-    static ControlCommand set_impedance_targets(ImpedanceSetpoint value, int motor_index) {
-        ControlCommand cmd;
 
-        cmd.kind = ControlCommandKind::SETPOINT;
-        cmd.setpoint_type = SetpointCommandType::IMPEDANCE_TARGETS;
-        cmd.motor_index   = motor_index;
-
-        if (!std::isfinite(value.position_rad) ||
-            !std::isfinite(value.velocity_rad_s) ||
-            !std::isfinite(value.effort_ff) ||
-            !std::isfinite(value.kp) ||
-            !std::isfinite(value.kd)) {
-            cmd.payload_valid = false;
-            return cmd;
-        }
-
-        cmd.payload_size = 1;
-        cmd.impedance_setpoints[0] = value;
-
-        return cmd;
-    }
 };
 
 /* 离散队列状态机 */
@@ -340,7 +254,6 @@ enum class DiscretePhase {
     QUEUED,         // 入队
     APPLY_PENDING,  // 已发送
     VERIFYING,      // 等待验证
-    DONE,           // 验证成功
     FAILED          // 验证失败
 };
 
@@ -372,7 +285,6 @@ struct DiscreteCommand {
 
     DiscretePhase phase;        // 当前状态机阶段
 
-    uint64_t enqueue_tick;      // 入队 tick
     uint64_t next_retry_tick;   // 下次重发 tick
     uint64_t next_verify_tick;  // 下次验证 tick
     uint64_t deadline_tick;     // 超时 tick
@@ -382,16 +294,15 @@ struct DiscreteCommand {
 
     int stable_success_cycles;
     DiscreteFailReason fail_reason;    // 失败原因
-    bool from_all_motors;              // 是否来自 ControlCommand::kAllMotors
 
     DiscreteCommand(DiscreteCommandType t = DiscreteCommandType::STOP,
                     MotorControlMode    m = MotorControlMode::NONE,
                     CommandId           id = 0)
 
         : type(t), mode(m), command_id(id), phase(DiscretePhase::QUEUED),
-          enqueue_tick(0), next_retry_tick(0), next_verify_tick(0), deadline_tick(0),
+          next_retry_tick(0), next_verify_tick(0), deadline_tick(0),
           max_retries(0), cur_retry(0), stable_success_cycles(0),
-          fail_reason(DiscreteFailReason::NONE), from_all_motors(false) {}
+          fail_reason(DiscreteFailReason::NONE) {}
 };
 
 

@@ -1,6 +1,5 @@
 #include "robot/action_processor.hpp"
 
-#include "tool/tool.hpp"
 #include "kinematics/ankle_motor_jacobian.hpp"
 #include "robot/robot_motor_session.hpp"
 
@@ -13,8 +12,6 @@
 #include <vector>
 
 namespace inference::robot_detail {
-
-using robot_base::index_in_range;
 
 namespace {
 
@@ -89,24 +86,13 @@ void ActionProcessor::reset_runtime_state()
 
     auto reset_torque_state = [this](const AnkleParallelMap& ankle_map,
                                      AnkleTorqueState& state) {
-        double pitch = 0.0;
-        double roll = 0.0;
-        const int count = dof_count();
-        if (index_in_range(ankle_map.model_pitch_dof, count) &&
-            index_in_range(ankle_map.model_roll_dof, count)) {
-            pitch = action_config_.default_joint_pos_rad[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
-            roll = action_config_.default_joint_pos_rad[static_cast<std::size_t>(ankle_map.model_roll_dof)];
-        }
+        const double pitch = action_config_.default_joint_pos_rad[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
+        const double roll = action_config_.default_joint_pos_rad[static_cast<std::size_t>(ankle_map.model_roll_dof)];
         state.reset(roll, pitch);
     };
 
-    if (mapping_ && mapping_->configured()) {
-        reset_torque_state(mapping_->left_ankle(), left_ankle_torque_);
-        reset_torque_state(mapping_->right_ankle(), right_ankle_torque_);
-    } else {
-        left_ankle_torque_.reset();
-        right_ankle_torque_.reset();
-    }
+    reset_torque_state(mapping_->left_ankle(), left_ankle_torque_);
+    reset_torque_state(mapping_->right_ankle(), right_ankle_torque_);
 }
 
 
@@ -115,11 +101,6 @@ bool ActionProcessor::build_motor_targets(
     std::vector<double>&       target_motor_rad,    // 电机目标角(引用传递)
     std::string& error)
 {
-    if (!mapping_) {
-        error = "joint mapping is not configured";
-        return false;
-    }
-
     const int count = dof_count();
     if (static_cast<int>(target_q_model_rad.size()) != count) {
         error = "target size mismatch";
@@ -135,12 +116,6 @@ bool ActionProcessor::build_motor_targets(
         }
 
         const int motor_index = mapping_->direct_motor_for_model_dof(model_index);
-        if (!index_in_range(motor_index, count)) {
-            error = "joint mapping missing direct motor for model index " +
-                    std::to_string(model_index);
-            return false;
-        }
-
         double q = target_q_model_rad[static_cast<std::size_t>(model_index)];
 
         target_motor_rad[static_cast<std::size_t>(motor_index)] =
@@ -196,20 +171,6 @@ bool ActionProcessor::apply_ankle_ik(
     AnkleIkState&              state,               // 脚踝IK求解器的状态
     std::string& error)
 {
-    if (!mapping_) {
-        error = "joint mapping is not configured";
-        return false;
-    }
-
-    const int count = dof_count();
-    if (!index_in_range(ankle_map.model_pitch_dof, count) ||
-        !index_in_range(ankle_map.model_roll_dof, count) ||
-        !index_in_range(ankle_map.upper_motor_index, count) ||
-        !index_in_range(ankle_map.lower_motor_index, count)) {
-        error = "ankle map contains an out-of-range index";
-        return false;
-    }
-
     const double pitch = target_q_model_rad[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
     const double roll  = target_q_model_rad[static_cast<std::size_t>(ankle_map.model_roll_dof)];
 
@@ -276,8 +237,7 @@ bool ActionProcessor::build_policy_impedance_command(
     for (int motor_index = 0; motor_index < count; ++motor_index) {
         const auto& motor =
             motor_feedback[static_cast<std::size_t>(motor_index)];
-        if (!motor.comm_ok || !motor.enabled || motor.faulted ||
-            !motor.control_ready) {
+        if (!motor.control_ready) {
             error = "motor feedback is not control-ready at index " +
                     std::to_string(motor_index) +
                     ": comm_ok=" + (motor.comm_ok ? "true" : "false") +
@@ -319,12 +279,6 @@ bool ActionProcessor::build_policy_impedance_command(
         }
 
         const int motor_index = mapping_->direct_motor_for_model_dof(model_index);
-        if (!index_in_range(motor_index, count)) {
-            error = "joint mapping missing direct motor for model index " +
-                    std::to_string(model_index);
-            return false;
-        }
-
         const double q = target_q_model_rad[static_cast<std::size_t>(model_index)];
 
         const auto motor_slot = static_cast<std::size_t>(motor_index);
@@ -469,8 +423,6 @@ bool ActionProcessor::apply_ankle_torque_control(
                                       lower_effort_permille,
                                       0.0,
                                       0.0);
-    command.target_effort_permille[upper_index] = upper_effort_permille;
-    command.target_effort_permille[lower_index] = lower_effort_permille;
 
     error.clear();
     return true;
@@ -478,7 +430,7 @@ bool ActionProcessor::apply_ankle_torque_control(
 
 int ActionProcessor::dof_count() const noexcept
 {
-    return mapping_ ? mapping_->dof_count() : 0;
+    return mapping_->dof_count();
 }
 
 bool ActionProcessor::build_reset_start_model_pose(
@@ -487,11 +439,6 @@ bool ActionProcessor::build_reset_start_model_pose(
     std::vector<double>&       start_model_q,   // 输出: 当前的模型关节角(rad)
     std::string& error) const
 {
-    if (!mapping_) {
-        error = "joint mapping is not configured";
-        return false;
-    }
-
     const int count = dof_count();
     if (static_cast<int>(current_motor_q.size()) != count ||
         static_cast<int>(target_model_q.size())  != count) {
@@ -510,11 +457,6 @@ bool ActionProcessor::build_reset_start_model_pose(
 
         // 得到电机索引
         const int motor_index = mapping_->direct_motor_for_model_dof(model_index);
-        if (!index_in_range(motor_index, count)) {
-            error = "joint mapping missing direct motor for model index " +
-                    std::to_string(model_index);
-            return false;
-        }
         // 从电机角度转换为模型关节角度，考虑电机方向
         start_model_q[static_cast<std::size_t>(model_index)] =
             mapping_->direction_for_motor(motor_index) * current_motor_q[static_cast<std::size_t>(motor_index)];

@@ -3,7 +3,6 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
-#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
@@ -36,26 +35,22 @@ public:
 
     void set_status_provider(StatusProvider provider)
     {
-        std::lock_guard<std::mutex> lock(provider_mutex_);
         status_provider_ = std::move(provider);
     }
 
     void set_status_printer(StatusPrinter printer)
     {
-        std::lock_guard<std::mutex> lock(printer_mutex_);
         status_printer_ = std::move(printer);
     }
 
-    bool set_print_info(const std::vector<int>& motor_indices)
+    // Provider、printer 和打印轴列表均在 start() 前配置。
+    void set_print_info(const std::vector<int>& motor_indices)
     {
-        std::lock_guard<std::mutex> lock(print_mutex_);
         print_motor_ids_ = motor_indices;
-        return !print_motor_ids_.empty();
     }
 
     bool has_print_motor_ids() const
     {
-        std::lock_guard<std::mutex> lock(print_mutex_);
         return !print_motor_ids_.empty();
     }
 
@@ -113,19 +108,16 @@ public:
 private:
     std::vector<int> get_print_motor_ids() const
     {
-        std::lock_guard<std::mutex> lock(print_mutex_);
         return print_motor_ids_;
     }
 
     StatusProvider get_status_provider() const
     {
-        std::lock_guard<std::mutex> lock(provider_mutex_);
         return status_provider_;
     }
 
     StatusPrinter get_status_printer() const
     {
-        std::lock_guard<std::mutex> lock(printer_mutex_);
         return status_printer_;
     }
 
@@ -149,13 +141,10 @@ private:
     }
 
     StatusProvider status_provider_;
-    mutable std::mutex provider_mutex_;
 
     StatusPrinter status_printer_;
-    mutable std::mutex printer_mutex_;
 
     std::vector<int> print_motor_ids_;
-    mutable std::mutex print_mutex_;
 
     std::thread thread_;
     std::atomic<bool> running_{false};

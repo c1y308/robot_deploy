@@ -15,7 +15,6 @@ public:
         const inference::JointMappingConfig& config,
         std::string& error);
 
-    bool configured() const noexcept { return configured_; }
     int dof_count() const noexcept { return dof_count_; }
 
     const std::string& last_error() const noexcept { return last_error_; }
@@ -33,7 +32,6 @@ private:
 
     inference::JointMappingConfig config_;
     int dof_count_ = 0;
-    bool configured_ = false;
     std::string last_error_;
     std::vector<unsigned char> parallel_model_dof_;
     std::vector<int> direct_motor_for_model_dof_;

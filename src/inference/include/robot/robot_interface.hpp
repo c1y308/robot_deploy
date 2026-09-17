@@ -26,14 +26,13 @@ enum class ShutdownResult {
 
 namespace robot_detail {
 class ActionProcessor;
-class JointMapping;
 class ObservationBuilder;
 }
 
 class RobotInterface {
 public:
     /* 构造函数只保存配置；配置由 load_deploy_config() 加载并完整校验。
-       initialize/shutdown/policy_step/apply_action 需由同一控制线程串行调用。 */
+       initialize/shutdown/policy_step 需由同一控制线程串行调用。 */
     explicit RobotInterface(RobotInterfaceConfig config);
     ~RobotInterface();
 
@@ -41,9 +40,7 @@ public:
     bool is_initialized() const { return initialized_.load(); }
 
 
-    bool reset_joints();  /* 复位到模型 DOF 顺序配置的 action.default_joint_pos_rad，单位为 rad */
     bool policy_step();
-    bool apply_action(const std::vector<double>& target_q_model_rad);  // 模型 DOF 顺序目标角(rad)
     // RetryRequired retains RT and resources for another confirmation attempt.
     // ReleasedAfterCommLoss releases resources without claiming STOP confirmation.
     ShutdownResult shutdown();
@@ -69,7 +66,6 @@ private:
         std::array<double, policy_observation::kDof> target_q_model_rad{};
         std::uint64_t policy_seq{0};
         std::uint64_t target_seq{0};
-        std::int64_t  observation_time_ns{0};
         std::int64_t  published_at_ns{0};
         std::int64_t  valid_until_ns{0};
         InferenceRecord inference_record{};
@@ -92,7 +88,6 @@ private:
     RobotImuSession      imu_session_;
 
     /* 运行期对象 */
-    std::shared_ptr<const robot_detail::JointMapping> joint_mapping_;
     std::unique_ptr<robot_detail::ActionProcessor>    action_processor_;
     std::unique_ptr<robot_detail::ObservationBuilder> observation_builder_;
 
@@ -112,7 +107,6 @@ private:
 
     std::uint64_t next_policy_seq_{1};  // 每轮正式推理递增，包括 drop
     std::uint64_t next_target_seq_{1};  // 仅有效发布时递增，0 表示未发布
-    std::uint64_t stale_policy_drop_count_{0};
     std::int64_t last_policy_target_published_ns_{0};  // 仅 policy 线程访问
     std::atomic<std::int64_t> first_policy_inference_started_ns_{0};
 
@@ -135,6 +129,8 @@ private:
     void unload_policy();
 
     bool initialize_model_processors();
+
+    bool reset_joints();  // 初始化时平滑复位到模型 DOF 顺序的 default_joint_pos_rad。
 
     void initialize_policy_runtime_state();
     void reset_policy_command_state() noexcept;

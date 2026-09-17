@@ -61,7 +61,7 @@ void write_header(std::ostream& stream, std::size_t observation_size)
     stream << "frame_index,elapsed_us,motor_sample_timestamp_ns,inference_start_ns,"
            << "inference_end_ns,inference_duration_us,command_timestamp_ns,"
            << "command_applied,policy_seq,policy_observation_time_ns,"
-           << "policy_valid_until_ns,command_produced_at_ns,"
+            << "policy_valid_until_ns,"
            << "command_valid_until_ns";
     append_indexed_columns(stream, "policy_obs", observation_size);
     append_indexed_columns(stream, "raw_action", kInferenceDof);
@@ -139,7 +139,6 @@ void write_record(std::ostream&          stream,
            << record.policy_seq << ','
            << record.policy_observation_time_ns << ','
            << record.policy_valid_until_ns << ','
-           << record.command_produced_at_ns << ','
            << record.command_valid_until_ns;
 
     append_values(stream, record.policy_observation, observation_size);
@@ -394,9 +393,11 @@ void InferenceRecorder::worker_loop() noexcept
         }
 
         const auto now = std::chrono::steady_clock::now();
-        if ((dirty && now >= next_flush) || stopping) {
-            file_.flush();
-            dirty = false;
+        if (now >= next_flush || stopping) {
+            if (dirty || stopping) {
+                file_.flush();
+                dirty = false;
+            }
             next_flush = now + flush_interval;
         }
 

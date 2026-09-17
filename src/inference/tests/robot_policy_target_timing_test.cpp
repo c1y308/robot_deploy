@@ -96,7 +96,6 @@ struct RobotInterfacePolicyTimingTestAccess {
         expect(!record.policy_result_dropped, "test attempted to publish a drop");
         Target* staged = robot.policy_target_channel_.acquire_write_slot();
         staged->policy_seq = record.policy_seq;
-        staged->observation_time_ns = record.policy_observation_time_ns;
         staged->target_q_model_rad = record.target_q_model_rad;
         staged->inference_record = record;
         robot.publish_policy_target(*staged, published_at);
@@ -120,7 +119,6 @@ struct RobotInterfacePolicyTimingTestAccess {
         motor.position_rad.assign(12, 0.0);
         motor.velocity_rad_s.assign(12, 0.0);
         AhrsStateSnapshot imu;
-        imu.ahrs_ready = true;
         imu.projected_gravity_valid = true;
         imu.projected_gravity = {0.0, 0.0, -1.0};
         PolicyObservation obs;
@@ -172,7 +170,6 @@ struct RobotInterfacePolicyTimingTestAccess {
         expect(stale.policy_seq == 2 && stale.target_seq == 0 && !stale.command_applied,
                "drop lost its policy step identity");
         expect(robot.next_policy_seq_ == 3 && robot.next_target_seq_ == 2 &&
-                   robot.stale_policy_drop_count_ == 1 &&
                    robot.last_policy_target_published_ns_ == target1.published_at_ns,
                "drop consumed target sequence or renewed the hold");
         const auto next_obs = observation(robot);
@@ -206,7 +203,7 @@ struct RobotInterfacePolicyTimingTestAccess {
         Target ignored;
         InferenceRecord ignored_record;
         expect(robot.next_policy_seq_ == 1 && robot.next_target_seq_ == 1 &&
-                   robot.stale_policy_drop_count_ == 0 && robot.last_policy_target_published_ns_ == 0 &&
+                   robot.last_policy_target_published_ns_ == 0 &&
                    robot.first_policy_inference_started_ns_.load() == 0 &&
                    robot.observation_builder_->frame_index() == 0 &&
                    !robot.policy_target_channel_.try_consume_latest(ignored) &&
@@ -249,8 +246,10 @@ struct RobotInterfacePolicyTimingTestAccess {
         std::string error;
         expect(!robot.validate_policy_sensor_timing(0, kStart, kStart, error), "missing motor timestamp accepted");
         expect(!robot.validate_policy_sensor_timing(kStart, 0, kStart, error), "missing IMU timestamp accepted");
-        expect(!robot.validate_policy_sensor_timing(kStart + 1, kStart, kStart, error), "future motor accepted");
-        expect(!robot.validate_policy_sensor_timing(kStart, kStart + 1, kStart, error), "future IMU accepted");
+        expect(robot.validate_policy_sensor_timing(kStart + 1, kStart, kStart, error),
+               "a sensor sampled after now must not be rejected for negative age");
+        expect(robot.validate_policy_sensor_timing(kStart, kStart + 1, kStart, error),
+               "a sensor sampled after now must not be rejected for negative age");
         expect(robot.validate_policy_sensor_timing(kStart, kStart, kStart + 50*kMs, error), "50ms boundary rejected");
         expect(!robot.validate_policy_sensor_timing(kStart, kStart, kStart + 50*kMs + 1, error), "sensor guard relaxed");
         expect(robot.validate_policy_sensor_timing(kStart + 30*kMs, kStart, kStart + 30*kMs, error), "30ms skew rejected");
@@ -309,7 +308,7 @@ struct RobotInterfacePolicyTimingTestAccess {
             seq = begin(robot, now - 20*kMs);
             drop(robot, record(robot, seq, now - 45*kMs, admit(robot, now - 45*kMs, now), 0.9F));
         }
-        expect(robot.stale_policy_drop_count_ == 3 && robot.last_policy_target_published_ns_ == held.published_at_ns,
+        expect(robot.last_policy_target_published_ns_ == held.published_at_ns,
                "continuous drops renewed the watchdog");
         run_expired_worker(robot, &held);  // Also models a next inference stuck while holding.
     }
@@ -342,7 +341,7 @@ struct RobotInterfacePolicyTimingTestAccess {
                    values[column(header, "target_seq")] == "0" &&
                    values[column(header, "policy_result_dropped")] == "1" &&
                    values[column(header, "command_applied")] == "0" &&
-                   values[column(header, "command_produced_at_ns")] == "0" &&
+                   values[column(header, "command_timestamp_ns")] == "0" &&
                    values[column(header, "policy_valid_until_ns")] == "0" &&
                    values[column(header, "obs_to_action_age_us")] == "45000" &&
                    values[column(header, "target_hold_age_us")] == "45000" &&

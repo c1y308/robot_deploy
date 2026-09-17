@@ -15,10 +15,6 @@ constexpr clockid_t kClockToUse = CLOCK_MONOTONIC;
 
 enum SetpointFreshnessReason : int {
     FRESHNESS_EXPIRED = 1,
-    FRESHNESS_INVALID_TIMING = 2,
-    FRESHNESS_FUTURE_PRODUCER = 3,
-    FRESHNESS_POLICY_SEQUENCE_ROLLBACK = 4,
-    FRESHNESS_TIMESTAMP_ROLLBACK = 5,
 };
 
 void add_period_ns(timespec& time, long period_ns)
@@ -31,14 +27,6 @@ void add_period_ns(timespec& time, long period_ns)
     }
 }
 
-const char* setpoint_source_name(SetpointSource source)
-{
-    switch (source) {
-        case SetpointSource::POLICY: return "POLICY";
-        case SetpointSource::DEBUG: return "DEBUG";
-    }
-    return "UNKNOWN";
-}
 } // namespace
 
 
@@ -67,16 +55,6 @@ MotorControllerBase::MotorControllerBase(
         throw std::invalid_argument(
             "RealtimeOptions rt_period_ns must be positive");
     }
-    if (rt_options_.setpoint_timeout_ns <= 0) {
-        throw std::invalid_argument(
-            "RealtimeOptions setpoint_timeout_ns must be positive");
-    }
-    if (rt_options_.setpoint_timeout_ns <
-        2 * static_cast<std::int64_t>(rt_options_.rt_period_ns)) {
-        throw std::invalid_argument(
-            "RealtimeOptions setpoint_timeout_ns must cover at least two "
-            "realtime cycles");
-    }
     if (rt_options_.status_publish_period_ms <= 0) {
         throw std::invalid_argument(
             "RealtimeOptions status_publish_period_ms must be positive");
@@ -86,7 +64,6 @@ MotorControllerBase::MotorControllerBase(
                               "motor_status",
                               rt_options_.background_thread_options);
     rt_event_dispatcher_.configure_thread(rt_options_.background_thread_options);
-    setpoint_channel_debug_.reset_empty();
     setpoint_channel_policy_.reset_empty();
     command_feedback_channel_.reset_empty();
     policy_feedback_channel_.reset_empty();
@@ -129,13 +106,9 @@ bool MotorControllerBase::start()
     }
 
     rt_scheduling_ready_.store(false, std::memory_order_release);
-    setpoint_channel_debug_.reset_empty();
     setpoint_channel_policy_.reset_empty();
     has_active_setpoint_ = false;
     active_setpoint_ = ControlCommand{};
-    last_policy_seq_ = 0;
-    last_produced_at_ns_ = 0;
-    policy_sequence_started_.store(false, std::memory_order_release);
     command_feedback_channel_.reset_empty();
     policy_feedback_channel_.reset_empty();
     if (!status_channel_.start()) {
@@ -158,17 +131,10 @@ bool MotorControllerBase::start()
     }
 
     running_.store(true, std::memory_order_release);
-    robot_base::ThreadRuntimeOptions rt_thread_options =
-        rt_options_.rt_thread_options;
-    if (rt_options_.rt_priority > 0) {
-        rt_thread_options.scheduling_policy =
-            robot_base::ThreadSchedulingPolicy::FIFO;
-        rt_thread_options.priority = rt_options_.rt_priority;
-    }
 
     std::string thread_error;
     if (!robot_base::start_configured_thread(
-            rt_thread_, "ecat_rt", rt_thread_options,
+            rt_thread_, "ecat_rt", rt_options_.rt_thread_options,
             [this] { thread_func(); }, thread_error)) {
         running_.store(false, std::memory_order_release);
         rt_scheduling_ready_.store(false, std::memory_order_release);
@@ -241,18 +207,12 @@ void MotorControllerBase::thread_func()
 
 
 /// @brief 异步发送离散控制命令。
-/// @brief 进行通用性检查并调用 validate_command() 进行驱动特定检查。
 
 CommandSubmitResult MotorControllerBase::send_discrete_command(
     const ControlCommand& cmd)
 {
     if (cmd.kind != ControlCommandKind::DISCRETE) {
         return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
-    }
-
-    // 通用性检查，如电机索引、数据长度
-    if (!cmd.payload_valid) {
-        return {CommandSubmitStatus::INVALID_PAYLOAD, std::nullopt};
     }
 
     if (terminal_fault_latched_.load(std::memory_order_acquire) &&
@@ -279,7 +239,8 @@ CommandSubmitResult MotorControllerBase::send_discrete_command(
     }
 
     // 如果需要实时检查实时调度是否可用
-    const bool realtime_required = rt_options_.rt_priority > 0;
+    const bool realtime_required = rt_options_.rt_thread_options.scheduling_policy ==
+        robot_base::ThreadSchedulingPolicy::FIFO;
     const bool realtime_ready    = rt_scheduling_ready_.load(std::memory_order_acquire);
     if (realtime_required && !realtime_ready) {
         if (cmd.discrete_type == DiscreteCommandType::RESTART) {
@@ -289,12 +250,6 @@ CommandSubmitResult MotorControllerBase::send_discrete_command(
         }
     }
 
-
-    // 这里可以删除
-    const CommandSubmitStatus driver_validation = validate_command(cmd);
-    if (driver_validation != CommandSubmitStatus::ACCEPTED) {
-        return {driver_validation, std::nullopt};
-    }
 
     // 对于离散命令，分配 command_id 并入命令队列
     std::lock_guard<std::mutex> lock(discrete_command_submission_mutex_);
@@ -374,27 +329,13 @@ CommandSubmitResult MotorControllerBase::send_policy_setpoint(
         return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
     }
 
-    if (active_setpoint_source_ != SetpointSource::POLICY) {
-        std::cerr << "[MotorControllerBase] Policy setpoint rejected: active "
-                  << "setpoint source is "
-                  << setpoint_source_name(active_setpoint_source_) << "."
-                  << std::endl;
-        return {CommandSubmitStatus::SOURCE_INACTIVE, std::nullopt};
-    }
-
     if (!cmd.timing.is_well_formed()) {
         std::cerr << "[MotorControllerBase] Policy setpoint rejected: "
                      "missing or invalid freshness metadata.\n";
         return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
     }
-    if (cmd.timing.source_policy_seq == 0 &&
-        policy_sequence_started_.load(std::memory_order_acquire)) {
-        std::cerr << "[MotorControllerBase] Policy setpoint rejected: "
-                     "policy sequence is missing.\n";
-        return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
-    }
-
-    const bool realtime_required = rt_options_.rt_priority > 0;
+    const bool realtime_required = rt_options_.rt_thread_options.scheduling_policy ==
+        robot_base::ThreadSchedulingPolicy::FIFO;
     const bool realtime_ready =
         rt_scheduling_ready_.load(std::memory_order_acquire);
     if (realtime_required && !realtime_ready) {
@@ -408,96 +349,9 @@ CommandSubmitResult MotorControllerBase::send_policy_setpoint(
         return {driver_validation, std::nullopt};
     }
 
-    if (cmd.timing.source_policy_seq != 0) {
-        policy_sequence_started_.store(true, std::memory_order_release);
-    }
     setpoint_channel_policy_.publish(cmd);
     return {CommandSubmitStatus::ACCEPTED, std::nullopt};
 }
-
-CommandSubmitResult MotorControllerBase::send_debug_setpoint(
-    const ControlCommand& cmd)
-{
-    if (!cmd.payload_valid) {
-        return {CommandSubmitStatus::INVALID_PAYLOAD, std::nullopt};
-    }
-
-    if (cmd.kind != ControlCommandKind::SETPOINT ||
-        cmd.motor_index != ControlCommand::kAllMotors) {
-        return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
-    }
-
-    switch (cmd.setpoint_type) {
-        case SetpointCommandType::POSITION_TARGETS:
-        case SetpointCommandType::VELOCITY_TARGETS:
-        case SetpointCommandType::TORQUE_TARGETS:
-        case SetpointCommandType::IMPEDANCE_TARGETS:
-            break;
-        default:
-            return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
-    }
-
-    if (cmd.payload_size != motor_count_) {
-        return {CommandSubmitStatus::INVALID_PAYLOAD, std::nullopt};
-    }
-
-    if (terminal_fault_latched_.load(std::memory_order_acquire)) {
-        return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
-    }
-
-    if (active_setpoint_source_ != SetpointSource::DEBUG) {
-        std::cerr << "[MotorControllerBase] Debug setpoint rejected: active "
-                  << "setpoint source is "
-                  << setpoint_source_name(active_setpoint_source_) << "."
-                  << std::endl;
-        return {CommandSubmitStatus::SOURCE_INACTIVE, std::nullopt};
-    }
-
-    const bool realtime_required = rt_options_.rt_priority > 0;
-    const bool realtime_ready =
-        rt_scheduling_ready_.load(std::memory_order_acquire);
-    if (realtime_required && !realtime_ready) {
-        std::cerr << "[MotorControllerBase] Motion command rejected: "
-                  << "realtime scheduling is not active." << std::endl;
-        return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
-    }
-
-    ControlCommand normalized = cmd;
-    if (normalized.timing.is_unset()) {
-        const std::int64_t produced_at_ns = robot_base::monotonic_now_ns();
-        normalized.timing.source_policy_seq = 0;
-        normalized.timing.produced_at_ns = produced_at_ns;
-        normalized.timing.valid_until_ns =
-            produced_at_ns + rt_options_.setpoint_timeout_ns;
-    } else if (!normalized.timing.is_well_formed()) {
-        std::cerr << "[MotorControllerBase] Debug setpoint rejected: "
-                     "invalid freshness metadata.\n";
-        return {CommandSubmitStatus::INVALID_COMMAND, std::nullopt};
-    }
-    // Debug traffic is never allowed to advance or spoof policy provenance.
-    normalized.timing.source_policy_seq = 0;
-
-    const CommandSubmitStatus driver_validation = validate_command(normalized);
-    if (driver_validation != CommandSubmitStatus::ACCEPTED) {
-        return {driver_validation, std::nullopt};
-    }
-
-    setpoint_channel_debug_.publish(normalized);
-    return {CommandSubmitStatus::ACCEPTED, std::nullopt};
-}
-
-void MotorControllerBase::set_active_setpoint_source(SetpointSource source)
-{
-    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-    if (running_.load(std::memory_order_acquire)) {
-        std::cerr << "[MotorControllerBase] set_active_setpoint_source("
-                  << setpoint_source_name(source)
-                  << ") ignored: controller is running." << std::endl;
-        return;
-    }
-    active_setpoint_source_ = source;
-}
-
 
 CommandSubmitStatus MotorControllerBase::validate_command(const ControlCommand&) const
 {
@@ -655,22 +509,12 @@ void MotorControllerBase::set_event_callback(RtEventCallback cb)
 }
 
 
-bool MotorControllerBase::write_status(StatusWriteToken& token)
-{
-    return status_channel_.write(token);
-}
-
-
-void MotorControllerBase::publish_status(const StatusWriteToken& token)
-{
-    status_channel_.publish(token);
-}
-
-
 void MotorControllerBase::publish_feedback(
     const std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback)
 {
-    // 同一帧 fan-out 到两条独立 SPSC 通道，各自保持 1 producer + 1 consumer 契约
+    // 同一份打包结果发布给公共状态缓存和两个独立 SPSC 消费者。
+    std::copy_n(feedback.data(), motor_count_, status_channel_.acquire_write_slot());
+    status_channel_.publish_written();
     command_feedback_channel_.publish(feedback);
     policy_feedback_channel_.publish(feedback);
 }
@@ -698,9 +542,7 @@ void MotorControllerBase::process_queued_commands()
         }
         const ControlCommand& cmd = entry->command;
         ++processed;
-        if (cmd.kind == ControlCommandKind::DISCRETE) {
-            enqueue_discrete_command(cmd, *entry->command_id);
-        }
+        enqueue_discrete_command(cmd, entry->command_id);
         cmd_queue_.pop_front();
     }
 }
@@ -723,20 +565,7 @@ void MotorControllerBase::process_latest_setpoint_commands()
     }
 
     ControlCommand cmd;
-    bool received = false;
-    switch (active_setpoint_source_) {
-        case SetpointSource::POLICY:
-            if (setpoint_channel_policy_.try_consume_latest(cmd)) {
-                received = true;
-            }
-            break;
-
-        case SetpointSource::DEBUG:
-            if (setpoint_channel_debug_.try_consume_latest(cmd)) {
-                received = true;
-            }
-            break;
-    }
+    const bool received = setpoint_channel_policy_.try_consume_latest(cmd);
 
     // A deliberate all-axis STOP retires the previous motion command. Drain
     // queued targets while stopped, so an ordinary STOP can be followed by an
@@ -769,10 +598,6 @@ void MotorControllerBase::process_latest_setpoint_commands()
 
         active_setpoint_ = cmd;
         has_active_setpoint_ = true;
-        if (cmd.timing.source_policy_seq != 0) {
-            last_policy_seq_ = cmd.timing.source_policy_seq;
-        }
-        last_produced_at_ns_ = cmd.timing.produced_at_ns;
         apply_setpoint_command_impl(cmd);
     }
 }
@@ -783,26 +608,8 @@ bool MotorControllerBase::validate_setpoint_timing(
     int& reason) const noexcept
 {
     reason = 0;
-    if (!cmd.timing.is_well_formed()) {
-        reason = FRESHNESS_INVALID_TIMING;
-        return false;
-    }
-    if (cmd.timing.produced_at_ns > now_ns) {
-        reason = FRESHNESS_FUTURE_PRODUCER;
-        return false;
-    }
     if (now_ns >= cmd.timing.valid_until_ns) {
         reason = FRESHNESS_EXPIRED;
-        return false;
-    }
-    if (last_produced_at_ns_ != 0 &&
-        cmd.timing.produced_at_ns < last_produced_at_ns_) {
-        reason = FRESHNESS_TIMESTAMP_ROLLBACK;
-        return false;
-    }
-    if (cmd.timing.source_policy_seq != 0 &&
-        cmd.timing.source_policy_seq < last_policy_seq_) {
-        reason = FRESHNESS_POLICY_SEQUENCE_ROLLBACK;
         return false;
     }
     return true;
@@ -836,7 +643,6 @@ void MotorControllerBase::latch_setpoint_timeout_fault(
 void MotorControllerBase::apply_terminal_fault_stop()
 {
     DiscreteCommand stop(DiscreteCommandType::STOP);
-    stop.from_all_motors = true;
     for (std::size_t i = 0; i < motor_count_; ++i) {
         apply_discrete_command_impl(static_cast<int>(i), stop);
     }
@@ -858,10 +664,6 @@ void MotorControllerBase::enqueue_discrete_command(
 
         DiscreteCommand pending(cmd.discrete_type, cmd.mode, command_id);
         pending.phase = DiscretePhase::QUEUED;
-        pending.from_all_motors =
-            (cmd.motor_index == ControlCommand::kAllMotors);
-
-        pending.enqueue_tick    = discrete_cmd_tick_;
         pending.next_retry_tick = discrete_cmd_tick_;
         pending.next_verify_tick = discrete_cmd_tick_;
         pending.deadline_tick = discrete_cmd_tick_ + kDiscreteTimeoutTicks;
@@ -913,13 +715,6 @@ void MotorControllerBase::service_discrete_commands()
         const CommandId stop_id = latest_stop_id(i);
         if (cmd.command_id <= stop_id || stop_pending(i)) {
             discrete_command_results_.mark_failed(cmd.command_id, motor_index);
-            queue.pop_front();
-            continue;
-        }
-
-        /* 检查命令状态机 */
-        if (cmd.phase == DiscretePhase::DONE) {
-            discrete_command_results_.mark_done(cmd.command_id, motor_index);
             queue.pop_front();
             continue;
         }
@@ -991,7 +786,6 @@ void MotorControllerBase::service_discrete_commands()
                 case DiscreteCommandEvaluation::SATISFIED:
                     cmd.stable_success_cycles += 1;
                     if (cmd.stable_success_cycles >= kDiscreteSuccessStableTicks) {
-                        cmd.phase = DiscretePhase::DONE;
                         discrete_command_results_.mark_done(
                             cmd.command_id,
                             motor_index);

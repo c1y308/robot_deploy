@@ -18,8 +18,7 @@ namespace motor_base {
 enum class RtEventType {
     DISCRETE_COMMAND_FAILED,    // 离散命令失败
     DISCRETE_QUEUE_FULL,        // 离散命令队列满
-    STATUS_CHANNEL_BUSY,
-    BUS_DIAG_SAMPLE,
+    BUS_DIAG_SAMPLE = 3,
     BUS_CYCLE_NOT_COMPLETE,
     COMM_WATCHDOG_FAULT,
     SETPOINT_COMMAND_REJECTED,
