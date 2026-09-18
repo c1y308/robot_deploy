@@ -82,7 +82,6 @@ inference::MotorConfig make_motor_config()
 {
     inference::MotorConfig config;
     config.num_motors = kDof;
-    config.ethercat_ifname = "enp8s0";
     config.control_mode = motor_base::MotorControlMode::IMPEDANCE;
     /* 原由默认值提供的字段，现显式给出原默认值 */
     config.wait_all_motors_timeout_ms = 20000;

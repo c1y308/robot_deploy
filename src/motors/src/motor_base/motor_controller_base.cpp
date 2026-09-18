@@ -87,14 +87,14 @@ MotorControllerBase::~MotorControllerBase()
 }
 
 
-bool MotorControllerBase::connect(const char* interface_name)
+bool MotorControllerBase::connect()
 {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
     if (running_.load(std::memory_order_acquire)) {
         return false;
     }
 
-    return connect_impl(interface_name);
+    return connect_impl();
 }
 
 

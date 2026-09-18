@@ -63,7 +63,7 @@ private:
     std::int64_t current_cycle_host_timestamp_ns_{0};
     bool process_data_ok_{false}; // Most recent received cycle, RT thread only.
 
-    bool connect_impl(const char* ifname) override;
+    bool connect_impl() override;
 
     motor_base::CommandSubmitStatus validate_command(
         const motor_base::ControlCommand& cmd) const override;

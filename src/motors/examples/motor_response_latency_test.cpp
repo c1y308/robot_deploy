@@ -26,7 +26,6 @@ using Clock = std::chrono::steady_clock;
 
 volatile std::sig_atomic_t g_should_stop = 0;
 
-constexpr char kIfName[] = "enp8s0";
 constexpr int kNumMotors = 12;
 constexpr int kWaitReadyTimeoutMs = 20000;
 constexpr int kWaitReadyPollMs = 100;
@@ -691,9 +690,9 @@ int main()
     });
 
     std::cout << "\n========== 50Hz motor response latency test ==========\n";
-    std::cout << "[init] connect to " << kIfName << "\n";
-    if (!controller.connect(kIfName)) {
-        std::cerr << "[error] failed to connect EtherCAT interface\n";
+    std::cout << "[init] connect to EtherCAT master 0\n";
+    if (!controller.connect()) {
+        std::cerr << "[error] failed to connect EtherCAT master 0\n";
         return -1;
     }
 

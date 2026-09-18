@@ -41,7 +41,7 @@ bool file_readable(const std::string& path)
 void print_config_summary(const inference::RobotInterfaceConfig& cfg)
 {
     std::cout << "[INFO] Deploy config summary:\n"
-              << "  ethercat_ifname: " << cfg.motor.ethercat_ifname << "\n"
+              << "  ethercat_master: 0\n"
               << "  imu device: " << cfg.imu.device
               << " baudrate: " << cfg.imu.baudrate
               << " configure_can: "

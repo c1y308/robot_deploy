@@ -63,7 +63,8 @@ make -j$(nproc)
 
 ## 使用方法
 
-示例程序当前在代码中默认使用网卡 `enp8s0`，运行前请先按现场环境修改对应源码或网卡名。
+示例程序通过无参数的 `controller.connect()` 使用 IgH master 0。
+网卡绑定由系统 IgH 主站配置决定，运行前请确认 master 0 绑定到实际 EtherCAT 网卡。
 
 ```bash
 cd src/motors/build
@@ -105,9 +106,9 @@ MyActMotorController 驱动内部会把公共模式映射到 CiA402/PDO 模式�
 
 ## 硬件配置（需要用户确认）
 
-1. **网卡名称**
-   - 示例默认：`enp8s0`
-   - 请按实际 EtherCAT 主站网卡修改。
+1. **主站与网卡绑定**
+   - 应用固定请求 IgH master 0，不接收网卡名称参数。
+   - 请在系统 IgH 主站配置中绑定实际 EtherCAT 网卡。
 2. **从站数量**
    - 由示例中的 `MyActMotorController controller(adapter, N)` 决定。
    - 当前 `EthercatAdapterIGH` 默认按 12 个从站配置，逻辑索引 `0-11` 对应 EtherCAT 物理位置 `1-6, 8-13`。
@@ -119,7 +120,7 @@ MyActMotorController 驱动内部会把公共模式映射到 CiA402/PDO 模式�
 ## 常见问题
 
 1. **连接失败**
-   - 检查网卡名、网线、从站上电、主站服务状态。
+   - 检查 master 0 的网卡绑定、网线、从站上电和主站服务状态。
 2. **可运行但无动作**
    - 检查模式是否切换成功、目标值单位是否匹配、使能流程是否完成。
 3. **周期抖动或丢帧**

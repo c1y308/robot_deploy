@@ -93,7 +93,7 @@ public:
         }
     }
 
-    bool init(const char*) override { return true; }
+    bool init() override { return true; }
 
     void receive_physical() override
     {
@@ -887,7 +887,7 @@ public:
     }
 
 protected:
-    bool connect_impl(const char*) override { return true; }
+    bool connect_impl() override { return true; }
 
     void realtime_cycle_callback() override
     {

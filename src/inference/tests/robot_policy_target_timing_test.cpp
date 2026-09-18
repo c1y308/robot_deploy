@@ -23,7 +23,7 @@ constexpr std::int64_t kStart = 1'000'000'000;
 
 class FakeAdapter : public myactua::EthercatAdapter {
 public:
-    bool init(const char*) override { return true; }
+    bool init() override { return true; }
     void receive_physical() override {}
     void send_physical() override {}
     void send(int, const myactua::TxPDO&) override {}

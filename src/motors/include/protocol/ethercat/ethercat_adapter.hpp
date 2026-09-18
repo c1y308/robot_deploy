@@ -22,7 +22,7 @@ public:
     using RtEventSink = void (*)(void* context, const motor_base::RtEvent& event);
 
     virtual ~EthercatAdapter() = default;
-    virtual bool init(const char* ifname) = 0;  // 初始化网口和ethercat网络
+    virtual bool init() = 0;  // 初始化 EtherCAT 网络
     virtual void set_event_sink(void* context, RtEventSink sink) {
         (void)context;
         (void)sink;

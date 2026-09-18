@@ -17,7 +17,6 @@ namespace inference {
 /* 电机硬件与会话配置。mit_kp/mit_kd 为物理电机顺序，由配置加载器转换填充。 */
 struct MotorConfig {
     int num_motors = static_cast<int>(motor_base::kMaxMotors);
-    std::string ethercat_ifname = "enp8s0";
 
     int wait_all_motors_timeout_ms = 20000;
     int wait_all_motors_poll_ms    = 100;

@@ -57,9 +57,8 @@ public:
     // ──────────────────── 生命周期 ────────────────────
 
     /// @brief 连接底层通信接口
-    /// @param interface_name 接口名称；为空时由具体控制器选择默认网卡
     /// @return 连接是否成功
-    bool connect(const char* interface_name = nullptr);
+    bool connect();
 
 
     /// @brief 阻塞等待所有电机进入可操作状态
@@ -163,7 +162,7 @@ protected:
     // 新电机控制器必须实现
     // ============================================================
 
-    virtual bool connect_impl(const char* interface_name) = 0;
+    virtual bool connect_impl() = 0;
     virtual void realtime_cycle_callback() = 0;
 
     // 派生类实现具体电机的命令应用

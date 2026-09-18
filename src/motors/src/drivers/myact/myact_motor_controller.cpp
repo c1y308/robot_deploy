@@ -20,7 +20,6 @@ using robot_base::fits_i16;
 using robot_base::fits_i32;
 
 namespace {
-constexpr const char* kDefaultEthercatIfName = "enp8s0";
 constexpr uint32_t kStartupWkcStableCycles = 10;
 
 const char* wc_state_name(ec_wc_state_t state)
@@ -206,12 +205,10 @@ MyActMotorController::~MyActMotorController()
     _adapter->set_event_sink(nullptr, nullptr);
 }
 
-/* 连接网卡函数 */
-bool MyActMotorController::connect_impl(const char* ifname)
+/* 初始化 EtherCAT 网络 */
+bool MyActMotorController::connect_impl()
 {
-    const char* effective_ifname =
-        (ifname && ifname[0] != '\0') ? ifname : kDefaultEthercatIfName;
-    return _adapter->init(effective_ifname);
+    return _adapter->init();
 }
 
 

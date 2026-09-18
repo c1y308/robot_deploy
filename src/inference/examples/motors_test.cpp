@@ -29,15 +29,12 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, signal_handler);
 
     std::string config_path = ROBOT_DEPLOY_CONFIG_PATH;
-    std::string ifname_override;
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--device") == 0 && i + 1 < argc) {
-            ifname_override = argv[++i];
-        } else if (std::strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+        if (std::strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
             config_path = argv[++i];
         } else {
-            std::cerr << "[MOTORS_TEST] usage: motors_test [--config <deploy.yaml>] "
-                         "[--device <ethercat ifname>]" << std::endl;
+            std::cerr << "[MOTORS_TEST] usage: motors_test [--config <deploy.yaml>]"
+                      << std::endl;
             return -1;
         }
     }
@@ -50,9 +47,6 @@ int main(int argc, char** argv) {
         return -1;
     }
     inference::MotorConfig cfg = robot_cfg.motor;
-    if (!ifname_override.empty()) {
-        cfg.ethercat_ifname = ifname_override;
-    }
 
     inference::RobotMotorSession motors(cfg, robot_cfg.safety);
 

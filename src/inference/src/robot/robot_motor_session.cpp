@@ -95,10 +95,9 @@ bool RobotMotorSession::initialize(bool defer_communication_protection)
     // 仅策略启动链延后通信锁存，直到第一次正式推理；独立电机入口默认开启。
     controller_->set_communication_protection_enabled(!defer_communication_protection);
 
-    std::cout << "[RobotMotorSession] Connecting EtherCAT on "
-              << config_.ethercat_ifname << "...\n";
+    std::cout << "[RobotMotorSession] Connecting EtherCAT master 0...\n";
 
-    if (!controller_->connect(config_.ethercat_ifname.c_str())) {
+    if (!controller_->connect()) {
         std::cerr << "[RobotMotorSession] EtherCAT connect failed.\n";
         controller_.reset();
         adapter_.reset();

@@ -105,7 +105,8 @@ public:
     EthercatAdapterIGH();
     ~EthercatAdapterIGH() override;
 
-    bool  init(const char* ifname) override;
+    // 使用 IgH master 0，网卡绑定由系统主站配置决定。
+    bool  init() override;
     void set_event_sink(void* context, RtEventSink sink) override;
     void  send(int index, const TxPDO& pdo) override;
     RxPDO receive(int index) override;

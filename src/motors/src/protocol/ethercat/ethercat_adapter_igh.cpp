@@ -128,9 +128,8 @@ EthercatAdapterIGH::~EthercatAdapterIGH() {
     if (master) ecrt_release_master(master);
 }
 
-bool EthercatAdapterIGH::init(const char* ifname) 
+bool EthercatAdapterIGH::init()
 {
-    (void)ifname;
     master = ecrt_request_master(0);    // 请求主站控制权
     if (!master) 
     {

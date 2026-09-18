@@ -56,8 +56,8 @@ int main() {
                   << ", value=" << event.value << std::endl;
     });
     
-    std::cout << "[1/4] 正在初始化网卡..." << std::endl;
-    if (!controller.connect("enp8s0")) {
+    std::cout << "[1/4] 正在初始化 EtherCAT master 0..." << std::endl;
+    if (!controller.connect()) {
         std::cerr << "[错误] 无法连接到 EtherCAT 网络！" << std::endl;
         return -1;
     }
