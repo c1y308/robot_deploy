@@ -1,5 +1,5 @@
 #include "driver/socket_can_port.hpp"
-#include "tool/tool.hpp"
+#include "socket_can_timestamp.hpp"
 
 #include <cerrno>
 #include <cstring>
@@ -29,6 +29,8 @@ bool SocketCanPort::open(const std::string& interface_name)
     if (fd_ >= 0) {
         close();
     }
+    baseline_clock_offset_ns_ = 0;
+    timestamp_mapping_valid_ = false;
     if (interface_name.size() >= IFNAMSIZ) {
         std::cerr << "[HARDWARE ERROR] CAN interface name is too long: "
                   << interface_name << std::endl;
@@ -46,6 +48,24 @@ bool SocketCanPort::open(const std::string& interface_name)
     if (flags < 0 || fcntl(fd_, F_SETFL, flags | O_NONBLOCK) < 0) {
         std::cerr << "[HARDWARE ERROR] Cannot set CAN socket nonblocking: "
                   << std::strerror(errno) << std::endl;
+        ::close(fd_);
+        fd_ = -1;
+        return false;
+    }
+
+    const int enable_timestamp = 1;
+    if (::setsockopt(fd_, SOL_SOCKET, SO_TIMESTAMPNS_NEW,
+                     &enable_timestamp, sizeof(enable_timestamp)) < 0) {
+        std::cerr << "[HARDWARE ERROR] Cannot enable CAN RX timestamps: "
+                  << std::strerror(errno) << std::endl;
+        ::close(fd_);
+        fd_ = -1;
+        return false;
+    }
+    detail::ClockOffsetSample baseline;
+    if (!detail::sample_clock_offset(baseline)) {
+        std::cerr << "[HARDWARE ERROR] Cannot establish CAN timestamp clock mapping"
+                  << std::endl;
         ::close(fd_);
         fd_ = -1;
         return false;
@@ -75,6 +95,8 @@ bool SocketCanPort::open(const std::string& interface_name)
     }
 
     interface_name_ = interface_name;
+    baseline_clock_offset_ns_ = baseline.offset_ns;
+    timestamp_mapping_valid_ = true;
     std::cout << "[HARDWARE] SocketCAN opened: " << interface_name_
               << std::endl;
     return true;
@@ -82,6 +104,8 @@ bool SocketCanPort::open(const std::string& interface_name)
 
 void SocketCanPort::close()
 {
+    baseline_clock_offset_ns_ = 0;
+    timestamp_mapping_valid_ = false;
     if (fd_ >= 0) {
         ::close(fd_);
         fd_ = -1;
@@ -133,11 +157,23 @@ int SocketCanPort::read_nonblocking(
     if (receive_timestamp_ns != nullptr) {
         *receive_timestamp_ns = 0;
     }
-    if (fd_ < 0) {
+    if (fd_ < 0 || !timestamp_mapping_valid_) {
         return -1;
     }
 
-    const ssize_t bytes_read = ::read(fd_, &frame, sizeof(frame));
+    alignas(cmsghdr) unsigned char control[CMSG_SPACE(sizeof(__kernel_timespec))];
+    iovec payload{&frame, sizeof(frame)};
+    msghdr message{};
+    ssize_t bytes_read;
+    do {
+        std::memset(control, 0, sizeof(control));
+        message = {};
+        message.msg_iov = &payload;
+        message.msg_iovlen = 1;
+        message.msg_control = control;
+        message.msg_controllen = sizeof(control);
+        bytes_read = ::recvmsg(fd_, &message, 0);
+    } while (bytes_read < 0 && errno == EINTR);
     if (bytes_read < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             return 0;
@@ -152,14 +188,28 @@ int SocketCanPort::read_nonblocking(
         return -1;
     }
 
+    std::int64_t realtime_ns = 0, monotonic_ns = 0;
+    detail::ClockOffsetSample current;
+    if (!detail::receive_realtime_timestamp(message, realtime_ns) ||
+        !detail::sample_clock_offset(current) ||
+        !detail::receive_monotonic_timestamp(
+            realtime_ns, baseline_clock_offset_ns_, current, monotonic_ns)) {
+        timestamp_mapping_valid_ = false;
+        std::cerr << "[HARDWARE ERROR] CAN RX timestamp missing, invalid, "
+                     "or clock mapping changed; reopen required" << std::endl;
+        return -1;
+    }
     if (receive_timestamp_ns != nullptr) {
-        *receive_timestamp_ns = robot_base::monotonic_now_ns();
+        *receive_timestamp_ns = monotonic_ns;
     }
     return 1;
 }
 
 int SocketCanPort::read(can_frame& frame)
 {
+    if (fd_ < 0 || !timestamp_mapping_valid_) {
+        return -1;
+    }
     const int ready = wait_readable(10);
     if (ready <= 0) {
         return ready;

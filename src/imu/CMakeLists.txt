@@ -71,6 +71,20 @@ add_executable(socket_can_config_test
 target_link_libraries(socket_can_config_test PRIVATE imu_xsens_mti_core)
 add_test(NAME socket_can_config_test COMMAND socket_can_config_test)
 
+add_executable(socket_can_timestamp_test
+    tests/socket_can_timestamp_test.cpp
+)
+target_include_directories(socket_can_timestamp_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(socket_can_timestamp_test PRIVATE imu_xsens_mti_core)
+set_property(TARGET socket_can_timestamp_test APPEND_STRING PROPERTY LINK_FLAGS
+    " -Wl,--wrap=socket,--wrap=fcntl,--wrap=setsockopt,--wrap=ioctl,--wrap=bind,--wrap=close,--wrap=clock_gettime,--wrap=recvmsg,--wrap=poll")
+add_test(NAME socket_can_timestamp_test COMMAND socket_can_timestamp_test)
+
+add_executable(socket_can_timestamp_integration_test
+    tests/socket_can_timestamp_integration_test.cpp
+)
+target_link_libraries(socket_can_timestamp_integration_test PRIVATE imu_xsens_mti_core)
+
 add_executable(a100_parser_test
     tests/a100_parser_test.cpp
 )

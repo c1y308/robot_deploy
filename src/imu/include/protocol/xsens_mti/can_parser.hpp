@@ -42,11 +42,15 @@ private:
                             std::int64_t receive_timestamp_ns);
     void update_orientation_from_quaternion();
     void publish_ahrs_if_ready();
+    void clear_pending();
 
-    imu_base::AHRSData ahrs_data_;
+    imu_base::AHRSData pending_;
+    imu_base::AHRSData published_;
     bool ahrs_ready_;
     bool quaternion_fresh_;
     bool rate_of_turn_fresh_;
+    std::int64_t quaternion_rx_ns_{0};
+    std::int64_t rate_rx_ns_{0};
     std::uint64_t sample_timestamp_ns_;
 
     imu_base::ParserInfo stats_;

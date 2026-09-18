@@ -1,5 +1,6 @@
 #include "config/deploy_config.hpp"
 #include "driver/myact/myact_motor_controller.hpp"
+#include "protocol/xsens_mti/can_parser.hpp"
 #include "robot/action_processor.hpp"
 #include "robot/observation_builder.hpp"
 #include "robot/robot_interface.hpp"
@@ -391,6 +392,22 @@ struct RobotInterfacePolicyTimingTestAccess {
         RobotInterface imu_robot(imu_config);
         expect(imu_robot.validate_policy_sensor_timing(kStart + 50*kMs, kStart, kStart + 50*kMs, error), "50ms IMU boundary rejected");
         expect(!imu_robot.validate_policy_sensor_timing(kStart + 50*kMs + 1, kStart, kStart + 50*kMs + 1, error), "50ms IMU guard relaxed");
+        // A controlled stale parser snapshot: no newer measurements are fed.
+        imu::XsensMtiCanParser parser;
+        const std::uint8_t quaternion[] = {0x7F, 0xFF, 0, 0, 0, 0, 0, 0};
+        const std::uint8_t rate[] = {0x02, 0, 0, 0, 0, 0};
+        parser.feed(imu::XCDI_QUATERNION_ID, quaternion, 8, kStart);
+        parser.feed(imu::XCDI_RATE_OF_TURN_ID, rate, 6, kStart + kMs);
+        imu_base::AHRSData stale_ahrs;
+        expect(parser.get_ahrs_data(stale_ahrs), "controlled stale AHRS was not published");
+        auto stale_config = make_config();
+        stale_config.sensor_guard.max_sensor_state_skew_s = 0.200;
+        RobotInterface stale_robot(stale_config);
+        const auto checked_at = kStart + 100*kMs;
+        expect(stale_ahrs.receive_timestamp_ns == kStart &&
+                   !stale_robot.validate_policy_sensor_timing(
+                       checked_at, stale_ahrs.receive_timestamp_ns, checked_at, error),
+               "default 50ms IMU age guard accepted a 100ms-old assembled AHRS");
         expect(robot.validate_policy_sensor_timing(kStart + 30*kMs, kStart, kStart + 30*kMs, error), "30ms skew rejected");
         expect(!robot.validate_policy_sensor_timing(kStart + 30*kMs + 1, kStart, kStart + 30*kMs + 1, error), "skew guard relaxed");
         expect(!robot.worker_.startup_policy_target_expired(kStart + 1000*kMs), "startup timer armed before inference");

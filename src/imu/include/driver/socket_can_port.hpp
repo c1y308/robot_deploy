@@ -29,6 +29,8 @@ public:
 
 private:
     int fd_;
+    std::int64_t baseline_clock_offset_ns_{0};
+    bool timestamp_mapping_valid_{false};
     std::string interface_name_;
 };
 

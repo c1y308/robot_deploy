@@ -85,9 +85,9 @@ void XsensMtiCanReader::read_loop()
 
             if ((frame.can_id & (CAN_EFF_FLAG | CAN_RTR_FLAG | CAN_ERR_FLAG)) == 0) {
                 parser_->feed(frame.can_id & CAN_SFF_MASK,
-                              frame.data,
-                              frame.len,
-                              receive_timestamp_ns);
+                                frame.data,
+                                 frame.len,
+                                      receive_timestamp_ns);
 
                 imu_base::AHRSData ahrs_data;
                 if (config_.print_ahrs && parser_->get_ahrs_data(ahrs_data)) {

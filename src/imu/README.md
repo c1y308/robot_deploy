@@ -88,6 +88,38 @@ make -j$(nproc)
 - `0x032 XCDI_RateOfTurn`: big-endian int16[3]，缩放 `raw * 2^-9`，单位 rad/s。
 - `projected_gravity` 由四元数计算。
 
+Quaternion 和 RateOfTurn 使用最新值配对：自上次发布以来，两路都更新过才发布，连续同类帧覆盖该字段的待组装值。例如 `Q Q Q R` 发布最后一个 Q 与 R。待组装数据与发布快照分离，`get_ahrs_data()` 和同步回调只读取完整快照；半更新、SampleTime 更新和非法四元数不会改变已发布快照。
+
+两路分别保留各自的内核 RX 时间；AHRS 的 `receive_timestamp_ns` 取两者较早值，因此主机年龄代表组成字段中最老字段的年龄。SocketCAN 在绑定前启用 `SO_TIMESTAMPNS_NEW`，通过 `recvmsg()` 取得内核 `CLOCK_REALTIME` 接收时间，再转换到现有 `CLOCK_MONOTONIC` 域，保留 socket 队列中的滞留时间。
+
+转换在打开时建立 offset 基准，每帧通过 `M1 → R → M2` 的 midpoint 采样得到当前 offset。基准仅检测超过 1 ms 的时钟关系变化，实际转换使用当前 offset；采样半跨度达到 1 ms、读钟失败、时间戳缺失／截断／非法，或转换时间不可信时返回错误，不回退到用户态当前时间。映射失效保持错误，必须关闭并重新打开。现有 reader 沿接收错误路径停止，上一有效快照继续受既有年龄守卫约束。转换有有限采样误差，不是设备时钟同步或硬件采样时间。
+
+`sample_timestamp_ns` 只保存发布时最近收到的 SampleTime（原始 uint32 tick × 100000 ns）。无 SampleTime、重复、零值和回绕均不阻止发布，也不清除待组装字段；该元数据不承诺对应 Q 和 Rate 的共同采样时刻。
+
+计算姿态和重力前检查四元数 `norm_sq` 有限且大于 `0.25`。非法四元数计入 `error_frames`，清空两路待组装值和 fresh 状态，需要重新收到合法 Q 和新 Rate 才能发布；保留上一发布快照及其 ready 状态。此检查不归一化四元数，也不要求精确单位范数。
+
+parser 的 `feed()`、同步回调和 `get_ahrs_data()` 应在同一线程执行；跨线程使用者应复制快照并通过已有同步通道传递。机器人策略线程使用现有 `SpscLatestChannel` 接收副本。
+
+## 测试
+
+IMU Debug 构建及全部无硬件测试：
+
+```bash
+cmake -S src/imu -B /tmp/robot-deploy-imu-debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build /tmp/robot-deploy-imu-debug -j4
+ctest --test-dir /tmp/robot-deploy-imu-debug --output-on-failure
+```
+
+`socket_can_timestamp_test` 使用内部时间辅助函数和仅用于测试目标的链接包装，覆盖 ancillary 数据、时钟转换、`EINTR` 重试和错误路径，不修改主机墙钟或公开驱动接口。
+
+真实设备测试需显式指定已启动且有输入的接口，单独执行，不加入普通 CTest：
+
+```bash
+/tmp/robot-deploy-imu-debug/socket_can_timestamp_integration_test --interface can0
+```
+
+该程序只被动接收，不配置接口、不发送数据、不初始化或使能电机。确认可读后暂停 100 ms，检查首帧年龄至少 95 ms，再连续接收 5 秒并报告输入与 AHRS 频率。持续输入在 drain 后可能产生新鲜快照，因此本测试不要求最终 AHRS 被年龄守卫拒绝。旧 AHRS 的 50 ms 年龄拒绝由 inference 的 `robot_policy_target_timing_test` 使用受控旧测量单独验证。
+
 ## A100 数据帧协议
 
 ```
