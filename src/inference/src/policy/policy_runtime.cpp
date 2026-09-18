@@ -245,7 +245,6 @@ bool PolicyRuntime::load(const PolicyRuntimeConfig& config,
         impl_->module = std::make_unique<torch::jit::script::Module>(
             torch::jit::load(config.model_path, torch::kCPU));
         impl_->module->eval();
-        loaded_ = true;
 
         if (!dry_run_and_validate_output()) {
             unload();
@@ -369,16 +368,13 @@ void PolicyRuntime::shutdown()
 
 void PolicyRuntime::unload()
 {
-    if (impl_) {
-        impl_->module.reset();
-    }
-    loaded_ = false;
+    impl_->module.reset();
     observation_size_ = 0;
 }
 
 bool PolicyRuntime::is_loaded() const
 {
-    return loaded_ && impl_ && impl_->module;
+    return impl_->module != nullptr;
 }
 
 bool PolicyRuntime::dry_run_and_validate_output()

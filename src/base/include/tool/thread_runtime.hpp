@@ -33,10 +33,9 @@ struct ThreadRuntimeOptions {
     std::size_t stack_prefault_bytes{0};  // 进入业务循环前预触碰的栈空间
 };
 
-// 线程设置结果（这里是否过度设计？）
+// 线程启动握手的设置结果。
 struct ThreadSetupResult {
     bool success{false};
-    int error_code{0};
     std::string error;
 };
 
@@ -47,7 +46,6 @@ inline ThreadSetupResult thread_setup_error(const std::string& operation,
                                             int error_code)
 {
     ThreadSetupResult result;
-    result.error_code = error_code;
     result.error = operation + ": " +
                    (error_code != 0 ? std::strerror(error_code) : "verification failed");
     return result;
@@ -109,12 +107,6 @@ inline ThreadSetupResult configure_current_thread(
 
     if (result != 0) {
         return thread_setup_error("pthread_setname_np", result);
-    }
-
-    char actual_name[16]{};
-    result = pthread_getname_np(self, actual_name, sizeof(actual_name));
-    if (result != 0) {
-        return thread_setup_error("pthread_getname_np", result);
     }
 
     // 进行 CPU 绑核

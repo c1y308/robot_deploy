@@ -1,9 +1,11 @@
 # RK3588 人形机器人部署框架务实静态审阅（2026-09-14）
 
+> 归档说明（2026-09-18）：本报告保留当时基线和历史结论；源码行号、临时证据及评分对应当时版本。当前部署判断以[本次精简审查](deployment_simplification_review_2026-09-18.md)为准。用户已确认 Xsens 跨样本 latest-value、当前 ESI/PDO padding 差异、reset FK 失败后回退默认角度均不作为缺陷；历史整改与放行条件不直接适用于当前版本。
+
 ## 1. 审阅结论
 
 审阅基线为 `cb35f06bc47cf0b435b612ef00cc3eea2523ed65`（2026-09-13）。本报告复核
-[2026-09-07 旧报告](rk3588_static_review_2026-09-07.md)，并按 [rules.md](rules.md)
+[2026-09-07 旧报告](rk3588_static_review_2026-09-07.md)，并按 [rules.md](../rules.md)
 只讨论标准配置、正常启停／模式切换以及通信抖动、策略超时、传感器单帧丢失、
 单轴故障这类现实条件。
 
@@ -66,34 +68,34 @@
 
 已确认的关键改进包括：
 
-- [robot_interface.cpp#L685](../src/inference/src/robot/robot_interface.cpp#L685) 从最老观测时间计算
-  策略截止期，并在推理后再次检查；[robot_interface.cpp#L495](../src/inference/src/robot/robot_interface.cpp#L495)
+- [robot_interface.cpp#L685](../../src/inference/src/robot/robot_interface.cpp#L685) 从最老观测时间计算
+  策略截止期，并在推理后再次检查；[robot_interface.cpp#L495](../../src/inference/src/robot/robot_interface.cpp#L495)
   将控制命令有效期限制为策略期限与独立 10 ms 期限的较小值。
-- [motor_controller_base.cpp#L708](../src/motors/src/motor_base/motor_controller_base.cpp#L708)
-  在 RT 消费端验证并锁存命令过期；[motor_controller_base.cpp#L319](../src/motors/src/motor_base/motor_controller_base.cpp#L319)
+- [motor_controller_base.cpp#L708](../../src/motors/src/motor_base/motor_controller_base.cpp#L708)
+  在 RT 消费端验证并锁存命令过期；[motor_controller_base.cpp#L319](../../src/motors/src/motor_base/motor_controller_base.cpp#L319)
   的 STOP 独立于普通队列。
-- [myact_motor_controller.cpp#L344](../src/motors/src/drivers/myact/myact_motor_controller.cpp#L344)
-  将单轴现实故障收敛为整机锁存，[myact_motor_controller.cpp#L434](../src/motors/src/drivers/myact/myact_motor_controller.cpp#L434)
+- [myact_motor_controller.cpp#L344](../../src/motors/src/drivers/myact/myact_motor_controller.cpp#L344)
+  将单轴现实故障收敛为整机锁存，[myact_motor_controller.cpp#L434](../../src/motors/src/drivers/myact/myact_motor_controller.cpp#L434)
   对全轴应用 quick-stop。
-- [rk3588_runtime_profile.hpp#L32](../src/inference/include/robot/rk3588_runtime_profile.hpp#L32)
-  固定线程布局和 Torch/OpenBLAS 线程数；[thread_runtime.hpp#L53](../src/base/include/tool/thread_runtime.hpp#L53)
+- [rk3588_runtime_profile.hpp#L32](../../src/inference/include/robot/rk3588_runtime_profile.hpp#L32)
+  固定线程布局和 Torch/OpenBLAS 线程数；[thread_runtime.hpp#L53](../../src/base/include/tool/thread_runtime.hpp#L53)
   对名称、亲和性和调度参数设置后读回验证，失败时业务线程不会进入主体。
-- [policy_test.cpp#L82](../src/inference/examples/policy_test.cpp#L82) 在打开 Xbox、模型和机器人硬件前
+- [policy_test.cpp#L82](../../src/inference/examples/policy_test.cpp#L82) 在打开 Xbox、模型和机器人硬件前
   强制执行主机预检，当前配置错误会快速失败。
 
 ## 4. 当前高置信问题
 
 ### P1-1：WKC 不完整周期仍发布带新时间戳的旧／不完整电机反馈
 
-**源码证据。** [myact_motor_controller.cpp#L286](../src/motors/src/drivers/myact/myact_motor_controller.cpp#L286)
+**源码证据。** [myact_motor_controller.cpp#L286](../../src/motors/src/drivers/myact/myact_motor_controller.cpp#L286)
 每周期接收后无条件生成 `current_cycle_host_timestamp_ns_`；
-[myact_motor_controller.cpp#L311](../src/motors/src/drivers/myact/myact_motor_controller.cpp#L311)
-计算 `process_data_ok`，但 [L317](../src/motors/src/drivers/myact/myact_motor_controller.cpp#L317)
-仍只凭单轴 online/operational 读取域数据。随后 [L931](../src/motors/src/drivers/myact/myact_motor_controller.cpp#L931)
-和 [L973](../src/motors/src/drivers/myact/myact_motor_controller.cpp#L973) 都把本周期新时间写入反馈，
+[myact_motor_controller.cpp#L311](../../src/motors/src/drivers/myact/myact_motor_controller.cpp#L311)
+计算 `process_data_ok`，但 [L317](../../src/motors/src/drivers/myact/myact_motor_controller.cpp#L317)
+仍只凭单轴 online/operational 读取域数据。随后 [L931](../../src/motors/src/drivers/myact/myact_motor_controller.cpp#L931)
+和 [L973](../../src/motors/src/drivers/myact/myact_motor_controller.cpp#L973) 都把本周期新时间写入反馈，
 `comm_ok` 也仍来自单轴配置状态。通信看门狗到 10 个连续坏周期才锁存，并在一个完整周期后清零
-（[L391](../src/motors/src/drivers/myact/myact_motor_controller.cpp#L391)）。现有测试明确覆盖 9 个坏周期
-不锁存及 10 个坏周期锁存（[motor_realtime_channel_test.cpp#L1509](../src/motors/tests/motor_realtime_channel_test.cpp#L1509)），
+（[L391](../../src/motors/src/drivers/myact/myact_motor_controller.cpp#L391)）。现有测试明确覆盖 9 个坏周期
+不锁存及 10 个坏周期锁存（[motor_realtime_channel_test.cpp#L1509](../../src/motors/tests/motor_realtime_channel_test.cpp#L1509)），
 但没有检查坏周期的反馈有效性和时间戳。
 
 **现实触发与影响。** EtherCAT 短暂通信抖动造成少于看门狗阈值的 incomplete WKC 时，域缓冲可能是
@@ -108,12 +110,12 @@
 
 ### P1-2：1 kHz 命令线程会复用未校验年龄的缓存电机反馈
 
-**源码证据。** [robot_interface.cpp#L474](../src/inference/src/robot/robot_interface.cpp#L474) 仅在有新快照时
-替换 `motor_feedback`，首次取得后可无限复用；[action_processor.cpp#L267](../src/inference/src/robot/action_processor.cpp#L267)
+**源码证据。** [robot_interface.cpp#L474](../../src/inference/src/robot/robot_interface.cpp#L474) 仅在有新快照时
+替换 `motor_feedback`，首次取得后可无限复用；[action_processor.cpp#L267](../../src/inference/src/robot/action_processor.cpp#L267)
 检查 `comm_ok/enabled/faulted/control_ready` 和关节范围，但不检查 `host_timestamp_ns`。
-[robot_interface.cpp#L495](../src/inference/src/robot/robot_interface.cpp#L495) 随后用当前时间生成一条“新”命令期限。
+[robot_interface.cpp#L495](../../src/inference/src/robot/robot_interface.cpp#L495) 随后用当前时间生成一条“新”命令期限。
 同时，电机 RT 主循环在本周期接收 PDO 前先消费 setpoint
-（[motor_controller_base.cpp#L223](../src/motors/src/motor_base/motor_controller_base.cpp#L223)）。
+（[motor_controller_base.cpp#L223](../../src/motors/src/motor_base/motor_controller_base.cpp#L223)）。
 
 **现实触发与影响。** EtherCAT 线程因一次调度延迟停顿数毫秒，而 CPU6 上的命令线程继续运行时，
 它会反复用最后一次反馈生成仍在有效期内的新命令。EtherCAT 线程恢复后可能先消费该命令，再接收新 PDO；
@@ -127,10 +129,10 @@ P1-1 修复后必须使用 last-valid PDO 时间。若不调整循环次序，�
 
 ### P1-3：EtherCAT 绝对周期睡眠忽略迟到，可能连续追赶历史周期
 
-**源码证据。** [motor_controller_base.cpp#L218](../src/motors/src/motor_base/motor_controller_base.cpp#L218)
+**源码证据。** [motor_controller_base.cpp#L218](../../src/motors/src/motor_base/motor_controller_base.cpp#L218)
 每轮把 `next_period` 固定加 1 ms，再调用 `clock_nanosleep`；返回值未处理，也没有将已经过去的期限跳到
 未来。相比之下，策略命令线程在迟到超过一个周期时会重置 `next_wake`
-（[robot_interface.cpp#L536](../src/inference/src/robot/robot_interface.cpp#L536)）。
+（[robot_interface.cpp#L536](../../src/inference/src/robot/robot_interface.cpp#L536)）。
 
 **现实触发与影响。** 正常负载下的一次调度延迟或周期执行超时即可使绝对截止点落在过去；后续循环会无睡眠
 连续追赶，1 ms 滤波／状态机步长假设被破坏，并暂时增加 CPU7 占用。当前没有 deadline-miss 计数能从日志定位。
@@ -143,13 +145,13 @@ P1-1 修复后必须使用 last-valid PDO 时间。若不调整循环次序，�
 
 ### P1-4：Xsens 分帧数据仍可能跨样本组合，主机时间也不能表示真实到达时间
 
-**源码证据。** [can_parser.cpp#L109](../src/imu/src/protocol/xsens_mti/can_parser.cpp#L109) 和
-[L126](../src/imu/src/protocol/xsens_mti/can_parser.cpp#L126) 分别覆盖同一 `AHRSData`，任一帧都会覆盖统一的
-`receive_timestamp_ns`；[L170](../src/imu/src/protocol/xsens_mti/can_parser.cpp#L170) 只要求两个 fresh 布尔值，
+**源码证据。** [can_parser.cpp#L109](../../src/imu/src/protocol/xsens_mti/can_parser.cpp#L109) 和
+[L126](../../src/imu/src/protocol/xsens_mti/can_parser.cpp#L126) 分别覆盖同一 `AHRSData`，任一帧都会覆盖统一的
+`receive_timestamp_ns`；[L170](../../src/imu/src/protocol/xsens_mti/can_parser.cpp#L170) 只要求两个 fresh 布尔值，
 `SampleTime` 没有参与配对。测试还明确允许复用旧 SampleTime，甚至没有 SampleTime 也发布
-（[xsens_mti_can_parser_test.cpp#L88](../src/imu/tests/xsens_mti_can_parser_test.cpp#L88)）。
-[socket_can_port.cpp#L129](../src/imu/src/drivers/socket_can_port.cpp#L129) 使用 `read` 而非 `recvmsg`，并在读取完成后
-才调用 `monotonic_now_ns()`。此外，[can_parser.cpp#L140](../src/imu/src/protocol/xsens_mti/can_parser.cpp#L140)
+（[xsens_mti_can_parser_test.cpp#L88](../../src/imu/tests/xsens_mti_can_parser_test.cpp#L88)）。
+[socket_can_port.cpp#L129](../../src/imu/src/drivers/socket_can_port.cpp#L129) 使用 `read` 而非 `recvmsg`，并在读取完成后
+才调用 `monotonic_now_ns()`。此外，[can_parser.cpp#L140](../../src/imu/src/protocol/xsens_mti/can_parser.cpp#L140)
 没有检查四元数范数，全零四元数仍能产生有限的重力分量并被标为 valid。
 
 **现实触发与影响。** 一次 quaternion 或 rate 帧丢失、或者读取线程短时未被调度，就可能把两个采样周期的
@@ -165,17 +167,17 @@ P1-1 修复后必须使用 last-valid PDO 时间。若不调整循环次序，�
 
 ### P1-5：部署配置声明的速度范围未生效，705 gait 语义也无法由 YAML 表达
 
-**源码证据。** 当前 [deploy.yaml#L7](../src/inference/config/deploy.yaml#L7) 把 `lin_vel_x/y` 和 `ang_vel_z`
+**源码证据。** 当前 [deploy.yaml#L7](../../src/inference/config/deploy.yaml#L7) 把 `lin_vel_x/y` 和 `ang_vel_z`
 都声明为 `[0.0, 0.0]`；加载器却将三组数读入 `ignored_range`
-（[deploy_config.cpp#L481](../src/inference/src/config/deploy_config.cpp#L481)）。Xbox 正常映射可产生
-`vx=±0.3 m/s`（[xbox_controller.cpp#L288](../src/xbox_control/src/xbox_controller.cpp#L288)），`policy_test`
-直接送入策略（[policy_test.cpp#L147](../src/inference/examples/policy_test.cpp#L147)）。
+（[deploy_config.cpp#L481](../../src/inference/src/config/deploy_config.cpp#L481)）。Xbox 正常映射可产生
+`vx=±0.3 m/s`（[xbox_controller.cpp#L288](../../src/xbox_control/src/xbox_controller.cpp#L288)），`policy_test`
+直接送入策略（[policy_test.cpp#L147](../../src/inference/examples/policy_test.cpp#L147)）。
 
-默认编译启用 705 维观测（[CMakeLists.txt#L9](../src/inference/CMakeLists.txt#L9)），实际模型也只接受 705 维；
-运行时会插入 gait phase（[observation_builder.cpp#L272](../src/inference/src/robot/observation_builder.cpp#L272)），
+默认编译启用 705 维观测（[CMakeLists.txt#L9](../../src/inference/CMakeLists.txt#L9)），实际模型也只接受 705 维；
+运行时会插入 gait phase（[observation_builder.cpp#L272](../../src/inference/src/robot/observation_builder.cpp#L272)），
 但加载器的 observation 白名单没有 `gait_phase`
-（[deploy_config.cpp#L643](../src/inference/src/config/deploy_config.cpp#L643)）。代码默认 period 为 0.74 s
-（[robot_config.hpp#L73](../src/inference/include/robot/robot_config.hpp#L73)），YAML 注释示例却是 0.6 s。
+（[deploy_config.cpp#L643](../../src/inference/src/config/deploy_config.cpp#L643)）。代码默认 period 为 0.74 s
+（[robot_config.hpp#L73](../../src/inference/include/robot/robot_config.hpp#L73)），YAML 注释示例却是 0.6 s。
 
 **现实触发与影响。** 用户正常推动摇杆即可让观测命令超出部署文件声明范围。仓库无法单独证明当前模型究竟只训练
 站立还是支持 ±0.3 m/s，也无法证明 gait period 应为 0.74 还是 0.6；因此问题是部署契约未闭合，而不是本报告
@@ -190,10 +192,10 @@ P1-1 修复后必须使用 last-valid PDO 时间。若不调整循环次序，�
 
 ### P1-6：代码与仓库 ESI 的 PDO padding 对象版本仍不一致
 
-**源码证据。** [ethercat_adapter_igh.cpp#L59](../src/motors/src/protocol/ethercat/ethercat_adapter_igh.cpp#L59)
+**源码证据。** [ethercat_adapter_igh.cpp#L59](../../src/motors/src/protocol/ethercat/ethercat_adapter_igh.cpp#L59)
 注册 `0x2ffd/0x2ffe`，而仓库 `MT-Device 250702.xml` 的同一 0x1601/0x1A00 映射使用
-[0x5FF1](<../src/motors/datasheet/myact/EtherCAT%20ESI/MT-Device%20250702.xml#L1867>) 和
-[0x5FF2](<../src/motors/datasheet/myact/EtherCAT%20ESI/MT-Device%20250702.xml#L1918>)。
+[0x5FF1](<../../src/motors/datasheet/myact/EtherCAT%20ESI/MT-Device%20250702.xml#L1867>) 和
+[0x5FF2](<../../src/motors/datasheet/myact/EtherCAT%20ESI/MT-Device%20250702.xml#L1918>)。
 
 **现实触发与影响。** 使用与仓库 ESI 对应的驱动器固件部署时，主站 PDO 配置可能直接失败；若现场固件是另一版，
 则代码可能正确。仅凭静态差异不能断言主字段错位或电机会异常运动，但在上电前必须固定版本证据。
@@ -208,23 +210,23 @@ P1-1 修复后必须使用 last-valid PDO 时间。若不调整循环次序，�
 
 ### P2-1：`command_applied` 只表示命令已入 latest 通道
 
-[robot_interface.cpp#L509](../src/inference/src/robot/robot_interface.cpp#L509) 在
+[robot_interface.cpp#L509](../../src/inference/src/robot/robot_interface.cpp#L509) 在
 `apply_impedance_setpoints_realtime` 返回后立即写 `command_applied=true`；底层成功条件只是
-[motor_controller_base.cpp#L411](../src/motors/src/motor_base/motor_controller_base.cpp#L411) 发布到 SPSC latest 通道，
+[motor_controller_base.cpp#L411](../../src/motors/src/motor_base/motor_controller_base.cpp#L411) 发布到 SPSC latest 通道，
 并不证明 RT 已消费、PDO 已发送或驱动器已响应。最小改法是把字段改成准确的 `command_enqueued`；若定位链路确实需要，
 再由 RT 快照补充 consumed/sent 序号。验收时制造命令发布后、RT 消费前的可控停顿，日志不得声称已发送。
 
 ### P2-2：`ifname` 不选择实际 IgH 主站
 
-[ethercat_adapter_igh.cpp#L116](../src/motors/src/protocol/ethercat/ethercat_adapter_igh.cpp#L116) 丢弃 `ifname` 并固定
+[ethercat_adapter_igh.cpp#L116](../../src/motors/src/protocol/ethercat/ethercat_adapter_igh.cpp#L116) 丢弃 `ifname` 并固定
 `ecrt_request_master(0)`。RK3588 新脚本能按物理 GMAC/MAC 配置 master 0，因此当前固定 profile 可以工作；但上层打印的
 接口名并非选择依据，现场改名也不会切换总线。最小修复是把配置项改为明确的 master index，启动日志同时打印 IgH
 master 绑定的实际 MAC／物理设备。验收需故意给一个不同的上层接口名，程序必须拒绝不一致或明确显示仍使用 master 0。
 
 ### P2-3：reset 启动 FK 失败会静默改用目标姿态
 
-[action_processor.cpp#L523](../src/inference/src/robot/action_processor.cpp#L523) 从真实踝电机角求启动脚姿态；不可达时
-[L538](../src/inference/src/robot/action_processor.cpp#L538) 把插值起点设成目标默认 pitch/roll 并继续成功。单次编码器姿态
+[action_processor.cpp#L523](../../src/inference/src/robot/action_processor.cpp#L523) 从真实踝电机角求启动脚姿态；不可达时
+[L538](../../src/inference/src/robot/action_processor.cpp#L538) 把插值起点设成目标默认 pitch/roll 并继续成功。单次编码器姿态
 位于求解域外或求解不收敛时，复位轨迹的起点不再代表当前脚位。最小修复是启动阶段快速失败并报告两电机角和求解结果；
 无硬件测试输入一个有限但不可解的反馈，必须拒绝 reset 且不发送插值动作。
 
@@ -253,8 +255,8 @@ workqueue mask 为 `3f`；这部分符合新 profile。
 ```
 
 独立 Debug 构建的 `policy_test deploy.yaml` 同样在
-[policy_test.cpp#L84](../src/inference/examples/policy_test.cpp#L84) 预检处返回 1，尚未打开 Xbox、加载模型或初始化电机。
-按 [RK3588 部署说明](../deploy/rk3588/README.md) 完成 `install`、受控重启及 `check` 后，才能继续硬件验收；
+[policy_test.cpp#L84](../../src/inference/examples/policy_test.cpp#L84) 预检处返回 1，尚未打开 Xbox、加载模型或初始化电机。
+按 [RK3588 部署说明](../../deploy/rk3588/README.md) 完成 `install`、受控重启及 `check` 后，才能继续硬件验收；
 本次没有执行这些改变系统状态的步骤。
 
 ## 7. 最小整改顺序

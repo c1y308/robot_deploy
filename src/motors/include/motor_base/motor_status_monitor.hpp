@@ -1,6 +1,9 @@
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <atomic>
+#include <cstddef>
 #include <chrono>
 #include <functional>
 #include <string>
@@ -8,6 +11,8 @@
 #include <utility>
 #include <vector>
 
+#include "motor_base/command_types.hpp"
+#include "spsc_latest_channel/spsc_latest_channel.hpp"
 #include "tool/thread_runtime.hpp"
 
 namespace motor_base {
@@ -15,27 +20,15 @@ namespace motor_base {
 template <typename Snapshot>
 class MotorStatusMonitor {
 public:
-    using StatusProvider = std::function<std::vector<Snapshot>()>;
     using StatusPrinter = std::function<void(
         const std::vector<Snapshot>&,
         const std::vector<int>&)>;
 
     MotorStatusMonitor() = default;
 
-    explicit MotorStatusMonitor(StatusProvider provider, StatusPrinter printer = {})
-        : status_provider_(std::move(provider)),
-          status_printer_(std::move(printer))
-    {
-    }
-
     ~MotorStatusMonitor()
     {
         stop();
-    }
-
-    void set_status_provider(StatusProvider provider)
-    {
-        status_provider_ = std::move(provider);
     }
 
     void set_status_printer(StatusPrinter printer)
@@ -43,7 +36,7 @@ public:
         status_printer_ = std::move(printer);
     }
 
-    // Provider、printer 和打印轴列表均在 start() 前配置。
+    // printer 和打印轴列表均在 start() 前配置。
     void set_print_info(const std::vector<int>& motor_indices)
     {
         print_motor_ids_ = motor_indices;
@@ -54,9 +47,22 @@ public:
         return !print_motor_ids_.empty();
     }
 
-    void configure_thread(robot_base::ThreadRuntimeOptions options)
+    void configure(std::size_t motor_count, robot_base::ThreadRuntimeOptions options)
     {
         thread_options_ = std::move(options);
+        latest_status_.resize(motor_count);
+        latest_frame_.reset_empty();
+    }
+
+    // RT 为唯一生产者；motor_mon 为唯一消费者，打印和缓存均留在 monitor 线程。
+    Snapshot* acquire_write_slot() noexcept
+    {
+        return latest_frame_.acquire_write_slot()->data();
+    }
+
+    void publish_written() noexcept
+    {
+        latest_frame_.publish_written();
     }
 
     bool start()
@@ -86,18 +92,14 @@ public:
 
     void print_once()
     {
-        const StatusProvider provider = get_status_provider();
-        const StatusPrinter printer = get_status_printer();
-        if (!provider || !printer) {
+        if (!status_printer_ || print_motor_ids_.empty()) {
             return;
         }
-
-        const std::vector<int> print_motor_ids = get_print_motor_ids();
-        if (print_motor_ids.empty()) {
-            return;
+        std::array<Snapshot, kMaxMotors> latest;
+        if (latest_frame_.try_consume_latest(latest)) {
+            std::copy_n(latest.begin(), latest_status_.size(), latest_status_.begin());
         }
-
-        printer(provider(), print_motor_ids);
+        status_printer_(latest_status_, print_motor_ids_);
     }
 
     const std::string& last_start_error() const noexcept
@@ -106,21 +108,6 @@ public:
     }
 
 private:
-    std::vector<int> get_print_motor_ids() const
-    {
-        return print_motor_ids_;
-    }
-
-    StatusProvider get_status_provider() const
-    {
-        return status_provider_;
-    }
-
-    StatusPrinter get_status_printer() const
-    {
-        return status_printer_;
-    }
-
     void thread_func()
     {
         using Clock = std::chrono::steady_clock;
@@ -140,7 +127,8 @@ private:
         }
     }
 
-    StatusProvider status_provider_;
+    robot_base::SpscLatestChannel<std::array<Snapshot, kMaxMotors>> latest_frame_;
+    std::vector<Snapshot> latest_status_; // monitor 线程独占，无锁缓存用于重复打印 latest 值。
 
     StatusPrinter status_printer_;
 

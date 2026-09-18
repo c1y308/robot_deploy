@@ -185,7 +185,7 @@ protected:
 
     virtual void discrete_queue_full_callback(
         int motor_index,
-        const ControlCommand& cmd);
+        const DiscreteCommand& cmd);
 
     virtual void discrete_command_failed_callback(
         int motor_index,
@@ -232,7 +232,7 @@ private:
                                   int& reason) const noexcept;
 
     // 直接在process_queued_commands()中调用，将离散命令入各个电机的命令队列
-    void enqueue_discrete_command(const ControlCommand& cmd, CommandId command_id);
+    void enqueue_discrete_command(const DiscreteCommandSubmissionQueue::Entry& cmd);
     // thread_func()中调用，处理各个电机的离散命令队列（状态机）
     void service_discrete_commands();
 
@@ -283,8 +283,7 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> rt_scheduling_ready_{false};
     std::atomic<bool> terminal_fault_latched_{false};
-    bool has_active_setpoint_{false};
-    ControlCommand active_setpoint_{};
+    CommandTiming active_setpoint_timing_{}; // RT only; zero deadline means no active command.
     mutable std::mutex lifecycle_mutex_;
 };
 

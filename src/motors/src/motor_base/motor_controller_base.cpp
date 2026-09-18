@@ -107,8 +107,7 @@ bool MotorControllerBase::start()
 
     rt_scheduling_ready_.store(false, std::memory_order_release);
     setpoint_channel_policy_.reset_empty();
-    has_active_setpoint_ = false;
-    active_setpoint_ = ControlCommand{};
+    active_setpoint_timing_ = CommandTiming{};
     command_feedback_channel_.reset_empty();
     policy_feedback_channel_.reset_empty();
     if (!status_channel_.start()) {
@@ -262,7 +261,7 @@ CommandSubmitResult MotorControllerBase::send_discrete_command(
         discrete_command_target_mask(cmd, motor_count_));
 
     // 入命令队列失败时，清除命令结果缓存
-    if (!cmd_queue_.try_push({cmd, command_id})) {
+    if (!cmd_queue_.try_push({cmd.discrete_type, cmd.mode, cmd.motor_index, command_id})) {
         discrete_command_results_.clear(command_id);
         return {CommandSubmitStatus::QUEUE_FULL, std::nullopt};
     }
@@ -540,9 +539,8 @@ void MotorControllerBase::process_queued_commands()
         if (!entry) {
             break;
         }
-        const ControlCommand& cmd = entry->command;
         ++processed;
-        enqueue_discrete_command(cmd, entry->command_id);
+        enqueue_discrete_command(*entry);
         cmd_queue_.pop_front();
     }
 }
@@ -556,10 +554,11 @@ void MotorControllerBase::process_latest_setpoint_commands()
         return;
     }
 
-    if (has_active_setpoint_ && now_ns >= active_setpoint_.timing.valid_until_ns) {
+    if (active_setpoint_timing_.valid_until_ns != 0 &&
+        now_ns >= active_setpoint_timing_.valid_until_ns) {
         latch_setpoint_timeout_fault(
             FRESHNESS_EXPIRED,
-            active_setpoint_.timing.source_policy_seq);
+            active_setpoint_timing_.source_policy_seq);
         apply_terminal_fault_stop();
         return;
     }
@@ -578,7 +577,7 @@ void MotorControllerBase::process_latest_setpoint_commands()
         all_stopped = all_stopped && axis.applied != 0 && axis.applied > axis.released;
     }
     if (all_stopped) {
-        has_active_setpoint_ = false;
+        active_setpoint_timing_ = CommandTiming{};
         return;
     }
 
@@ -596,8 +595,7 @@ void MotorControllerBase::process_latest_setpoint_commands()
             return;
         }
 
-        active_setpoint_ = cmd;
-        has_active_setpoint_ = true;
+        active_setpoint_timing_ = cmd.timing;
         apply_setpoint_command_impl(cmd);
     }
 }
@@ -649,9 +647,9 @@ void MotorControllerBase::apply_terminal_fault_stop()
 }
 
 void MotorControllerBase::enqueue_discrete_command(
-    const ControlCommand& cmd,
-    CommandId command_id)
+    const DiscreteCommandSubmissionQueue::Entry& cmd)
 {
+    const CommandId command_id = cmd.command_id;
     auto enqueue_one = [this, &cmd, command_id](int idx) {
         if (idx < 0 || idx >= static_cast<int>(motor_count_)) {
             return;
@@ -662,7 +660,7 @@ void MotorControllerBase::enqueue_discrete_command(
             return;
         }
 
-        DiscreteCommand pending(cmd.discrete_type, cmd.mode, command_id);
+        DiscreteCommand pending(cmd.type, cmd.mode, command_id);
         pending.phase = DiscretePhase::QUEUED;
         pending.next_retry_tick = discrete_cmd_tick_;
         pending.next_verify_tick = discrete_cmd_tick_;
@@ -676,7 +674,7 @@ void MotorControllerBase::enqueue_discrete_command(
 
         if (!discrete_cmd_queues_[static_cast<std::size_t>(idx)].push_back(pending)) {
             discrete_command_results_.mark_failed(command_id, idx);
-            discrete_queue_full_callback(idx, cmd);
+            discrete_queue_full_callback(idx, pending);
         }
     };
 
@@ -691,7 +689,7 @@ void MotorControllerBase::enqueue_discrete_command(
 
 void MotorControllerBase::discrete_queue_full_callback(
     int,
-    const ControlCommand&)
+    const DiscreteCommand&)
 {
     printf("[MotorControllerBase] Warning: discrete command queue full\n");
 }

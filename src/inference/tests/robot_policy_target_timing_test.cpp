@@ -177,11 +177,9 @@ struct RobotInterfacePolicyTimingTestAccess {
     static Target publish(RobotInterface& robot, const InferenceRecord& record)
     {
         expect(!record.policy_result_dropped, "test attempted to publish a drop");
-        Target target;
-        target.policy_seq = record.policy_seq;
-        target.inference_record = record;
+        robot.worker_.acquire_target_write_slot().inference_record = record;
         const auto before_publish = steady_now_ns();
-        robot.last_policy_target_published_ns_ = robot.worker_.publish_target(target);
+        robot.last_policy_target_published_ns_ = robot.worker_.publish_target();
         const auto after_publish = steady_now_ns();
         robot.observation_builder_->commit_policy_action(record.raw_action);
         robot.observation_builder_->advance_frame();
@@ -191,8 +189,7 @@ struct RobotInterfacePolicyTimingTestAccess {
         expect(robot.worker_.target_channel_.try_consume_latest(consumed), "target not published");
         expect(consumed.published_at_ns >= before_publish && consumed.published_at_ns <= after_publish &&
                    robot.last_policy_target_published_ns_ == consumed.published_at_ns &&
-                   consumed.valid_until_ns == consumed.published_at_ns + 60*kMs &&
-                   consumed.inference_record.policy_valid_until_ns == consumed.valid_until_ns,
+                   consumed.inference_record.policy_valid_until_ns == consumed.published_at_ns + 60*kMs,
                "publication lost its actual timestamp or target deadline");
         expect(consumed.inference_record.target_q_model_rad == record.target_q_model_rad &&
                    consumed.inference_record.raw_action == record.raw_action,
@@ -214,8 +211,8 @@ struct RobotInterfacePolicyTimingTestAccess {
     static PolicyObservation observation(RobotInterface& robot)
     {
         MotorStateSnapshot motor;
-        motor.position_rad.assign(12, 0.0);
-        motor.velocity_rad_s.assign(12, 0.0);
+        motor.position_rad.fill(0.0);
+        motor.velocity_rad_s.fill(0.0);
         AhrsStateSnapshot imu;
         imu.projected_gravity_valid = true;
         imu.projected_gravity = {0.0, 0.0, -1.0};
@@ -258,27 +255,35 @@ struct RobotInterfacePolicyTimingTestAccess {
     static bool expired(const Target& target, std::int64_t now)
     {
         return robot_detail::PolicyCommandWorker::policy_deadline_expired(
-            target.valid_until_ns, now);
+            target.inference_record.policy_valid_until_ns, now);
     }
 
     static void run_expired_worker(RobotInterface& robot, const Target* target = nullptr)
     {
         if (target) robot.worker_.target_channel_.publish(*target);
         robot.worker_.running_.store(true);
-        robot.initialized_.store(true);
+        robot.initialized_ = true;
         robot.set_policy_step_phase(PolicyStepPhase::Inference);
         robot.worker_.loop();
         expect(robot.worker_.failed_.load() && !robot.worker_.running_.load() &&
                    !robot.is_initialized(),
                "expired worker did not fail/stop");
-        expect(robot.worker_.error_.find("target_hold_age_us=") != std::string::npos &&
-                   robot.worker_.error_.find("target_age_us=") == std::string::npos &&
-                   robot.worker_.error_.find("policy_seq=") != std::string::npos &&
-                   robot.worker_.error_.find("obs_to_action_age_us=") != std::string::npos &&
-                   robot.worker_.error_.find("overdue_us=") != std::string::npos &&
-                   robot.worker_.error_.find("policy_step_phase=") == std::string::npos &&
-                   robot.worker_.error_.find("phase_elapsed_us=") == std::string::npos,
-               "deadline error lost target diagnostics or retained Interface phase data");
+        const auto& error = robot.worker_.error_;
+        expect(error.find("overdue_us=") != std::string::npos &&
+                   error.find("policy_step_phase=") == std::string::npos &&
+                   error.find("phase_elapsed_us=") == std::string::npos,
+               "deadline error lost overdue time or retained Interface phase data");
+        if (target) {
+            expect(error.find("target_hold_age_us=") != std::string::npos &&
+                       error.find("policy_seq=") != std::string::npos &&
+                       error.find("obs_to_action_age_us=") != std::string::npos,
+                   "deadline error lost target diagnostics");
+        } else {
+            expect(error.find("first policy target deadline expired: deadline_ns=") != std::string::npos &&
+                       error.find("policy_seq=") == std::string::npos &&
+                       error.find(std::to_string(robot.worker_.startup_policy_deadline_ns())) != std::string::npos,
+                   "startup timeout fabricated target metadata or lost the real deadline");
+        }
     }
 
     static void test_sequences_and_state()
@@ -289,7 +294,7 @@ struct RobotInterfacePolicyTimingTestAccess {
         const auto seq1 = begin(robot, kStart);
         const auto target1 = publish(robot, record(robot, seq1, kStart,
             admit(robot, kStart, kStart + 25*kMs), 0.1F));
-        expect(target1.policy_seq == 1 && target1.inference_record.policy_seq == 1,
+        expect(target1.inference_record.policy_seq == 1,
                "first sequence mismatch");
         observation(robot);  // Keep the history assembled for the dropped policy step.
         const auto seq2 = begin(robot, kStart + 25*kMs);
@@ -298,7 +303,7 @@ struct RobotInterfacePolicyTimingTestAccess {
         drop(robot, stale);
         expect(stale.policy_seq == 2 && !stale.command_applied,
                "drop lost its policy step identity");
-        expect(robot.next_policy_seq_ == 3 &&
+        expect(robot.observation_builder_->frame_index() + 1 == 3 &&
                    robot.last_policy_target_published_ns_ == target1.published_at_ns,
                "drop lost its policy sequence or renewed the hold");
         const auto next_obs = observation(robot);
@@ -313,15 +318,15 @@ struct RobotInterfacePolicyTimingTestAccess {
         const auto seq3 = begin(robot, kStart + 50*kMs);
         const auto target2 = publish(robot, record(robot, seq3, kStart + 50*kMs,
             admit(robot, kStart + 50*kMs, kStart + 75*kMs), 0.3F));
-        expect(target2.policy_seq == 3 && target2.inference_record.policy_seq == 3,
+        expect(target2.inference_record.policy_seq == 3,
                "recovery did not preserve the policy sequence gap after a drop");
         const auto early = command(robot, target2, target2.published_at_ns + kMs);
         const auto late = command(robot, target2, target2.published_at_ns + 59*kMs);
         expect(early.source_policy_seq == 3 && late.source_policy_seq == 3 &&
                    early.valid_until_ns == target2.published_at_ns + 11*kMs &&
-                   late.valid_until_ns == target2.valid_until_ns,
+                   late.valid_until_ns == target2.inference_record.policy_valid_until_ns,
                "hold changed the source policy or extended the deadline");
-        expect(!expired(target2, target2.valid_until_ns - 1) && expired(target2, target2.valid_until_ns),
+        expect(!expired(target2, target2.inference_record.policy_valid_until_ns - 1) && expired(target2, target2.inference_record.policy_valid_until_ns),
                "60ms deadline equality must expire");
         robot.reset_policy_command_state();
         expect(robot.observation_builder_->frame_index() == 3,
@@ -331,8 +336,7 @@ struct RobotInterfacePolicyTimingTestAccess {
         robot.initialize_policy_runtime_state();
         Target ignored;
         InferenceRecord ignored_record;
-        expect(robot.next_policy_seq_ == 1 &&
-                   robot.last_policy_target_published_ns_ == 0 &&
+        expect(robot.last_policy_target_published_ns_ == 0 &&
                    robot.first_policy_inference_started_ns_.load() == 0 &&
                    robot.observation_builder_->frame_index() == 0 &&
                    !robot.worker_.target_channel_.try_consume_latest(ignored) &&
@@ -365,7 +369,7 @@ struct RobotInterfacePolicyTimingTestAccess {
         const auto second_seq = begin(robot, kStart + 20*kMs);
         const auto same_obs = publish(robot, record(robot, second_seq, kStart,
             admit(robot, kStart, kStart + 39*kMs), 0.2F));
-        expect(same_obs.policy_seq == 2 && same_obs.inference_record.policy_seq == 2,
+        expect(same_obs.inference_record.policy_seq == 2,
                "duplicate observation was rejected");
     }
 
@@ -381,15 +385,12 @@ struct RobotInterfacePolicyTimingTestAccess {
         expect(robot.validate_policy_sensor_timing(kStart, kStart + 1, kStart, error),
                "a sensor sampled after now must not be rejected for negative age");
         expect(robot.config_.sensor_guard.max_motor_sample_age_s == 0.020 &&
-                   robot.config_.sensor_guard.max_imu_sample_age_s == 0.050 &&
-                   robot.config_.sensor_guard.max_sensor_state_skew_s == 0.030,
+                   robot.config_.sensor_guard.max_imu_sample_age_s == 0.050,
                "sensor defaults changed outside the motor age limit");
         expect(robot.validate_policy_sensor_timing(kStart, kStart, kStart + 20*kMs, error), "20ms motor boundary rejected");
         expect(!robot.validate_policy_sensor_timing(kStart, kStart, kStart + 20*kMs + 1, error), "20ms motor guard relaxed");
-        // Isolate the IMU age guard from the tighter motor age and skew guards.
-        auto imu_config = make_config();
-        imu_config.sensor_guard.max_sensor_state_skew_s = 0.060;
-        RobotInterface imu_robot(imu_config);
+        // Isolate the IMU age guard from the tighter motor age guard.
+        RobotInterface imu_robot(make_config());
         expect(imu_robot.validate_policy_sensor_timing(kStart + 50*kMs, kStart, kStart + 50*kMs, error), "50ms IMU boundary rejected");
         expect(!imu_robot.validate_policy_sensor_timing(kStart + 50*kMs + 1, kStart, kStart + 50*kMs + 1, error), "50ms IMU guard relaxed");
         // A controlled stale parser snapshot: no newer measurements are fed.
@@ -400,22 +401,23 @@ struct RobotInterfacePolicyTimingTestAccess {
         parser.feed(imu::XCDI_RATE_OF_TURN_ID, rate, 6, kStart + kMs);
         imu_base::AHRSData stale_ahrs;
         expect(parser.get_ahrs_data(stale_ahrs), "controlled stale AHRS was not published");
-        auto stale_config = make_config();
-        stale_config.sensor_guard.max_sensor_state_skew_s = 0.200;
-        RobotInterface stale_robot(stale_config);
+        RobotInterface stale_robot(make_config());
         const auto checked_at = kStart + 100*kMs;
         expect(stale_ahrs.receive_timestamp_ns == kStart &&
                    !stale_robot.validate_policy_sensor_timing(
                        checked_at, stale_ahrs.receive_timestamp_ns, checked_at, error),
                "default 50ms IMU age guard accepted a 100ms-old assembled AHRS");
         expect(robot.validate_policy_sensor_timing(kStart + 30*kMs, kStart, kStart + 30*kMs, error), "30ms skew rejected");
-        expect(!robot.validate_policy_sensor_timing(kStart + 30*kMs + 1, kStart, kStart + 30*kMs + 1, error), "skew guard relaxed");
-        expect(!robot.worker_.startup_policy_target_expired(kStart + 1000*kMs), "startup timer armed before inference");
+        expect(robot.validate_policy_sensor_timing(kStart + 49*kMs, kStart, kStart + 50*kMs, error),
+               "independently fresh latest values were rejected for their 49ms skew");
+        expect(robot.worker_.startup_policy_deadline_ns() == 0, "startup timer armed before inference");
         begin(robot, kStart);
         begin(robot, kStart + 25*kMs);
         expect(robot.worker_.startup_policy_deadline_ns() == kStart + 60*kMs &&
-                   !robot.worker_.startup_policy_target_expired(kStart + 60*kMs - 1) &&
-                   robot.worker_.startup_policy_target_expired(kStart + 60*kMs),
+                   !robot_detail::PolicyCommandWorker::policy_deadline_expired(
+                       robot.worker_.startup_policy_deadline_ns(), kStart + 60*kMs - 1) &&
+                   robot_detail::PolicyCommandWorker::policy_deadline_expired(
+                       robot.worker_.startup_policy_deadline_ns(), kStart + 60*kMs),
                "startup timer renewed or missed equality");
         const auto normal = robot.motor_session_.target_command_timing(kStart, 0);
         const auto near_deadline = robot.motor_session_.target_command_timing(
@@ -429,12 +431,29 @@ struct RobotInterfacePolicyTimingTestAccess {
     {
         RobotInterface robot(make_config());
         prepare_motor_feedback(robot);
+        expect(robot.motor_session_.get_motor_snapshot().timestamp_ns == 0,
+               "snapshot fabricated feedback before the first frame");
         auto feedback = feedback_at(kStart + 10*kMs);
+        for (std::size_t i = 0; i < feedback.size(); ++i) {
+            feedback[i].position_rad = 0.01 * static_cast<double>(i);
+            feedback[i].velocity_rad_s = -0.02 * static_cast<double>(i);
+            feedback[i].torque_percent = static_cast<double>(i);
+            feedback[i].comm_ok = i % 2 == 0;
+            feedback[i].enabled = i % 3 == 0;
+        }
         feedback[7].host_timestamp_ns = kStart;
         MotorAccess::publish(*robot.motor_session_.controller_, feedback);
         auto snapshot = robot.motor_session_.get_motor_snapshot();
         expect(snapshot.timestamp_ns == kStart && snapshot.position_rad.size() == 12,
                "motor snapshot ignored an older non-first axis");
+        for (std::size_t i = 0; i < feedback.size(); ++i) {
+            expect(snapshot.position_rad[i] == feedback[i].position_rad &&
+                       snapshot.velocity_rad_s[i] == feedback[i].velocity_rad_s &&
+                       snapshot.torque_percent[i] == feedback[i].torque_percent &&
+                       snapshot.comm_ok[i] == feedback[i].comm_ok &&
+                       snapshot.enabled[i] == feedback[i].enabled,
+                   "fixed motor snapshot lost per-axis feedback");
+        }
         feedback[7].host_timestamp_ns = 0;
         MotorAccess::publish(*robot.motor_session_.controller_, feedback);
         snapshot = robot.motor_session_.get_motor_snapshot();
@@ -447,24 +466,59 @@ struct RobotInterfacePolicyTimingTestAccess {
                "snapshot did not recover with the oldest valid axis");
     }
 
+    static void test_fixed_hold_commands()
+    {
+        for (const auto mode : {motor_base::MotorControlMode::IMPEDANCE,
+                                motor_base::MotorControlMode::POSITION}) {
+            auto config = make_config();
+            config.motor.control_mode = mode;
+            RobotInterface robot(config);
+            prepare_motor_feedback(robot);
+            std::array<double, motor_base::kMaxMotors> pose{};
+            for (std::size_t i = 0; i < pose.size(); ++i) pose[i] = 0.01 * static_cast<double>(i);
+            expect(robot.motor_session_.apply_targets_rad(pose), "fixed hold command was rejected");
+            motor_base::ControlCommand submitted;
+            expect(MotorAccess::consume(*robot.motor_session_.controller_, submitted),
+                   "fixed hold command was not published");
+            expect(submitted.payload_valid && submitted.payload_size == pose.size() &&
+                       submitted.timing.valid_until_ns == submitted.timing.produced_at_ns + 10*kMs,
+                   "fixed hold lost its axis count or command deadline");
+            for (std::size_t i = 0; i < pose.size(); ++i) {
+                if (mode == motor_base::MotorControlMode::IMPEDANCE) {
+                    const auto& setpoint = submitted.impedance_setpoints[i];
+                    expect(submitted.setpoint_type == motor_base::SetpointCommandType::IMPEDANCE_TARGETS &&
+                               setpoint.position_rad == pose[i] && setpoint.velocity_rad_s == 0.0 &&
+                               setpoint.effort_ff == 0.0 &&
+                               setpoint.kp == config.motor.mit_kp[i] && setpoint.kd == config.motor.mit_kd[i],
+                           "fixed impedance hold lost position, feedforward or gains");
+                } else {
+                    expect(submitted.setpoint_type == motor_base::SetpointCommandType::POSITION_TARGETS &&
+                               submitted.setpoints[i] == pose[i], "fixed position hold lost its target");
+                }
+            }
+            robot.motor_session_.motion_enabled_.store(false);
+            expect(!robot.motor_session_.apply_targets_rad(pose), "fixed hold ignored STOP permission");
+        }
+    }
+
     static void test_feedback_deadline()
     {
         RobotInterface robot(make_config());
         prepare(robot);
         prepare_motor_feedback(robot);
         Target target;
-        target.policy_seq = 9;
-        target.valid_until_ns = kStart + 60*kMs;
+        target.inference_record.policy_seq = 9;
+        target.inference_record.policy_valid_until_ns = kStart + 60*kMs;
         const auto fresh = robot.worker_.policy_command_timing(target, kStart, kStart);
         const auto near_expiry = robot.worker_.policy_command_timing(target, kStart + 19*kMs, kStart);
         expect(fresh.valid_until_ns == kStart + 10*kMs &&
                    near_expiry.valid_until_ns == kStart + 20*kMs &&
                    near_expiry.source_policy_seq == 9,
                "feedback deadline extended the command budget or source policy");
-        target.valid_until_ns = kStart + 19*kMs + 1;
+        target.inference_record.policy_valid_until_ns = kStart + 19*kMs + 1;
         expect(robot.worker_.policy_command_timing(target, kStart + 19*kMs, kStart).valid_until_ns ==
-                   target.valid_until_ns, "feedback cap extended a shorter target deadline");
-        target.valid_until_ns = kStart + 60*kMs;
+                   target.inference_record.policy_valid_until_ns, "feedback cap extended a shorter target deadline");
+        target.inference_record.policy_valid_until_ns = kStart + 60*kMs;
         expect(robot.worker_.policy_command_timing(target, kStart + 20*kMs - 1, kStart).is_well_formed(),
                "feedback deadline expired before its nanosecond boundary");
 
@@ -493,8 +547,10 @@ struct RobotInterfacePolicyTimingTestAccess {
     {
         // Publish just one feedback frame: the worker must age its cache even
         // though the target remains valid. No hardware or RT producer is started.
-        for (const int scenario : {0, 1, 2}) {
-            RobotInterface robot(make_config());
+        for (const int scenario : {0, 1, 2, 3}) {
+            auto config = make_config();
+            config.recorder.enabled = scenario == 3;
+            RobotInterface robot(config);
             prepare(robot);
             prepare_motor_feedback(robot);
             const auto now = steady_now_ns();
@@ -503,12 +559,17 @@ struct RobotInterfacePolicyTimingTestAccess {
             if (scenario == 2) feedback[3].host_timestamp_ns = 0;
             MotorAccess::publish(*robot.motor_session_.controller_, feedback);
             Target target;
-            target.policy_seq = 1;
+            target.inference_record.policy_seq = 1;
+            target.inference_record.target_q_model_rad[0] = 0.2;
+            if (config.recorder.enabled) {
+                target.inference_record.raw_action.fill(0.37F);
+                target.inference_record.policy_observation[0] = 0.9F;
+            }
             target.published_at_ns = now;
-            target.valid_until_ns = now + 1000*kMs; // Isolate feedback expiry from target expiry.
+            target.inference_record.policy_valid_until_ns = now + 1000*kMs; // Isolate feedback expiry from target expiry.
             robot.worker_.target_channel_.publish(target);
             robot.worker_.running_.store(true);
-            robot.initialized_.store(true);
+            robot.initialized_ = true;
             robot.worker_.loop();
             const auto stopped_at = steady_now_ns();
             expect(robot.worker_.failed_.load() && !robot.worker_.running_.load() &&
@@ -518,17 +579,40 @@ struct RobotInterfacePolicyTimingTestAccess {
                    "bad feedback did not fail the worker and request STOP");
             const auto& error = robot.worker_.error_;
             expect(error.find(scenario == 2 ? "timestamp missing" : "feedback expired") != std::string::npos &&
-                       error.find(scenario == 0 ? "motor_index=0" : "motor_index=3") != std::string::npos &&
+                       error.find((scenario == 0 || scenario == 3) ? "motor_index=0" : "motor_index=3") != std::string::npos &&
                        error.find("feedback_age_us=") != std::string::npos &&
                        error.find("max_motor_age_us=20000") != std::string::npos,
                    "feedback failure lost its axis, age or limit diagnostics");
+            InferenceRecord completed;
+            const bool has_completed = robot.worker_.try_consume_completed_record(completed);
+            expect(has_completed == (scenario == 3),
+                   "worker returned logging data with recorder disabled or lost the enabled record");
+            if (has_completed) {
+                expect(completed.policy_seq == 1 && completed.command_applied &&
+                           completed.policy_valid_until_ns == target.inference_record.policy_valid_until_ns &&
+                           completed.command_timestamp_ns >= now &&
+                           completed.command_valid_until_ns <= now + 20*kMs,
+                       "first command completion lost its sequence, timestamp or deadlines");
+                const auto direct_motor = static_cast<std::size_t>(
+                    config.joint_mapping.model_to_motor_index[0]);
+                expect(completed.raw_action == target.inference_record.raw_action &&
+                           completed.policy_observation == target.inference_record.policy_observation &&
+                           completed.target_pos_rad[direct_motor] ==
+                               0.2 * config.joint_mapping.motor_to_model_direction[direct_motor],
+                       "completion lost model log data or the actual motor target column");
+                for (std::size_t i = 0; i < policy_observation::kDof; ++i) {
+                    expect(std::isfinite(completed.target_pos_rad[i]) &&
+                               std::isfinite(completed.target_effort_permille[i]),
+                           "completed motor target columns are invalid");
+                }
+            }
             motor_base::ControlCommand submitted;
             const bool has_command = MotorAccess::consume(*robot.motor_session_.controller_, submitted);
-            if (scenario == 0) {
+            if (scenario == 0 || scenario == 3) {
                 expect(has_command && submitted.timing.produced_at_ns < now + 20*kMs &&
                            submitted.timing.valid_until_ns <= now + 20*kMs &&
                            submitted.timing.valid_until_ns <= submitted.timing.produced_at_ns + 10*kMs &&
-                           stopped_at >= now + 20*kMs && stopped_at < target.valid_until_ns,
+                           stopped_at >= now + 20*kMs && stopped_at < target.inference_record.policy_valid_until_ns,
                        "cached feedback renewed its deadline or stopped only with the target");
                 expect(!MotorAccess::consume(*robot.motor_session_.controller_, submitted),
                        "worker kept publishing commands after feedback failure");
@@ -548,7 +632,7 @@ struct RobotInterfacePolicyTimingTestAccess {
             for (int restart = 0; restart < 2; ++restart) {
                 // The temporary pose is destroyed when start returns. Later
                 // refreshes must use the pose owned by the worker.
-                expect(robot.worker_.start(*robot.action_processor_, std::vector<double>(12, 0.0)) &&
+                expect(robot.worker_.start(*robot.action_processor_, std::array<double, 12>{}) &&
                            robot.worker_.healthy(error),
                        "extracted worker failed to start/restart");
                 const auto started_at = steady_now_ns();
@@ -581,14 +665,14 @@ struct RobotInterfacePolicyTimingTestAccess {
             RobotInterface robot(make_config());
             prepare(robot);
             prepare_motor_feedback(robot);
-            robot.initialized_.store(true);
+            robot.initialized_ = true;
             BlockingErrorBuffer buffer;
-            const bool started = robot.worker_.start(*robot.action_processor_, std::vector<double>(12, 0.0));
+            const bool started = robot.worker_.start(*robot.action_processor_, std::array<double, 12>{});
             auto* original = std::cerr.rdbuf(&buffer);
             const auto now = steady_now_ns();
             Target target;
-            target.policy_seq = 1;
-            target.valid_until_ns = expired_feedback ? now + 1000*kMs : now - 1;
+            target.inference_record.policy_seq = 1;
+            target.inference_record.policy_valid_until_ns = expired_feedback ? now + 1000*kMs : now - 1;
             if (expired_feedback) {
                 MotorAccess::publish(*robot.motor_session_.controller_, feedback_at(now - 25*kMs));
             }
@@ -613,9 +697,9 @@ struct RobotInterfacePolicyTimingTestAccess {
             prepare_motor_feedback(robot);
             const auto now = steady_now_ns();
             Target target;
-            target.policy_seq = 7;
+            target.inference_record.policy_seq = 7;
             target.published_at_ns = now - 100*kMs;
-            target.valid_until_ns = now - 1;
+            target.inference_record.policy_valid_until_ns = now - 1;
             target.inference_record.obs_to_action_age_us = 25000;
             run_expired_worker(robot, &target);
             std::string worker_error;
@@ -665,8 +749,8 @@ struct RobotInterfacePolicyTimingTestAccess {
             RobotInterface robot(make_config());
             prepare(robot);
             prepare_motor_feedback(robot);
-            robot.initialized_.store(true);
-            const bool started = robot.worker_.start(*robot.action_processor_, std::vector<double>(12, 0.0));
+            robot.initialized_ = true;
+            const bool started = robot.worker_.start(*robot.action_processor_, std::array<double, 12>{});
             robot.set_policy_step_phase(PolicyStepPhase::PostInference);
             BlockingErrorBuffer buffer;
             auto* original = std::cerr.rdbuf(&buffer);
@@ -694,12 +778,12 @@ struct RobotInterfacePolicyTimingTestAccess {
         prepare_motor_feedback(robot);
         const auto now = steady_now_ns();
         Target target;
-        target.policy_seq = 7;
+        target.inference_record.policy_seq = 7;
         target.published_at_ns = now - 100*kMs;
-        target.valid_until_ns = now - 1;
+        target.inference_record.policy_valid_until_ns = now - 1;
         robot.worker_.target_channel_.publish(target);
         robot.worker_.running_.store(true);
-        robot.initialized_.store(true);
+        robot.initialized_ = true;
 
         bool stopped = false;
         bool published_before_error = false;
@@ -749,7 +833,9 @@ struct RobotInterfacePolicyTimingTestAccess {
         for (const auto published_at : {end2694, cmd2694}) {
             RobotInterface robot(make_config());
             prepare(robot);
-            robot.next_policy_seq_ = 2694;
+            for (int frame = 0; frame < 2693; ++frame) {
+                robot.observation_builder_->advance_frame();
+            }
             auto seq = begin(robot, start2694);
             const auto held = publish(robot, record(robot, seq, obs2694,
                 admit(robot, obs2694, end2694), 0.1F));
@@ -764,7 +850,7 @@ struct RobotInterfacePolicyTimingTestAccess {
             seq = begin(robot, replay_fault);
             const auto recovered = publish(robot, record(robot, seq, replay_fault,
                 admit(robot, replay_fault, replay_fault + 5*kMs), 0.2F));
-            expect(recovered.policy_seq == 2696 && recovered.inference_record.policy_seq == 2696,
+            expect(recovered.inference_record.policy_seq == 2696,
                    "synthetic recovery lost its policy sequence");
         }
         RobotInterface robot(make_config());
@@ -780,7 +866,7 @@ struct RobotInterfacePolicyTimingTestAccess {
         expect(robot.last_policy_target_published_ns_ == held.published_at_ns,
                "continuous drops renewed the watchdog");
         std::this_thread::sleep_until(std::chrono::steady_clock::time_point(
-            std::chrono::nanoseconds(held.valid_until_ns)));
+            std::chrono::nanoseconds(held.inference_record.policy_valid_until_ns)));
         run_expired_worker(robot, &held);  // Also models a next inference stuck while holding.
     }
 
@@ -808,7 +894,8 @@ struct RobotInterfacePolicyTimingTestAccess {
                    static_cast<bool>(std::getline(file, data_line)), "drop never reached recorder");
         const auto header = cells(header_line);
         const auto values = cells(data_line);
-        expect(values[column(header, "policy_seq")] == "1" &&
+        expect(values[column(header, "frame_index")] == "0" &&
+                   values[column(header, "policy_seq")] == "1" &&
                    values[column(header, "policy_result_dropped")] == "1" &&
                    values[column(header, "command_applied")] == "0" &&
                    values[column(header, "command_timestamp_ns")] == "0" &&
@@ -831,6 +918,7 @@ int main()
         Access::test_admission_and_logging_delay();
         Access::test_sensors_and_startup();
         Access::test_oldest_motor_snapshot();
+        Access::test_fixed_hold_commands();
         Access::test_feedback_deadline();
         Access::test_feedback_worker();
         Access::test_worker_lifecycle_and_blocked_diagnostics();

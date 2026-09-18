@@ -10,7 +10,6 @@
 #include <array>
 #include <memory>
 #include <string>
-#include <vector>
 
 namespace inference::robot_detail {
 
@@ -43,13 +42,13 @@ public:
 
     void reset_runtime_state();
 
-    bool build_motor_targets(const std::vector<double>& target_q_model_rad,
-                             std::vector<double>& target_motor_rad,
+    bool build_motor_targets(const FixedModelTarget& target_q_model_rad,
+                             std::array<double, motor_base::kMaxMotors>& target_motor_rad,
                              std::string& error);
 
-    bool build_reset_start_model_pose(const std::vector<double>& current_motor_q,
-                                      const std::vector<double>& target_model_q,
-                                      std::vector<double>& start_model_q,
+    bool build_reset_start_model_pose(const std::array<double, motor_base::kMaxMotors>& current_motor_q,
+                                      const FixedModelTarget& target_model_q,
+                                      FixedModelTarget& start_model_q,
                                       std::string& error) const;
 
     bool build_policy_impedance_command(
@@ -88,8 +87,8 @@ private:
 
     int dof_count() const noexcept;
 
-    bool apply_ankle_ik(const std::vector<double>& target_q_model_rad,
-                        std::vector<double>& target_motor_rad,
+    bool apply_ankle_ik(const FixedModelTarget& target_q_model_rad,
+                        std::array<double, motor_base::kMaxMotors>& target_motor_rad,
                         const char* ankle_name,
                         const AnkleParallelMap& ankle_map,
                         AnkleIkState& state,

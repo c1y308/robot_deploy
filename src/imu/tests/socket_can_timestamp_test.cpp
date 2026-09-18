@@ -11,7 +11,6 @@
 
 #include <deque>
 #include <iostream>
-#include <limits>
 #include <stdexcept>
 
 namespace {
@@ -124,8 +123,7 @@ void test_ancillary_data()
            "short control buffer accepted");
     for (const __kernel_timespec invalid : {
              __kernel_timespec{0, 0}, __kernel_timespec{-1, 0},
-             __kernel_timespec{1, -1}, __kernel_timespec{1, kSecond},
-             __kernel_timespec{std::numeric_limits<std::int64_t>::max(), 0}}) {
+             __kernel_timespec{1, -1}, __kernel_timespec{1, kSecond}}) {
         ControlMessage bad_time;
         std::memcpy(CMSG_DATA(CMSG_FIRSTHDR(&bad_time.message)), &invalid, sizeof(invalid));
         expect(!imu::detail::receive_realtime_timestamp(bad_time.message, timestamp),
@@ -173,13 +171,7 @@ void test_clock_mapping()
            "zero converted timestamp accepted");
     expect(!receive_monotonic_timestamp(kBaseline - 1, kBaseline, current, converted),
            "negative converted timestamp accepted");
-    current = {std::numeric_limits<std::int64_t>::max(), kSecond};
-    expect(!receive_monotonic_timestamp(kRealtime, -1, current, converted),
-           "offset subtraction overflow accepted");
-    current = {-1, std::numeric_limits<std::int64_t>::max()};
-    expect(!receive_monotonic_timestamp(std::numeric_limits<std::int64_t>::max(),
-                                       -1, current, converted),
-           "timestamp subtraction overflow accepted");
+
 }
 
 void test_receive_and_retry()

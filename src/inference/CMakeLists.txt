@@ -227,7 +227,13 @@ add_executable(rk3588_host_preflight_test
 target_include_directories(rk3588_host_preflight_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+target_link_libraries(rk3588_host_preflight_test PRIVATE
+    "-Wl,--wrap=posix_spawn" "-Wl,--wrap=waitpid"
+)
 add_test(NAME rk3588_host_preflight_test COMMAND rk3588_host_preflight_test)
+add_test(NAME robot_rt_setup_fixture_test COMMAND bash
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../deploy/rk3588/test_robot_rt_setup.sh
+)
 
 add_executable(policy_runtime_threading_test
     tests/policy_runtime_threading_test.cpp
@@ -248,3 +254,13 @@ target_link_libraries(robot_initialization_memory_lock_test PRIVATE
 )
 add_test(NAME robot_initialization_memory_lock_test
          COMMAND robot_initialization_memory_lock_test)
+
+add_executable(robot_initialization_recorder_test
+    tests/robot_initialization_recorder_test.cpp
+)
+target_link_libraries(robot_initialization_recorder_test PRIVATE
+    robot_interface
+    "-Wl,--wrap=ecrt_request_master"
+)
+add_test(NAME robot_initialization_recorder_test
+         COMMAND robot_initialization_recorder_test)

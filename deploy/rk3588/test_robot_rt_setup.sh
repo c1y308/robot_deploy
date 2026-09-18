@@ -53,11 +53,9 @@ write_file "${FIXTURE}/sys/module/ec_master/parameters/main_devices" \
     $'fa:fd:53:a0:a5:55\n'
 write_file "${FIXTURE}/etc/NetworkManager/conf.d/99-ethercat-unmanaged.conf" \
     $'[keyfile]\nunmanaged-devices=mac:fa:fd:53:a0:a5:55\n'
-write_file "${FIXTURE}/etc/systemd/system/NetworkManager.service.d/robot-ethercat-guard.conf" \
-    $'[Service]\nExecStartPre=/usr/bin/env ROBOT_RT_INTERNAL_COMMAND=1 /usr/local/sbin/robot-rt-setup __check-nm-guard\n'
 write_file "${FIXTURE}/dev/EtherCAT0" ''
 
-run_fixture_command()
+run_setup()
 {
     TEST_FIXTURE="${FIXTURE}" TEST_SETUP="${SETUP}" bash -c '
         source "${TEST_SETUP}"
@@ -73,92 +71,107 @@ run_fixture_command()
         ROBOT_RT_SKIP_SYSTEMD=1
         SCRIPT_DIR="$(dirname -- "${TEST_SETUP}")"
 
-        case "$1" in
-            check)
-                check_layout
-                ;;
-            install)
-                install_layout
-                ;;
-            __apply)
-                apply_layout
-                ;;
-            __check-nm-guard)
-                check_networkmanager_config "$(loaded_master_mac)"
-                ;;
-            *)
-                echo "unexpected fixture command: $1" >&2
-                exit 1
-                ;;
-        esac
-    ' robot-rt-fixture "$1"
+        "$@"
+    ' robot-rt-fixture "$@"
 }
 
-run_setup()
+expect_live_check_failure()
 {
-    run_fixture_command "$1"
+    if run_setup check_layout >/dev/null 2>&1; then
+        echo "$1 unexpectedly passed live check" >&2
+        exit 1
+    fi
 }
 
-run_internal_setup()
-{
-    run_fixture_command "$1"
-}
-
-run_internal_setup __apply
-run_internal_setup __apply
-run_setup check
-run_internal_setup __check-nm-guard
+run_setup apply_layout
+run_setup apply_layout
+run_setup check_layout
+run_setup check_networkmanager_config fa:fd:53:a0:a5:55
 
 if "${SETUP}" apply >/dev/null 2>&1; then
     echo "public apply command unexpectedly passed" >&2
     exit 1
 fi
-if "${SETUP}" check-nm-guard >/dev/null 2>&1; then
-    echo "public check-nm-guard command unexpectedly passed" >&2
-    exit 1
-fi
-
 write_file "${FIXTURE}/run/robot-rt-layout.ready" \
     $'profile=wrong-profile\nboot_id=fixture-boot\n'
-if run_setup check >/dev/null 2>&1; then
+if run_setup check_layout >/dev/null 2>&1; then
     echo "ready marker with wrong profile unexpectedly passed" >&2
     exit 1
 fi
 write_file "${FIXTURE}/run/robot-rt-layout.ready" \
-    $'profile=rk3588-v1\nboot_id=old-boot\n'
-if run_setup check >/dev/null 2>&1; then
+    $'profile=rk3588-rt\nboot_id=old-boot\n'
+if run_setup check_layout >/dev/null 2>&1; then
     echo "ready marker from another boot unexpectedly passed" >&2
     exit 1
 fi
 rm -f -- "${FIXTURE}/run/robot-rt-layout.ready"
-if run_setup check >/dev/null 2>&1; then
+if run_setup check_layout >/dev/null 2>&1; then
     echo "missing ready marker unexpectedly passed" >&2
     exit 1
 fi
-run_internal_setup __apply >/dev/null
-run_setup check >/dev/null
+run_setup apply_layout >/dev/null
+run_setup check_layout >/dev/null
 
 [[ "$(< "${FIXTURE}/proc/irq/77/smp_affinity_list")" == "2" ]]
 [[ "$(< "${FIXTURE}/proc/irq/142/smp_affinity_list")" == "0-7" ]]
 [[ "$(< "${FIXTURE}/proc/irq/143/smp_affinity_list")" == "0-7" ]]
 [[ "$(< "${FIXTURE}/sys/devices/virtual/workqueue/cpumask")" == "0f" ]]
 
+# Live rules formerly duplicated by the C++ preflight live here.
+write_file "${FIXTURE}/sys/devices/system/cpu/online" $'0-6\n'
+expect_live_check_failure "missing online CPU7"
+write_file "${FIXTURE}/sys/devices/system/cpu/online" $'0-7\n'
+write_file "${FIXTURE}/sys/devices/system/cpu/isolated" $'6-7\n'
+expect_live_check_failure "wrong effective CPU isolation"
+write_file "${FIXTURE}/sys/devices/system/cpu/isolated" $'4-7\n'
+write_file "${FIXTURE}/proc/cmdline" \
+    $'isolcpus=domain,managed_irq,4-7 rcu_nocbs=6-7 irqaffinity=0-3\n'
+expect_live_check_failure "wrong RCU CPU set"
+write_file "${FIXTURE}/proc/cmdline" \
+    $'console=ttyS2 isolcpus=domain,managed_irq,4-7 rcu_nocbs=4-7 irqaffinity=0-3\n'
+for policy in 0 4 6; do
+    governor="${FIXTURE}/sys/devices/system/cpu/cpufreq/policy${policy}/scaling_governor"
+    write_file "${governor}" $'powersave\n'
+    expect_live_check_failure "policy${policy} powersave governor"
+    write_file "${governor}" $'performance\n'
+done
+write_file "${FIXTURE}/proc/irq/77/effective_affinity_list" $'3\n'
+expect_live_check_failure "wrong CAN effective IRQ affinity"
+write_file "${FIXTURE}/proc/irq/77/effective_affinity_list" $'2\n'
+driver_link="${FIXTURE}/sys/bus/platform/devices/fe1c0000.ethernet/driver"
+mv "${driver_link}" "${driver_link}.saved"
+expect_live_check_failure "missing EtherCAT platform driver"
+mkdir -p "${FIXTURE}/sys/bus/platform/drivers/rk_gmac-dwmac"
+ln -s "${FIXTURE}/sys/bus/platform/drivers/rk_gmac-dwmac" "${driver_link}"
+expect_live_check_failure "ordinary Linux Ethernet driver"
+rm "${driver_link}"
+mv "${driver_link}.saved" "${driver_link}"
+for missing_path in \
+    "${FIXTURE}/dev/EtherCAT0" \
+    "${FIXTURE}/sys/module/ec_master/parameters/main_devices" \
+    "${FIXTURE}/etc/NetworkManager/conf.d/99-ethercat-unmanaged.conf"; do
+    mv "${missing_path}" "${missing_path}.saved"
+    expect_live_check_failure "missing ${missing_path}"
+    mv "${missing_path}.saved" "${missing_path}"
+done
+run_setup check_layout >/dev/null
+
 write_file "${FIXTURE}/proc/cmdline" \
     $'isolcpus=domain,managed_irq,6-7 rcu_nocbs=6-7 irqaffinity=0-5\n'
-if run_setup check >/dev/null 2>&1; then
+if run_setup check_layout >/dev/null 2>&1; then
     echo "old CPU6-7 isolation layout unexpectedly passed" >&2
     exit 1
 fi
 write_file "${FIXTURE}/proc/cmdline" \
     $'isolcpus=domain,managed_irq,4-7 rcu_nocbs=4-7 irqaffinity=0-5\n'
-if run_setup check >/dev/null 2>&1; then
+if run_setup check_layout >/dev/null 2>&1; then
     echo "wrong default IRQ affinity unexpectedly passed" >&2
     exit 1
 fi
 write_file "${FIXTURE}/proc/cmdline" \
     $'console=ttyS2 isolcpus=domain,managed_irq,4-7 rcu_nocbs=4-7 irqaffinity=0-3\n'
 write_file "${FIXTURE}/sys/devices/virtual/workqueue/cpumask" $'3f\n'
-if run_setup check >/dev/null 2>&1; then
+if run_setup check_layout >/dev/null 2>&1; then
     echo "old workqueue mask unexpectedly passed" >&2
     exit 1
 fi
@@ -166,7 +179,7 @@ write_file "${FIXTURE}/sys/devices/virtual/workqueue/cpumask" $'0f\n'
 
 write_file "${FIXTURE}/etc/modprobe.d/ethercat.conf" \
     $'options ec_master main_devices=f6:fd:53:a0:a5:55\n'
-if run_setup check >/dev/null 2>&1; then
+if run_setup check_layout >/dev/null 2>&1; then
     echo "normal Linux NIC MAC unexpectedly passed as EtherCAT MAC" >&2
     exit 1
 fi
@@ -175,7 +188,7 @@ write_file "${FIXTURE}/etc/modprobe.d/ethercat.conf" \
 
 write_file "${FIXTURE}/sys/module/ec_master/parameters/main_devices" \
     $'f6:fd:53:a0:a5:55\n'
-if run_setup check >/dev/null 2>&1; then
+if run_setup check_layout >/dev/null 2>&1; then
     echo "stale loaded ec_master MAC unexpectedly passed" >&2
     exit 1
 fi
@@ -184,13 +197,13 @@ write_file "${FIXTURE}/sys/module/ec_master/parameters/main_devices" \
 
 write_file "${FIXTURE}/etc/NetworkManager/conf.d/99-ethercat-unmanaged.conf" \
     $'[keyfile]\nunmanaged-devices=mac:f6:fd:53:a0:a5:55\n'
-if run_internal_setup __check-nm-guard >/dev/null 2>&1; then
+if run_setup check_networkmanager_config fa:fd:53:a0:a5:55 >/dev/null 2>&1; then
     echo "wrong NetworkManager unmanaged MAC unexpectedly passed" >&2
     exit 1
 fi
 write_file "${FIXTURE}/etc/NetworkManager/conf.d/99-ethercat-unmanaged.conf" \
     $'[connection]\nunmanaged-devices=mac:fa:fd:53:a0:a5:55\n'
-if run_internal_setup __check-nm-guard >/dev/null 2>&1; then
+if run_setup check_networkmanager_config fa:fd:53:a0:a5:55 >/dev/null 2>&1; then
     echo "NetworkManager unmanaged MAC in the wrong section unexpectedly passed" >&2
     exit 1
 fi
@@ -200,14 +213,14 @@ write_file "${FIXTURE}/etc/NetworkManager/conf.d/99-ethercat-unmanaged.conf" \
 mv "${FIXTURE}/sys/class/net/eth0" "${FIXTURE}/sys/class/net/ecat0"
 write_file "${FIXTURE}/proc/interrupts" \
     $' 77: 0 0 0 0 0 0 0 0 GIC can0\n142: 0 0 0 0 0 0 0 0 GIC ecat0\n143: 0 0 0 0 0 0 0 0 GIC ecat0\n'
-run_setup check >/dev/null
+run_setup check_layout >/dev/null
 mv "${FIXTURE}/sys/class/net/ecat0" "${FIXTURE}/sys/class/net/eth0"
 write_file "${FIXTURE}/proc/interrupts" \
     $' 77: 0 0 0 0 0 0 0 0 GIC can0\n142: 0 0 0 0 0 0 0 0 GIC eth0\n143: 0 0 0 0 0 0 0 0 GIC eth0\n'
 
 write_file "${FIXTURE}/proc/cmdline" \
     $'isolcpus=domain,managed_irq,4-7 rcu_nocbs=4-7 irqaffinity=0-3 nohz_full=7\n'
-if run_setup check >/dev/null 2>&1; then
+if run_setup check_layout >/dev/null 2>&1; then
     echo "nohz_full unexpectedly passed" >&2
     exit 1
 fi
@@ -225,8 +238,8 @@ chmod 0640 "${FIXTURE}/etc/NetworkManager/conf.d/99-ethercat-unmanaged.conf"
 mv "${FIXTURE}/sys/class/net/eth0" "${FIXTURE}/sys/class/net/net-swap"
 mv "${FIXTURE}/sys/class/net/eth1" "${FIXTURE}/sys/class/net/eth0"
 mv "${FIXTURE}/sys/class/net/net-swap" "${FIXTURE}/sys/class/net/eth1"
-run_setup install
-run_setup install
+run_setup install_layout
+run_setup install_layout
 
 grep -q 'isolcpus=domain,managed_irq,4-7 rcu_nocbs=4-7 irqaffinity=0-3' \
     "${FIXTURE}/boot/uEnv/active.txt"

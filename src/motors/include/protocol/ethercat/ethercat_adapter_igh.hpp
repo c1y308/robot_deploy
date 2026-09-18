@@ -6,7 +6,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
-#include <atomic>
 
 namespace myactua {
 
@@ -76,15 +75,7 @@ private:
 
     std::array<ec_slave_config_t *, kNumSlaves> sc = {};
     std::array<ec_slave_config_state_t, kNumSlaves> sc_state = {};
-    std::array<std::atomic<bool>, kNumSlaves> slave_configured = {};
-
-    std::atomic<bool> health_master_link_up{false};
-    std::atomic<int> health_wc_state{static_cast<int>(EC_WC_ZERO)};
-    std::atomic<unsigned int> health_working_counter{0};
-
     unsigned int sync_ref_counter = 0;
-    bool is_initialized = false;
-    
     std::vector<SlaveOffsets> slave_offsets;
 
 
@@ -108,6 +99,7 @@ public:
     // 使用 IgH master 0，网卡绑定由系统主站配置决定。
     bool  init() override;
     void set_event_sink(void* context, RtEventSink sink) override;
+    // init 成功后才收发；启动等待结束后由 RT 线程独占访问，逻辑索引必须有效。
     void  send(int index, const TxPDO& pdo) override;
     RxPDO receive(int index) override;
 

@@ -9,7 +9,6 @@
 #include <cmath>
 #include <string>
 #include <utility>
-#include <vector>
 
 namespace inference::robot_detail {
 
@@ -97,17 +96,12 @@ void ActionProcessor::reset_runtime_state()
 
 
 bool ActionProcessor::build_motor_targets(
-    const std::vector<double>& target_q_model_rad,  // 模型计算出的关节目标角
-    std::vector<double>&       target_motor_rad,    // 电机目标角(引用传递)
+    const FixedModelTarget& target_q_model_rad,  // 模型计算出的关节目标角
+    std::array<double, motor_base::kMaxMotors>& target_motor_rad,    // 电机目标角(引用传递)
     std::string& error)
 {
     const int count = dof_count();
-    if (static_cast<int>(target_q_model_rad.size()) != count) {
-        error = "target size mismatch";
-        return false;
-    }
-
-    target_motor_rad.assign(static_cast<std::size_t>(count), 0.0);
+    target_motor_rad.fill(0.0);
 
     for (int model_index = 0; model_index < count; ++model_index) {
         
@@ -164,8 +158,8 @@ bool ActionProcessor::build_motor_targets(
 }
 
 bool ActionProcessor::apply_ankle_ik(
-    const std::vector<double>& target_q_model_rad,  // 模型计算出的关节目标角
-    std::vector<double>&       target_motor_rad,    // 电机目标角(引用)
+    const FixedModelTarget& target_q_model_rad,  // 模型计算出的关节目标角
+    std::array<double, motor_base::kMaxMotors>& target_motor_rad,    // 电机目标角(引用)
     const char*                ankle_name,
     const AnkleParallelMap&    ankle_map,           // 脚踝关节的映射关系
     AnkleIkState&              state,               // 脚踝IK求解器的状态
@@ -434,19 +428,13 @@ int ActionProcessor::dof_count() const noexcept
 }
 
 bool ActionProcessor::build_reset_start_model_pose(
-    const std::vector<double>& current_motor_q, // 当前电机真实角度(rad)
-    const std::vector<double>& target_model_q,  // 期望的模型关节角(作为fk初始值)
-    std::vector<double>&       start_model_q,   // 输出: 当前的模型关节角(rad)
+    const std::array<double, motor_base::kMaxMotors>& current_motor_q, // 当前电机真实角度(rad)
+    const FixedModelTarget& target_model_q,  // 期望的模型关节角(作为fk初始值)
+    FixedModelTarget& start_model_q,   // 输出: 当前的模型关节角(rad)
     std::string& error) const
 {
     const int count = dof_count();
-    if (static_cast<int>(current_motor_q.size()) != count ||
-        static_cast<int>(target_model_q.size())  != count) {
-        error = "reset pose size mismatch";
-        return false;
-    }
-
-    start_model_q.assign(static_cast<std::size_t>(count), 0.0);
+    start_model_q.fill(0.0);
 
     // 按照模型顺序遍历，将电机角度转换为模型关节角度
     for (int model_index = 0; model_index < count; ++model_index) {

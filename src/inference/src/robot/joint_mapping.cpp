@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <utility>
 
 namespace inference::robot_detail {
 
@@ -50,13 +49,6 @@ std::shared_ptr<const JointMapping> JointMapping::create(
 
 bool JointMapping::configure(int dof_count)
 {
-    dof_count_ = 0;
-    parallel_model_dof_.clear();
-    direct_motor_for_model_dof_.clear();
-    motor_to_model_direction_.clear();
-    left_ankle_parallel_ = {};
-    right_ankle_parallel_ = {};
-
     if (dof_count <= 0) {
         last_error_ = "dof_count must be positive";
         return false;
@@ -79,13 +71,12 @@ bool JointMapping::configure(int dof_count)
         return false;
     }
 
-    std::vector<unsigned char> seen_ankle_model_dof(
-        static_cast<std::size_t>(dof_count), 0U);
+    parallel_model_dof_.assign(static_cast<std::size_t>(dof_count), 0U);
     std::vector<unsigned char> seen_motor(
         static_cast<std::size_t>(dof_count), 0U);
 
     auto mark_model_dof = [&](int model_dof) {
-        auto& seen = seen_ankle_model_dof[static_cast<std::size_t>(model_dof)];
+        auto& seen = parallel_model_dof_[static_cast<std::size_t>(model_dof)];
         if (seen != 0U) {
             return false;
         }
@@ -121,8 +112,8 @@ bool JointMapping::configure(int dof_count)
     }
 
     const int direct_model_dof_count = static_cast<int>(
-        std::count(seen_ankle_model_dof.begin(),
-                   seen_ankle_model_dof.end(),
+        std::count(parallel_model_dof_.begin(),
+                   parallel_model_dof_.end(),
                    0U));
     if (static_cast<int>(config_.model_to_motor_index.size()) !=
         direct_model_dof_count) {
@@ -130,11 +121,10 @@ bool JointMapping::configure(int dof_count)
         return false;
     }
 
-    std::vector<int> next_direct_motor_for_model_dof(
-        static_cast<std::size_t>(dof_count), -1);
+    direct_motor_for_model_dof_.assign(static_cast<std::size_t>(dof_count), -1);
     int mapping_slot = 0;
     for (int model_index = 0; model_index < dof_count; ++model_index) {
-        if (seen_ankle_model_dof[static_cast<std::size_t>(model_index)] != 0U) {
+        if (parallel_model_dof_[static_cast<std::size_t>(model_index)] != 0U) {
             continue;
         }
 
@@ -151,7 +141,7 @@ bool JointMapping::configure(int dof_count)
             return false;
         }
 
-        next_direct_motor_for_model_dof[static_cast<std::size_t>(model_index)] =
+        direct_motor_for_model_dof_[static_cast<std::size_t>(model_index)] =
             motor_index;
     }
 
@@ -162,17 +152,7 @@ bool JointMapping::configure(int dof_count)
         return false;
     }
 
-    std::vector<int> next_motor_to_model_direction(
-        config_.motor_to_model_direction.begin(),
-        config_.motor_to_model_direction.end());
-
     dof_count_ = dof_count;
-    parallel_model_dof_ = std::move(seen_ankle_model_dof);
-    direct_motor_for_model_dof_ = std::move(next_direct_motor_for_model_dof);
-    motor_to_model_direction_ = std::move(next_motor_to_model_direction);
-    left_ankle_parallel_ = config_.left_ankle_parallel;
-    right_ankle_parallel_ = config_.right_ankle_parallel;
-    last_error_.clear();
     return true;
 }
 
@@ -188,7 +168,7 @@ int JointMapping::direct_motor_for_model_dof(int model_index) const
 
 int JointMapping::direction_for_motor(int motor_index) const
 {
-    return motor_to_model_direction_[static_cast<std::size_t>(motor_index)];
+    return config_.motor_to_model_direction[static_cast<std::size_t>(motor_index)];
 }
 
 }  // namespace inference::robot_detail

@@ -33,15 +33,25 @@ void expect_options(const robot_base::ThreadRuntimeOptions& options,
 int main()
 {
     const inference::RobotInterfaceConfig defaults;
-    expect(!defaults.runtime.enabled,
-           "generic RobotInterfaceConfig unexpectedly enables affinity");
+    expect(!defaults.runtime.require_host_preflight,
+           "generic RobotInterfaceConfig unexpectedly requires host preflight");
     expect(!defaults.runtime.require_process_memory_lock,
            "generic RobotInterfaceConfig unexpectedly requires memory locking");
-    expect(defaults.runtime.policy_main.stack_prefault_bytes == 0U,
-           "generic policy thread unexpectedly prefaults stack");
+    expect_options(defaults.runtime.policy_main, {},
+                   robot_base::ThreadSchedulingPolicy::INHERIT, 0, 0U, "default policy_main");
+    expect_options(defaults.runtime.motor_rt, {},
+                   robot_base::ThreadSchedulingPolicy::FIFO, 80, 0U, "default motor_rt");
+    expect_options(defaults.runtime.policy_command, {},
+                   robot_base::ThreadSchedulingPolicy::INHERIT, 0, 0U, "default policy_command");
+    expect_options(defaults.runtime.imu_reader, {},
+                   robot_base::ThreadSchedulingPolicy::INHERIT, 0, 0U, "default imu_reader");
+    expect_options(defaults.runtime.background, {},
+                   robot_base::ThreadSchedulingPolicy::INHERIT, 0, 0U, "default background");
+    expect(defaults.runtime.torch_intra_op_threads == 0, "default Torch intra-op mismatch");
+    expect(defaults.runtime.torch_inter_op_threads == 0, "default Torch inter-op mismatch");
+    expect(defaults.runtime.openblas_threads == 0, "default OpenBLAS mismatch");
 
     const auto profile = inference::make_rk3588_runtime_profile();
-    expect(profile.enabled, "RK3588 profile is disabled");
     expect(profile.require_host_preflight, "RK3588 preflight is disabled");
     expect(profile.require_process_memory_lock,
            "RK3588 process memory lock is disabled");

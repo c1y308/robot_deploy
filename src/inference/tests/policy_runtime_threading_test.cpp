@@ -94,6 +94,7 @@ int main()
     config.model_path = ROBOT_TEST_POLICY_PATH;
     config.gait.enabled = true;
     inference::PolicyRuntime runtime;
+    expect(!runtime.is_loaded(), "new runtime reports a loaded model");
 
     const std::vector<int> wrong_cpus =
         cpus.size() > 1U
@@ -103,6 +104,7 @@ int main()
            "PolicyRuntime accepted incorrect creator affinity");
     expect(runtime.last_error().find("affinity") != std::string::npos,
            "incorrect creator affinity failure was not identified");
+    expect(!runtime.is_loaded(), "failed load retained a model");
 
     robot_base::ThreadRuntimeOptions main_options;
     main_options.cpu_ids = cpus;
@@ -113,6 +115,7 @@ int main()
 
     const std::set<pid_t> tasks_before = process_task_ids();
     expect(runtime.load(config, 2, 1, 1, cpus), runtime.last_error());
+    expect(runtime.is_loaded(), "successful load did not retain a model");
     const std::set<pid_t> tasks_after = process_task_ids();
     std::size_t new_workers = 0U;
     for (const pid_t task_id : tasks_after) {
@@ -138,6 +141,9 @@ int main()
            "OpenMP dynamic scheduling was not disabled");
 
     runtime.shutdown();
+    expect(!runtime.is_loaded(), "shutdown retained a model");
+    runtime.shutdown();
+    expect(!runtime.is_loaded(), "repeated shutdown retained a model");
     std::cout << "policy_runtime_threading_test passed, verified "
               << new_workers << " new workers\n";
     return 0;

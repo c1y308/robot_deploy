@@ -1,6 +1,5 @@
 #include "config/deploy_config.hpp"
 
-#include "robot/joint_mapping.hpp"
 #include "tool/tool.hpp"
 
 #include <yaml-cpp/yaml.h>
@@ -10,7 +9,6 @@
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
-#include <memory>
 #include <set>
 #include <string>
 #include <utility>
@@ -406,12 +404,6 @@ private:
             joint_ids_map.begin(),
             joint_ids_map.begin() + kDirectDriveDofCount);
 
-        std::string mapping_error;
-        mapping_ = robot_detail::JointMapping::create(
-            static_cast<int>(kDof), config_.joint_mapping, mapping_error);
-        if (!mapping_) {
-            return fail("joint mapping is invalid: " + mapping_error, error);
-        }
         return true;
     }
 
@@ -850,7 +842,6 @@ private:
 
     std::string root_dir_;
     RobotInterfaceConfig& config_;
-    std::shared_ptr<const robot_detail::JointMapping> mapping_;
     std::array<int, kDof> model_to_motor_index_{};
     std::array<double, kDof> root_default_joint_pos_{};
 };

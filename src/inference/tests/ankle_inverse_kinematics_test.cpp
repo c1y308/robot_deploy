@@ -8,11 +8,11 @@
 #include <csignal>
 #include <iostream>
 #include <thread>
-#include <vector>
 
 namespace {
 
 constexpr int kDof = 12;
+using JointTargets = std::array<double, kDof>;
 constexpr int kLeftUpperMotor = 4;
 constexpr int kLeftLowerMotor = 5;
 constexpr int kRightUpperMotor = 10;
@@ -55,7 +55,7 @@ void signal_handler(int)
     g_stop_requested.store(true);
 }
 
-bool finite_vector(const std::vector<double>& values)
+bool finite_targets(const JointTargets& values)
 {
     for (double value : values) {
         if (!std::isfinite(value)) {
@@ -101,16 +101,14 @@ inference::MotorConfig make_motor_config()
 }
 
 bool read_current_motor_targets(inference::RobotMotorSession& motors,
-                                std::vector<double>& target_motor_rad)
+                                JointTargets& target_motor_rad)
 {
     const inference::MotorStateSnapshot snapshot = motors.get_motor_snapshot();
-    if (static_cast<int>(snapshot.position_rad.size()) != kDof) {
-        std::cerr << "[ANKLE_IK_TEST] Expected " << kDof
-                  << " motor positions, got "
-                  << snapshot.position_rad.size() << ".\n";
+    if (snapshot.timestamp_ns <= 0) {
+        std::cerr << "[ANKLE_IK_TEST] Initial motor feedback is not ready.\n";
         return false;
     }
-    if (!finite_vector(snapshot.position_rad)) {
+    if (!finite_targets(snapshot.position_rad)) {
         std::cerr << "[ANKLE_IK_TEST] Initial motor positions contain non-finite values.\n";
         return false;
     }
@@ -119,7 +117,7 @@ bool read_current_motor_targets(inference::RobotMotorSession& motors,
     return true;
 }
 
-void set_non_ankle_zero_targets(std::vector<double>& target_motor_rad)
+void set_non_ankle_zero_targets(JointTargets& target_motor_rad)
 {
     for (int motor_index : kNonAnkleMotors) {
         target_motor_rad[motor_index] = 0.0;
@@ -127,7 +125,7 @@ void set_non_ankle_zero_targets(std::vector<double>& target_motor_rad)
 }
 
 bool send_initial_non_ankle_zero(inference::RobotMotorSession& motors,
-                                 std::vector<double>& target_motor_rad)
+                                 JointTargets& target_motor_rad)
 {
     set_non_ankle_zero_targets(target_motor_rad);
     if (!motors.apply_targets_rad(target_motor_rad)) {
@@ -141,7 +139,7 @@ bool solve_pose_targets(double roll_rad,
                         double pitch_rad,
                         ankle_motor_ik::Solver& left_solver,
                         ankle_motor_ik::Solver& right_solver,
-                        std::vector<double>& target_motor_rad)
+                        JointTargets& target_motor_rad)
 {
     const ankle_motor_ik::MotorAngles left = left_solver.solve(roll_rad, pitch_rad);
     const ankle_motor_ik::MotorAngles right = right_solver.solve(roll_rad, pitch_rad);
@@ -177,7 +175,7 @@ bool send_pose_target(inference::RobotMotorSession& motors,
                       double pitch_rad,
                       ankle_motor_ik::Solver& left_solver,
                       ankle_motor_ik::Solver& right_solver,
-                      std::vector<double>& target_motor_rad)
+                      JointTargets& target_motor_rad)
 {
     if (!solve_pose_targets(roll_rad,
                             pitch_rad,
@@ -198,7 +196,7 @@ bool run_transition(inference::RobotMotorSession& motors,
                     const PoseTarget& end_pose,
                     ankle_motor_ik::Solver& left_solver,
                     ankle_motor_ik::Solver& right_solver,
-                    std::vector<double>& target_motor_rad)
+                    JointTargets& target_motor_rad)
 {
     auto next_tick = std::chrono::steady_clock::now();
     for (int step = 1; step <= kTransitionSteps; ++step) {
@@ -231,7 +229,7 @@ bool hold_pose(inference::RobotMotorSession& motors,
                const PoseTarget& pose,
                ankle_motor_ik::Solver& left_solver,
                ankle_motor_ik::Solver& right_solver,
-               std::vector<double>& target_motor_rad)
+               JointTargets& target_motor_rad)
 {
     auto next_tick = std::chrono::steady_clock::now();
     for (int step = 0; step < kHoldSteps; ++step) {
@@ -268,7 +266,7 @@ bool hold_pose(inference::RobotMotorSession& motors,
 bool settle_zero_pitch(inference::RobotMotorSession& motors,
                        ankle_motor_ik::Solver& left_solver,
                        ankle_motor_ik::Solver& right_solver,
-                       std::vector<double>& target_motor_rad)
+                       JointTargets& target_motor_rad)
 {
     auto next_tick = std::chrono::steady_clock::now();
     for (int step = 0; step < kZeroSettleSteps; ++step) {
@@ -322,7 +320,7 @@ int main()
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    std::vector<double> target_motor_rad;
+    JointTargets target_motor_rad{};
     if (!read_current_motor_targets(motors, target_motor_rad)) {
         if (!motors.deinitialize()) {
             std::cerr << "Stop not confirmed; RT retained. Destruction will keep waiting.\n";

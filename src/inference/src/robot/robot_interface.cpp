@@ -17,7 +17,6 @@
 #include <string>
 #include <thread>
 #include <utility>
-#include <vector>
 #include <sys/mman.h>
 
 
@@ -41,14 +40,6 @@ RobotInterface::~RobotInterface() {
 
 /* 编排机器人完整运行态：电机、策略、IMU 和站立姿态复位。 */
 bool RobotInterface::initialize() {
-
-    // 如果已经初始化，直接返回成功。
-    if (is_initialized()) {
-        return true;
-    }
-
-    // 如果上次初始化失败，先尝试释放资源。
-    if (shutdown() != ShutdownResult::Confirmed) return false;
 
     if (!initialize_model_processors()) {
         shutdown();
@@ -82,18 +73,18 @@ bool RobotInterface::initialize() {
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
     // 恢复到初始位置
-    std::vector<double> startup_hold_target_motor_rad;
+    std::array<double, motor_base::kMaxMotors> startup_hold_target_motor_rad{};
     if (!reset_joints(startup_hold_target_motor_rad)) {
         shutdown();
         return false;
     }
 
     // 初始化完成
-    initialized_.store(true);
+    initialized_ = true;
 
     // 开启策略命令线程
     if (!worker_.start(*action_processor_, std::move(startup_hold_target_motor_rad))) {
-        initialized_.store(false);
+        initialized_ = false;
         shutdown();
         return false;
     }
@@ -105,7 +96,7 @@ bool RobotInterface::initialize() {
 /* 先请求并确认停止；仅在持续通信故障时允许未确认释放。 */
 ShutdownResult RobotInterface::shutdown() {
     const auto request = motor_session_.request_stop();
-    initialized_.store(false);
+    initialized_ = false;
     worker_.request_stop();
 
     bool stop_confirmed = true;
@@ -166,37 +157,14 @@ bool RobotInterface::initialize_model_processors() {
     return true;
 }
 
-/* 加载 TorchScript 策略模型，并重置上一周期动作和观测历史。 */
+/* 启动时加载 TorchScript 策略模型并开启日志记录。 */
 bool RobotInterface::load_policy() {
-    // 加载前先清掉旧策略与旧 recorder session，避免失败后残留旧运行状态。
-    policy_runtime_.shutdown();
-
-    inference_recorder_.stop();
-    inference_recorder_failed_ = false;
-
-    initialize_policy_runtime_state();
-
-    // 配置运行时线程数和 CPU 亲和性
-    const int intra_op_threads = config_.runtime.enabled
-                                     ? config_.runtime.torch_intra_op_threads
-                                     : 0;
-
-    const int inter_op_threads = config_.runtime.enabled
-                                     ? config_.runtime.torch_inter_op_threads
-                                     : 0;
-
-    const int openblas_threads = config_.runtime.enabled
-                                     ? config_.runtime.openblas_threads
-                                     : 0;
-
-    // 加载模型
+    // 按配置的线程数和 CPU 集合加载模型；零线程数和空 CPU 集合保留默认行为。
     if (!policy_runtime_.load(config_.policy,
-                              intra_op_threads,
-                              inter_op_threads,
-                              openblas_threads,
-                              config_.runtime.enabled
-                                  ? config_.runtime.policy_main.cpu_ids
-                                  : std::vector<int>{})) {
+                              config_.runtime.torch_intra_op_threads,
+                              config_.runtime.torch_inter_op_threads,
+                              config_.runtime.openblas_threads,
+                              config_.runtime.policy_main.cpu_ids)) {
         std::cerr << "[RobotInterface] load_policy failed: "
                   << policy_runtime_.last_error() << "\n";
         return false;
@@ -236,21 +204,14 @@ bool RobotInterface::load_policy() {
         config_.recorder.policy_observation_size =
             policy_observation::observation_size(config_.policy.gait.enabled);
 
-        const robot_base::ThreadRuntimeOptions recorder_thread =
-            config_.runtime.enabled ? config_.runtime.background
-                                    : robot_base::ThreadRuntimeOptions{};
-
-        if (!inference_recorder_.start(config_.recorder, recorder_thread)) {
+        if (!inference_recorder_.start(config_.recorder, config_.runtime.background)) {
             std::cerr << "[RobotInterface] failed to open inference log: "
                       << inference_recorder_.last_error() << "\n";
             inference_recorder_failed_ = true;
-            if (config_.runtime.enabled) {
-                return false;
-            }
-        } else {
-            std::cout << "[RobotInterface] inference log: "
-                      << inference_recorder_.log_path() << "\n";
+            return false;
         }
+        std::cout << "[RobotInterface] inference log: "
+                  << inference_recorder_.log_path() << "\n";
 
     }
     return true;
@@ -259,43 +220,32 @@ bool RobotInterface::load_policy() {
 
 /* 保存策略使用的机器人目标速度指令，顺序为 [vx, vy, yaw_rate]。 */
 void RobotInterface::set_target_velocity(double vx, double vy, double yaw_rate) {
-    std::lock_guard<std::mutex> lock(target_velocity_mutex_);
     target_velocity_ = {vx, vy, yaw_rate};
 }
 
 /* 获取当前保存的机器人目标速度指令。 */
 std::array<double, 3> RobotInterface::get_target_velocity() const {
-    std::lock_guard<std::mutex> lock(target_velocity_mutex_);
     return target_velocity_;
 }
 
 
 /* 按平滑插值将关节恢复到 default_joint_pos_rad 初始姿态。 */
-bool RobotInterface::reset_joints(std::vector<double>& final_target_motor_rad) {
-    if (!motor_session_.is_initialized()) {
-        return false;
-    }
-
+bool RobotInterface::reset_joints(
+    std::array<double, motor_base::kMaxMotors>& final_target_motor_rad) {
     if (!motor_session_.motion_enabled()) {
-        std::cerr << "[RobotInterface] reset_joints rejected: motors are stopped. "
-                  << "Call initialize() first.\n";
+        std::cerr << "[RobotInterface] reset_joints rejected: motors are stopped.\n";
         return false;
     }
     
-    if (!action_processor_) {
-        std::cerr << "[RobotInterface] reset_joints rejected: model processors are not initialized. "
-                  << "Call initialize() first.\n";
+    const auto& target_model_q = config_.action.default_joint_pos_rad;
+    const MotorStateSnapshot motor_state = motor_session_.get_motor_snapshot();
+    if (motor_state.timestamp_ns <= 0 || !robot_base::finite_array(motor_state.position_rad)) {
+        std::cerr << "[RobotInterface] reset_joints rejected: motor feedback is invalid.\n";
         return false;
     }
-
-    const std::vector<double> target_model_q(
-        config_.action.default_joint_pos_rad.begin(),
-         config_.action.default_joint_pos_rad.end());
-
-    const std::vector<double> current_motor_q = motor_session_.get_joint_q();
-    std::vector<double> start_model_q;
+    std::array<double, policy_observation::kDof> start_model_q{};
     std::string error;
-    if (!action_processor_->build_reset_start_model_pose(current_motor_q,
+    if (!action_processor_->build_reset_start_model_pose(motor_state.position_rad,
                                                          target_model_q,
                                                          start_model_q,
                                                          error)) {
@@ -310,12 +260,12 @@ bool RobotInterface::reset_joints(std::vector<double>& final_target_motor_rad) {
         static_cast<std::int64_t>(std::llround(
             config_.safety.control_command_timeout_ms * 500.0)));
     const auto dt = std::chrono::microseconds(reset_period_us);
-    std::vector<double> target_rad;
+    std::array<double, motor_base::kMaxMotors> target_rad{};
+    std::array<double, policy_observation::kDof> q_cmd_model{};
 
     for (int k = 1; k <= ramp_steps; ++k) {
         const double alpha = static_cast<double>(k) / static_cast<double>(ramp_steps);
-        std::vector<double> q_cmd_model(config_.motor.num_motors, 0.0);
-        for (int i = 0; i < config_.motor.num_motors; ++i) {
+        for (std::size_t i = 0; i < q_cmd_model.size(); ++i) {
             q_cmd_model[i] = start_model_q[i] * (1.0 - alpha) + target_model_q[i] * alpha;
         }
         if (!action_processor_->build_motor_targets(q_cmd_model, target_rad, error)) {
@@ -359,13 +309,12 @@ void RobotInterface::reset_policy_command_state() noexcept
 {
     policy_step_phase_ = PolicyStepPhase::Idle;
     policy_step_phase_started_ns_ = 0;
-    next_policy_seq_ = 1;
     last_policy_target_published_ns_ = 0;
     first_policy_inference_started_ns_.store(0, std::memory_order_release);
     worker_.reset_channels();
 }
 
-// 检测传感器的时间戳是否过期或不一致
+// 独立 latest-value 数据源只检查各自的时间戳和年龄。
 bool RobotInterface::validate_policy_sensor_timing(
     std::int64_t motor_timestamp_ns,
     std::int64_t imu_timestamp_ns,
@@ -384,15 +333,12 @@ bool RobotInterface::validate_policy_sensor_timing(
 
     const std::int64_t imu_age_ns   = now_ns - imu_timestamp_ns;
     const std::int64_t motor_age_ns = now_ns - motor_timestamp_ns;
-    const std::int64_t skew_ns = imu_timestamp_ns - motor_timestamp_ns;
 
     if (imu_age_ns   > robot_base::seconds_to_ns(config_.sensor_guard.max_imu_sample_age_s) ||
-        motor_age_ns > robot_base::seconds_to_ns(config_.sensor_guard.max_motor_sample_age_s) ||
-        robot_base::abs_ns(skew_ns) > robot_base::seconds_to_ns(config_.sensor_guard.max_sensor_state_skew_s)) {
+        motor_age_ns > robot_base::seconds_to_ns(config_.sensor_guard.max_motor_sample_age_s)) {
         error = "sensor timing guard failed: imu_age_us=" +
             std::to_string(robot_base::ns_to_us(imu_age_ns)) +
-            ", motor_age_us=" + std::to_string(robot_base::ns_to_us(motor_age_ns)) +
-            ", imu_motor_skew_us=" + std::to_string(robot_base::ns_to_us(skew_ns));
+            ", motor_age_us=" + std::to_string(robot_base::ns_to_us(motor_age_ns));
         return false;
     }
     return true;
@@ -404,7 +350,7 @@ std::uint64_t RobotInterface::begin_policy_inference(std::int64_t now_ns) noexce
     if (first_policy_inference_started_ns_.load(std::memory_order_relaxed) == 0) {
         first_policy_inference_started_ns_.store(now_ns, std::memory_order_release);
     }
-    return next_policy_seq_++;
+    return observation_builder_->frame_index() + 1;
 }
 
 
@@ -428,6 +374,9 @@ RobotInterface::PolicyResultAdmission RobotInterface::admit_policy_result(
 
 void RobotInterface::record_completed_policy_frame()
 {
+    if (!config_.recorder.enabled) {
+        return;
+    }
     InferenceRecord record;
     if (worker_.try_consume_completed_record(record)) {
         record_policy_frame(record);
@@ -476,7 +425,6 @@ bool RobotInterface::policy_step() {
 
     set_policy_step_phase(PolicyStepPhase::SensorSnapshot);
     const MotorStateSnapshot motor_state = motor_session_.get_motor_snapshot();
-    const std::size_t motor_count = static_cast<std::size_t>(config_.motor.num_motors);
 
     AhrsStateSnapshot ahrs_state;
     if (!imu_session_.get_ahrs_snapshot(ahrs_state)) {
@@ -551,38 +499,43 @@ bool RobotInterface::policy_step() {
     const PolicyResultAdmission admission =
         admit_policy_result(observation_time_ns, decision_now_ns);
 
-    // 两项年龄固定在 decision_now；后续日志处理不追溯改变准入结论。
-    InferenceRecord record;
-    record.frame_index = observation_builder_->frame_index();
-    record.motor_sample_timestamp_ns = motor_state.timestamp_ns;
-    for (std::size_t i = 0; i < motor_count; ++i) {
-        record.rx_pos_rad[i]     = motor_state.position_rad[i];
-        record.rx_vel_rad_s[i]   = motor_state.velocity_rad_s[i];
-        record.torque_percent[i] = motor_state.torque_percent[i];
-        record.comm_ok[i]        = motor_state.comm_ok[i];
-        record.enabled[i]        = motor_state.enabled[i];
-    }
-    record.imu_sample_timestamp_ns = ahrs_state.sample_timestamp_ns;
-    record.imu_receive_timestamp_ns = imu_receive_timestamp_ns;
-    record.motor_age_us = robot_base::ns_to_us(timing_now_ns - motor_state.timestamp_ns);
-    record.inference_start_ns = policy_result.inference_start_ns;
-    record.inference_end_ns   = policy_result.inference_end_ns;
-    record.policy_seq = policy_seq;
-    record.policy_observation_time_ns = observation_time_ns;
-    record.policy_observation = policy_observation;
-    record.raw_action         = policy_result.raw_action;
-    record.target_q_model_rad = target_q_model_rad;
-    record.obs_to_action_age_us  = admission.obs_to_action_age_us;
-    record.target_hold_age_us    = admission.target_hold_age_us;
-    record.policy_result_dropped = admission.dropped;
+    // 两项年龄固定在 decision_now；仅启用 recorder 时填写非控制日志。
+    const auto frame_index = observation_builder_->frame_index();
+    const auto fill_log_record = [&](InferenceRecord& record) {
+        record.frame_index = frame_index;
+        record.motor_sample_timestamp_ns = motor_state.timestamp_ns;
+        record.rx_pos_rad     = motor_state.position_rad;
+        record.rx_vel_rad_s   = motor_state.velocity_rad_s;
+        record.torque_percent = motor_state.torque_percent;
+        record.comm_ok        = motor_state.comm_ok;
+        record.enabled        = motor_state.enabled;
+        record.imu_sample_timestamp_ns = ahrs_state.sample_timestamp_ns;
+        record.imu_receive_timestamp_ns = imu_receive_timestamp_ns;
+        record.motor_age_us = robot_base::ns_to_us(timing_now_ns - motor_state.timestamp_ns);
+        record.inference_start_ns = policy_result.inference_start_ns;
+        record.inference_end_ns   = policy_result.inference_end_ns;
+        record.policy_seq = policy_seq;
+        record.policy_observation_time_ns = observation_time_ns;
+        record.policy_observation = policy_observation;
+        record.raw_action = policy_result.raw_action;
+        record.target_q_model_rad = target_q_model_rad;
+        record.obs_to_action_age_us = admission.obs_to_action_age_us;
+        record.target_hold_age_us = admission.target_hold_age_us;
+        record.policy_result_dropped = admission.dropped;
+    };
 
     // 丢弃的结果不发布，不刷新发布时间。
     if (!admission.dropped) {
-        robot_detail::PolicyTargetFrame target;
-        target.policy_seq       = policy_seq;
-        target.inference_record = record;
-        last_policy_target_published_ns_ = worker_.publish_target(target);
-        observation_builder_->commit_policy_action(record.raw_action);
+        auto& record = worker_.acquire_target_write_slot().inference_record;
+        record.policy_seq = policy_seq;
+        record.target_q_model_rad = target_q_model_rad;
+        // worker 的目标超时诊断也使用该年龄。
+        record.obs_to_action_age_us = admission.obs_to_action_age_us;
+        if (config_.recorder.enabled) {
+            fill_log_record(record);
+        }
+        last_policy_target_published_ns_ = worker_.publish_target();
+        observation_builder_->commit_policy_action(policy_result.raw_action);
     }
 
     // 推进观测帧计数；丢弃结果也会推进。
@@ -591,8 +544,9 @@ bool RobotInterface::policy_step() {
     // 尝试收取 worker 完成的记录。
     record_completed_policy_frame();
 
-    // 如果本次结果被丢弃，直接提交本次记录(worker 线程无法获取到丢弃的记录，因为没有在SPSC通道发布)
-    if (record.policy_result_dropped) {
+    if (admission.dropped && config_.recorder.enabled) {
+        InferenceRecord record;
+        fill_log_record(record);
         record_policy_frame(record);
     }
     set_policy_step_phase(PolicyStepPhase::Idle);
@@ -604,7 +558,7 @@ bool RobotInterface::handle_policy_step_failure(const std::string& message) {
 
     motor_session_.request_stop();
 
-    initialized_.store(false);
+    initialized_ = false;
 
     worker_.request_stop();
 

@@ -17,6 +17,7 @@
 #include <mutex>
 #include <sched.h>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace motor_base {
@@ -27,6 +28,17 @@ struct MotorControllerTimingTestAccess {
         ++controller.discrete_cmd_tick_;
         controller.process_queued_commands();
         controller.service_discrete_commands();
+        controller.realtime_cycle_callback();
+    }
+
+    static void base_cycle(MotorControllerBase& controller)
+    {
+        ++controller.discrete_cmd_tick_;
+        controller.service_stop_requests(true);
+        controller.process_queued_commands();
+        controller.service_discrete_commands();
+        controller.process_latest_setpoint_commands();
+        controller.service_stop_requests(false);
         controller.realtime_cycle_callback();
     }
 
@@ -841,8 +853,9 @@ bool run_whole_body_reinitialization_scenario()
 class RecordingMotorController : public motor_base::MotorControllerBase {
 public:
     explicit RecordingMotorController(
-        const motor_base::MotorControllerBase::RealtimeOptions& options)
-        : MotorControllerBase(1, options)
+        const motor_base::MotorControllerBase::RealtimeOptions& options,
+        std::size_t motor_count = 1)
+        : MotorControllerBase(motor_count, options)
     {
     }
 
@@ -880,6 +893,12 @@ public:
         return applied_setpoints_;
     }
 
+    std::vector<std::pair<int, motor_base::DiscreteCommand>> applied_discrete_commands() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return applied_discrete_commands_;
+    }
+
     std::size_t safety_stop_count() const
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -905,14 +924,15 @@ protected:
     }
 
     void apply_discrete_command_impl(
-        int,
+        int motor_index,
         const motor_base::DiscreteCommand& cmd) override
     {
+        std::lock_guard<std::mutex> lock(mutex_);
+        applied_discrete_commands_.emplace_back(motor_index, cmd);
         if (cmd.type == motor_base::DiscreteCommandType::STOP) {
-            std::lock_guard<std::mutex> lock(mutex_);
             ++safety_stop_count_;
-            cv_.notify_all();
         }
+        cv_.notify_all();
     }
 
     motor_base::DiscreteCommandEvaluation evaluate_discrete_command_impl(
@@ -927,6 +947,7 @@ private:
     std::condition_variable cv_;
     std::uint64_t cycles_{0};
     std::vector<motor_base::ControlCommand> applied_setpoints_;
+    std::vector<std::pair<int, motor_base::DiscreteCommand>> applied_discrete_commands_;
     std::size_t safety_stop_count_{0};
 };
 
@@ -942,6 +963,138 @@ motor_base::MotorControllerBase::RealtimeOptions latest_channel_test_options()
     options.rt_event_queue_capacity = 16;
     options.status_publish_period_ms = 1;
     return options;
+}
+
+bool run_monitor_latest_snapshot_scenario()
+{
+    motor_base::MotorStatusMonitor<myactua::MotorState> monitor;
+    monitor.configure(2, {});
+    monitor.set_print_info({1, 0});
+    std::vector<myactua::MotorState> printed;
+    std::vector<int> printed_ids;
+    int calls = 0;
+    monitor.set_status_printer([&](const auto& status, const auto& ids) {
+        printed = status;
+        printed_ids = ids;
+        ++calls;
+    });
+    for (const double position : {0.1, 0.2}) {
+        auto* slot = monitor.acquire_write_slot();
+        for (int motor = 0; motor < 2; ++motor) {
+            slot[motor] = myactua::MotorState(motor);
+            slot[motor].observed.position_rad = position + motor;
+            slot[motor].comm_ok = true;
+            slot[motor].comm_offline_total_count = 7;
+        }
+        monitor.publish_written();
+    }
+    if (!expect(calls == 0, "publishing diagnostics must never invoke the printer")) return false;
+    monitor.print_once();
+    if (!expect(calls == 1 && printed.size() == 2 && printed_ids == std::vector<int>({1, 0}) &&
+                    printed[0].motor_index == 0 && printed[1].motor_index == 1 &&
+                    printed[0].observed.position_rad == 0.2 && printed[1].observed.position_rad == 1.2 &&
+                    printed[1].comm_ok && printed[1].comm_offline_total_count == 7,
+                "monitor must print the newest complete diagnostics directly")) return false;
+    monitor.print_once();
+    return expect(calls == 2 && printed[0].observed.position_rad == 0.2,
+                  "monitor must retain the latest snapshot between RT publications");
+}
+
+bool run_discrete_routing_scenario()
+{
+    using namespace motor_base;
+    RecordingMotorController controller(latest_channel_test_options(), 2);
+    for (const auto index : {-2, 2}) {
+        if (!expect(controller.send_discrete_command(ControlCommand::restart(index)).status ==
+                        CommandSubmitStatus::INVALID_COMMAND,
+                    "discrete submission must reject invalid target indices")) return false;
+    }
+    auto mode = ControlCommand::set_mode(MotorControlMode::TORQUE, 1);
+    // Unrelated continuous fields must not affect the discrete path.
+    mode.payload_valid = false;
+    mode.payload_size = kMaxMotorCommandSetpoints;
+    mode.setpoints.fill(123.0);
+    const auto mode_result = controller.send_discrete_command(mode);
+    const auto restart_result = controller.send_discrete_command(ControlCommand::restart());
+    if (!expect(mode_result.status == CommandSubmitStatus::ACCEPTED && mode_result.command_id &&
+                    restart_result.status == CommandSubmitStatus::ACCEPTED && restart_result.command_id,
+                "single-axis mode and all-axis restart should be accepted")) return false;
+    for (int tick = 0; tick < 100; ++tick) {
+        MotorControllerTimingTestAccess::base_cycle(controller);
+    }
+    const auto applied = controller.applied_discrete_commands();
+    std::array<bool, 2> restarted{};
+    int mode_count = 0;
+    for (const auto& [motor_index, command] : applied) {
+        if (command.type == DiscreteCommandType::SET_MODE) {
+            ++mode_count;
+            if (!expect(motor_index == 1 && command.mode == MotorControlMode::TORQUE &&
+                            command.command_id == *mode_result.command_id,
+                        "discrete queue lost single-axis target, mode or ID")) return false;
+        } else if (command.type == DiscreteCommandType::RESTART) {
+            restarted[static_cast<std::size_t>(motor_index)] = true;
+            if (!expect(command.command_id == *restart_result.command_id,
+                        "all-axis restart lost its submission ID")) return false;
+        }
+    }
+    return expect(mode_count == 1 && restarted[0] && restarted[1] &&
+                      controller.get_discrete_command_result(*mode_result.command_id) ==
+                          DiscreteCommandResult::SUCCEEDED &&
+                      controller.get_discrete_command_result(*restart_result.command_id) ==
+                          DiscreteCommandResult::SUCCEEDED,
+                  "discrete routing or result tracking changed");
+}
+
+bool run_stop_setpoint_retirement_scenario()
+{
+    using namespace motor_base;
+    for (const bool whole_body : {false, true}) {
+        RecordingMotorController controller(latest_channel_test_options(), 2);
+        auto active = with_timing(ControlCommand::set_position_targets_rad({0.2, 0.3}));
+        active.timing.source_policy_seq = 7;
+        active.timing.valid_until_ns = active.timing.produced_at_ns + 100'000'000;
+        if (!expect(controller.send_policy_setpoint(active).status == CommandSubmitStatus::ACCEPTED,
+                    "retirement setup target should be accepted")) return false;
+        MotorControllerTimingTestAccess::base_cycle(controller);
+        const auto stop = controller.send_discrete_command(ControlCommand::stop(
+            whole_body ? ControlCommand::kAllMotors : 0));
+        if (!expect(stop.status == CommandSubmitStatus::ACCEPTED && stop.command_id,
+                    "retirement STOP should be accepted")) return false;
+        if (whole_body) {
+            const auto queued = with_timing(ControlCommand::set_position_targets_rad({0.8, 0.9}));
+            if (!expect(controller.send_policy_setpoint(queued).status == CommandSubmitStatus::ACCEPTED,
+                        "queued target should reach the stopped consumer")) return false;
+        }
+        MotorControllerTimingTestAccess::base_cycle(controller);
+        std::this_thread::sleep_until(std::chrono::steady_clock::time_point(
+            std::chrono::nanoseconds(active.timing.valid_until_ns + 1'000'000)));
+        for (int tick = 0; tick < 40; ++tick) {
+            MotorControllerTimingTestAccess::base_cycle(controller);
+        }
+        if (!expect(controller.terminal_fault_latched() == !whole_body &&
+                        controller.applied_setpoints().size() == 1,
+                    "all-axis STOP must retire and drain targets; partial STOP must retain expiry monitoring")) return false;
+        if (whole_body) {
+            if (!expect(controller.get_discrete_command_result(*stop.command_id) ==
+                            DiscreteCommandResult::SUCCEEDED,
+                        "retirement STOP confirmation was lost")) return false;
+            const auto restart = controller.send_discrete_command(ControlCommand::restart());
+            if (!expect(restart.status == CommandSubmitStatus::ACCEPTED,
+                        "ordinary whole-body STOP should permit explicit restart")) return false;
+            MotorControllerTimingTestAccess::base_cycle(controller);
+            auto fresh = with_timing(ControlCommand::set_position_targets_rad({0.4, 0.5}));
+            fresh.timing.source_policy_seq = 8;
+            if (!expect(controller.send_policy_setpoint(fresh).status == CommandSubmitStatus::ACCEPTED,
+                        "restart should accept a fresh target")) return false;
+            MotorControllerTimingTestAccess::base_cycle(controller);
+            const auto applied = controller.applied_setpoints();
+            if (!expect(!controller.terminal_fault_latched() && applied.size() == 2 &&
+                            applied.back().timing.source_policy_seq == 8 &&
+                            applied.back().setpoints[0] == 0.4 && applied.back().setpoints[1] == 0.5,
+                        "restart reused a retired target or latched its expired deadline")) return false;
+        }
+    }
+    return true;
 }
 
 bool run_post_sample_publication_scenario()
@@ -1091,6 +1244,9 @@ bool run_b1_provenance_and_deadline_scenarios()
 int main()
 {
     if (!run_wkc_feedback_validity_scenario() ||
+        !run_monitor_latest_snapshot_scenario() ||
+        !run_discrete_routing_scenario() ||
+        !run_stop_setpoint_retirement_scenario() ||
         !run_post_sample_publication_scenario() ||
         !run_b1_provenance_and_deadline_scenarios() ||
         !run_communication_protection_switch_scenario(true, false) ||
@@ -1374,13 +1530,13 @@ int main()
         myactua::MyActMotorController print_controller(print_adapter, 1, test_options());
         print_controller.set_print_info({-1});
         if (!expect_start(print_controller, "enabled printing controller should start") ||
-            !expect(has_thread_named("motor_diag") && has_thread_named("motor_mon"),
-                    "enabled printing must start diagnostics and monitor threads") ||
+            !expect(!has_thread_named("motor_diag") && has_thread_named("motor_mon"),
+                    "enabled printing must consume diagnostics in the monitor thread only") ||
             !expect(print_adapter->wait_for_cycles(5, std::chrono::seconds(1)),
                     "enabled printing must preserve RT feedback cycles")) return 1;
         print_controller.shutdown();
         if (!expect(!has_thread_named("motor_diag") && !has_thread_named("motor_mon"),
-                    "shutdown must join both printing threads")) return 1;
+                    "shutdown must join the monitor thread")) return 1;
 
         print_controller.set_print_info({});
         if (!expect_start(print_controller, "printing disabled before restart should start") ||

@@ -11,10 +11,8 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <thread>
-#include <vector>
 
 namespace inference {
 
@@ -32,13 +30,14 @@ class ObservationBuilder;
 class RobotInterface {
 public:
     /* 构造函数只保存配置；配置由 load_deploy_config() 加载并完整校验。
-       initialize/shutdown/policy_step 需由同一控制线程串行调用。 */
+       initialize 只调用一次；启停、速度缓存及 policy_step 由同一所有者线程串行访问。
+       初始化失败后仍可重复 shutdown，析构也会执行清理。 */
     explicit RobotInterface(RobotInterfaceConfig config);
     ~RobotInterface();
 
     bool initialize();
     bool is_initialized() const {
-        return initialized_.load() && worker_.is_running();
+        return initialized_ && worker_.is_running();
     }
 
 
@@ -86,18 +85,16 @@ private:
 
     PolicyRuntime policy_runtime_;
 
-    mutable std::mutex    target_velocity_mutex_;
     std::array<double, 3> target_velocity_{0.0, 0.0, 0.0};  // [vx, vy, yaw_rate]
 
     InferenceRecorder inference_recorder_;
     bool inference_recorder_failed_ = false;
 
-    std::atomic<bool> initialized_{false};
+    bool initialized_{false};
     // 阶段诊断仅由控制线程维护和读取。
     PolicyStepPhase policy_step_phase_{PolicyStepPhase::Idle};
     std::int64_t policy_step_phase_started_ns_{0};
 
-    std::uint64_t next_policy_seq_{1};  // 每轮正式推理递增，包括 drop
     std::int64_t last_policy_target_published_ns_{0};  // 仅 policy 线程访问
     std::atomic<std::int64_t> first_policy_inference_started_ns_{0};
 
@@ -110,7 +107,7 @@ private:
     bool initialize_model_processors();
 
     // 平滑复位到 default_joint_pos_rad，输出最后成功提交的电机目标。
-    bool reset_joints(std::vector<double>& final_target_motor_rad);
+    bool reset_joints(std::array<double, motor_base::kMaxMotors>& final_target_motor_rad);
 
     void initialize_policy_runtime_state();
     void reset_policy_command_state() noexcept;

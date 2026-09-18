@@ -25,7 +25,9 @@ class DiscreteCommandSubmissionQueue {
 public:
     // 多生产者由 MotorControllerBase 的提交锁串行化；RT 线程为唯一消费者。
     struct Entry {
-        ControlCommand command;
+        DiscreteCommandType type;
+        MotorControlMode mode;
+        int motor_index;
         CommandId command_id;
     };
 

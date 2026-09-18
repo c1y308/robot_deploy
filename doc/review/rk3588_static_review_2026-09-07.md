@@ -1,5 +1,7 @@
 **RK3588 人形机器人嵌入式框架深度静态审阅报告**
 
+> 归档说明（2026-09-18）：本报告保留当时基线和历史结论；源码行号、临时证据及评分对应当时版本。当前部署判断以[本次精简审查](deployment_simplification_review_2026-09-18.md)为准。用户已确认 Xsens 跨样本 latest-value、当前 ESI/PDO padding 差异、reset FK 失败后回退默认角度均不作为缺陷；历史整改与放行条件不直接适用于当前版本。
+
 审阅日期：2026-09-07。基线：`75306df887d05dd18405ef75c03dc669f5e9b26a`，按当前工作区行号引用；保留用户在 `inference_record.hpp` 中已有的空格修改。本次只新增报告；测试构建、探针和证据放在 `/tmp/robot_deploy_audit_20260907`。
 
 审阅对象是主机部署框架：驱动器执行 FOC，主机 EtherCAT 周期为 1 ms，策略周期为 20 ms。当前没有 RKNN/ONNX 推理后端，因此 NPU 部分是迁移设计建议。没有执行真实电机程序、总线写操作、系统调参或带电故障注入。下文的“复现”均指无硬件模拟或离线输入验证，不代表已经测得整机实时性能。
@@ -43,7 +45,7 @@ if (policy_target_channel_.try_consume_latest(latest_target)) {
 
 **B2 — Blocker：STOP 走普通队列且未确认完成；停机还依赖日志／线程退出（已复现队列丢停）**
 
-2026-09-09：复核曾在默认容量 16 下确认普通 STOP 丢失；随后已实施独立 STOP 状态、有效回读确认及先停机后清理的修复，motors 2/2、inference 10/10 测试通过。确认超时保留 RT，析构持续等待。以下为修复前历史记录；修复行为、测试及实机验收边界见 [B2 复核记录](b2_stop_recheck_2026-09-09.md)。
+2026-09-09：复核曾在默认容量 16 下确认普通 STOP 丢失；随后已实施独立 STOP 状态、有效回读确认及先停机后清理的修复，motors 2/2、inference 10/10 测试通过。确认超时保留 RT，析构持续等待。以下为修复前历史记录；修复行为、测试及实机验收边界见 [B2 复核记录](../b2_stop_recheck_2026-09-09.md)。
 
 证据：[提交成功仅表示入队](/home/cat/robot_deploy/src/motors/src/motor_base/motor_controller_base.cpp:340)、[单轴队列满后标记失败](/home/cat/robot_deploy/src/motors/src/motor_base/motor_controller_base.cpp:608)、[仅服务队头](/home/cat/robot_deploy/src/motors/src/motor_base/motor_controller_base.cpp:645)、[stop 返回逻辑](/home/cat/robot_deploy/src/inference/src/robot/robot_motor_session.cpp:165)、[整机 shutdown 顺序](/home/cat/robot_deploy/src/inference/src/robot/robot_interface.cpp:108)。
 

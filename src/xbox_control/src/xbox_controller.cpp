@@ -52,7 +52,6 @@ XboxController::XboxController() = default;
 /* 打开手柄事件设备，并读取当前轴值初始化速度指令 */
 bool XboxController::open_device()
 {
-    std::lock_guard<std::mutex> io_lock(io_mutex_);
     if (fd_ >= 0) {
         return true;
     }
@@ -122,11 +121,7 @@ void XboxController::polling_loop(std::chrono::milliseconds wait_timeout)
         requested_timeout_ms, 1, std::numeric_limits<int>::max()));
 
     while (!stop_polling_requested_.load()) {
-        int fd = -1;
-        {
-            std::lock_guard<std::mutex> io_lock(io_mutex_);
-            fd = fd_;
-        }
+        const int fd = fd_;
 
         if (fd < 0) {
             set_error("controller device is not open");
@@ -175,7 +170,6 @@ void XboxController::polling_loop(std::chrono::milliseconds wait_timeout)
 /* 非阻塞读取当前已经就绪的手柄事件。 */
 bool XboxController::read_available_events()
 {
-    std::lock_guard<std::mutex> io_lock(io_mutex_);
     if (fd_ < 0) {
         set_error("controller device is not open");
         return false;
@@ -227,7 +221,6 @@ void XboxController::close_device()
 {
     stop_polling();
 
-    std::lock_guard<std::mutex> io_lock(io_mutex_);
     if (fd_ >= 0) {
         ::close(fd_);
         fd_ = -1;
@@ -249,7 +242,6 @@ void XboxController::stop_polling()
 /* 判断当前是否持有有效的设备文件描述符 */
 bool XboxController::is_open() const
 {
-    std::lock_guard<std::mutex> io_lock(io_mutex_);
     return fd_ >= 0;
 }
 

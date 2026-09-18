@@ -36,7 +36,7 @@ PolicyCommandWorker::~PolicyCommandWorker() {
 
 bool PolicyCommandWorker::start(
     ActionProcessor&    action_processor,
-    std::vector<double> startup_hold_target_motor_rad)
+    std::array<double, motor_base::kMaxMotors> startup_hold_target_motor_rad)
 {
     action_processor_ = &action_processor;
     startup_hold_target_motor_rad_ = std::move(startup_hold_target_motor_rad);
@@ -55,12 +55,9 @@ bool PolicyCommandWorker::start(
 
     running_.store(true);
 
-    const robot_base::ThreadRuntimeOptions worker_options =
-        config_.runtime.enabled ? config_.runtime.policy_command
-                                : robot_base::ThreadRuntimeOptions{};
     std::string thread_error;
     if (!robot_base::start_configured_thread(
-            worker_thread_, "policy_cmd", worker_options,
+            worker_thread_, "policy_cmd", config_.runtime.policy_command,
             [this] { loop(); }, thread_error)) {
         running_.store(false);
         std::cerr << "[PolicyCommandWorker] failed to start thread: "
@@ -106,18 +103,20 @@ void PolicyCommandWorker::reset_channels() noexcept
     completed_record_channel_.reset_empty();
 }
 
-std::int64_t PolicyCommandWorker::publish_target(const PolicyTargetFrame& target) noexcept
+PolicyTargetFrame& PolicyCommandWorker::acquire_target_write_slot() noexcept
 {
-    auto& staged_target = *target_channel_.acquire_write_slot();
+    return *target_channel_.acquire_write_slot();
+}
 
-    staged_target = target;
+std::int64_t PolicyCommandWorker::publish_target() noexcept
+{
+    auto& staged_target = acquire_target_write_slot();
 
     const std::int64_t published_at_ns = robot_base::monotonic_now_ns();
     staged_target.published_at_ns = published_at_ns;
-    staged_target.valid_until_ns  = published_at_ns +
+    staged_target.inference_record.policy_valid_until_ns  = published_at_ns +
         robot_base::seconds_to_ns(config_.safety.policy_target_timeout_ms / 1000.0);
 
-    staged_target.inference_record.policy_valid_until_ns = staged_target.valid_until_ns;
     // publish_written() 返回是否覆盖旧帧，不影响发布。
     target_channel_.publish_written();
     return published_at_ns;
@@ -137,13 +136,6 @@ std::int64_t PolicyCommandWorker::startup_policy_deadline_ns() const noexcept
 }
 
 
-bool PolicyCommandWorker::startup_policy_target_expired(std::int64_t now_ns) const noexcept
-{
-    const std::int64_t deadline_ns = startup_policy_deadline_ns();
-    return deadline_ns != 0 && policy_deadline_expired(deadline_ns, now_ns);
-}
-
-
 bool PolicyCommandWorker::policy_deadline_expired(
     std::int64_t deadline_ns, std::int64_t now_ns) noexcept
 {
@@ -157,10 +149,10 @@ motor_base::CommandTiming PolicyCommandWorker::policy_command_timing(
     std::int64_t oldest_feedback_timestamp_ns) const noexcept
 {
     motor_base::CommandTiming timing;
-    timing.source_policy_seq = target.policy_seq;
+    timing.source_policy_seq = target.inference_record.policy_seq;
     timing.produced_at_ns    = produced_at_ns;
     timing.valid_until_ns    = std::min({
-        target.valid_until_ns,
+        target.inference_record.policy_valid_until_ns,
         produced_at_ns + robot_base::seconds_to_ns(
             config_.safety.control_command_timeout_ms / 1000.0),
         oldest_feedback_timestamp_ns + robot_base::seconds_to_ns(
@@ -201,18 +193,15 @@ void PolicyCommandWorker::loop()
                 const std::int64_t deadline_ns = startup_policy_deadline_ns();
                 const std::int64_t now_ns = robot_base::monotonic_now_ns();
                 // 首帧前复位命令也封顶首次正式推理的截止期。
-                const bool refreshed = !startup_policy_target_expired(now_ns) &&
+                const bool refreshed = (deadline_ns == 0 || !policy_deadline_expired(deadline_ns, now_ns)) &&
                     motor_session_.apply_targets_rad(
                         startup_hold_target_motor_rad_, deadline_ns);
                 if (!refreshed) {
                     const std::int64_t failed_now_ns = robot_base::monotonic_now_ns();
-                    if (startup_policy_target_expired(failed_now_ns)) {
-                        PolicyTargetFrame startup_target;
-                        startup_target.valid_until_ns = startup_policy_deadline_ns();
-                        startup_target.published_at_ns = startup_target.valid_until_ns -
-                            robot_base::seconds_to_ns(
-                                config_.safety.policy_target_timeout_ms / 1000.0);
-                        fail(policy_deadline_error(startup_target, failed_now_ns));
+                    if (deadline_ns != 0 && policy_deadline_expired(deadline_ns, failed_now_ns)) {
+                        fail("first policy target deadline expired: deadline_ns=" +
+                            std::to_string(deadline_ns) + ", overdue_us=" +
+                            std::to_string(robot_base::ns_to_us(failed_now_ns - deadline_ns)));
                     } else {
                         fail("failed to refresh startup reset pose");
                     }
@@ -220,7 +209,7 @@ void PolicyCommandWorker::loop()
                 }
             } else {
                 const std::int64_t now_ns = robot_base::monotonic_now_ns();
-                if (policy_deadline_expired(current_target.valid_until_ns, now_ns)) {
+                if (policy_deadline_expired(current_target.inference_record.policy_valid_until_ns, now_ns)) {
                     fail(policy_deadline_error(current_target, now_ns));
                     break;
                 }
@@ -272,7 +261,7 @@ void PolicyCommandWorker::loop()
                 }
 
                 const std::int64_t produced_at_ns = robot_base::monotonic_now_ns();
-                if (policy_deadline_expired(current_target.valid_until_ns, produced_at_ns)) {
+                if (policy_deadline_expired(current_target.inference_record.policy_valid_until_ns, produced_at_ns)) {
                     fail(policy_deadline_error(current_target, produced_at_ns));
                     break;
                 }
@@ -295,8 +284,10 @@ void PolicyCommandWorker::loop()
                 }
 
                 // 继续构建日志记录
-                if (current_target.policy_seq != last_logged_policy_seq) {
-                    InferenceRecord completed_record = current_target.inference_record;
+                if (config_.recorder.enabled &&
+                    current_target.inference_record.policy_seq != last_logged_policy_seq) {
+                    auto& completed_record = *completed_record_channel_.acquire_write_slot();
+                    completed_record = current_target.inference_record;
                     completed_record.command_timestamp_ns   = produced_at_ns;
                     completed_record.command_valid_until_ns = timing.valid_until_ns;
                     completed_record.command_applied = true;
@@ -307,8 +298,8 @@ void PolicyCommandWorker::loop()
                             command.setpoints[i].effort_ff;
                     }
                     // 发布给 recorder，供后续日志写入线程处理。
-                    completed_record_channel_.publish(completed_record);
-                    last_logged_policy_seq = current_target.policy_seq;
+                    completed_record_channel_.publish_written();
+                    last_logged_policy_seq = current_target.inference_record.policy_seq;
                 }
             }
 
@@ -344,12 +335,12 @@ std::string PolicyCommandWorker::policy_deadline_error(
 {
     std::ostringstream stream;
     stream << "policy target deadline expired: policy_seq="
-           << target.policy_seq
+           << target.inference_record.policy_seq
            << ", target_hold_age_us="
            << robot_base::ns_to_us(now_ns - target.published_at_ns)
            << ", obs_to_action_age_us=" << target.inference_record.obs_to_action_age_us
            << ", overdue_us="
-           << robot_base::ns_to_us(now_ns - target.valid_until_ns);
+           << robot_base::ns_to_us(now_ns - target.inference_record.policy_valid_until_ns);
     return stream.str();
 }
 

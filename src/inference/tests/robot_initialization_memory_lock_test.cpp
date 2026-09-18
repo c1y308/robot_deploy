@@ -54,7 +54,6 @@ int main()
     CPU_ZERO(&allowed);
     expect(::sched_getaffinity(0, sizeof(allowed), &allowed) == 0,
            "sched_getaffinity failed");
-    config.runtime.enabled = true;
     for (int cpu = 0; cpu < CPU_SETSIZE &&
                       config.runtime.policy_main.cpu_ids.size() < 2U; ++cpu) {
         if (CPU_ISSET(cpu, &allowed)) {

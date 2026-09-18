@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <vector>
 
 namespace myactua {
 class EthercatAdapterIGH;
@@ -33,12 +32,12 @@ enum class MotorCommunicationState {
 struct MotorStateSnapshot {
     std::int64_t timestamp_ns{0};
 
-    std::vector<double> position_rad;
-    std::vector<double> velocity_rad_s;
-    std::vector<double> torque_percent;
+    std::array<double, motor_base::kMaxMotors> position_rad{};
+    std::array<double, motor_base::kMaxMotors> velocity_rad_s{};
+    std::array<double, motor_base::kMaxMotors> torque_percent{};
 
-    std::vector<std::uint8_t> comm_ok;
-    std::vector<std::uint8_t> enabled;
+    std::array<std::uint8_t, motor_base::kMaxMotors> comm_ok{};
+    std::array<std::uint8_t, motor_base::kMaxMotors> enabled{};
 };
 
 class RobotMotorSession {
@@ -65,7 +64,7 @@ public:
 
     // 依据当前电机模式下发位置指令
     // absolute_deadline_ns=0 保持原有独立命令有效期；正值额外封顶截止期。
-    bool apply_targets_rad(const std::vector<double>& target_motor_rad,
+    bool apply_targets_rad(const std::array<double, motor_base::kMaxMotors>& target_motor_rad,
                            std::int64_t absolute_deadline_ns = 0);
     bool apply_impedance_setpoints_realtime(
         const std::array<motor_base::ImpedanceSetpoint,
@@ -78,7 +77,6 @@ public:
                    motor_base::kMaxMotorCommandSetpoints>& feedback);
 
     MotorStateSnapshot  get_motor_snapshot() const;
-    std::vector<double> get_joint_q() const;
 
 private:
     friend class RobotInterface;

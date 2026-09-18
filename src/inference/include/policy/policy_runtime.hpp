@@ -53,7 +53,6 @@ private:
     void set_error(std::string message);
 
     std::unique_ptr<Impl> impl_;
-    bool loaded_{false};
     std::size_t observation_size_{0};
     std::string last_error_;
 };

@@ -18,8 +18,8 @@ public:
     int dof_count() const noexcept { return dof_count_; }
 
     const std::string& last_error() const noexcept { return last_error_; }
-    const inference::AnkleParallelMap& left_ankle() const noexcept { return left_ankle_parallel_; }
-    const inference::AnkleParallelMap& right_ankle() const noexcept { return right_ankle_parallel_; }
+    const inference::AnkleParallelMap& left_ankle() const noexcept { return config_.left_ankle_parallel; }
+    const inference::AnkleParallelMap& right_ankle() const noexcept { return config_.right_ankle_parallel; }
 
     bool is_parallel_model_dof(int model_index) const;
     int direct_motor_for_model_dof(int model_index) const;
@@ -35,10 +35,6 @@ private:
     std::string last_error_;
     std::vector<unsigned char> parallel_model_dof_;
     std::vector<int> direct_motor_for_model_dof_;
-    std::vector<int> motor_to_model_direction_;
-    
-    inference::AnkleParallelMap left_ankle_parallel_;
-    inference::AnkleParallelMap right_ankle_parallel_;
 };
 
 }  // namespace inference::robot_detail

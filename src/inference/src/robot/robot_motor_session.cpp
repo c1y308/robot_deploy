@@ -34,31 +34,6 @@ const char* command_submit_status_name(motor_base::CommandSubmitStatus status)
     return "UNKNOWN";
 }
 
-/* 把一段 MotorStatusSnapshot 填入 inference 层的电机状态快照 */
-template <typename Iterator>
-void fill_motor_snapshot_from_range(MotorStateSnapshot& snapshot,
-                                     Iterator begin,
-                                     Iterator end)
-{
-    const std::size_t count = static_cast<std::size_t>(end - begin);
-    snapshot.timestamp_ns = count > 0 ? begin->host_timestamp_ns : 0;
-    snapshot.position_rad.reserve(count);
-    snapshot.velocity_rad_s.reserve(count);
-    snapshot.torque_percent.reserve(count);
-    snapshot.comm_ok.reserve(count);
-    snapshot.enabled.reserve(count);
-
-    for (auto it = begin; it != end; ++it) {
-        const auto& motor = *it;
-        snapshot.timestamp_ns = std::min(snapshot.timestamp_ns, motor.host_timestamp_ns);
-        snapshot.position_rad.push_back(motor.position_rad);
-        snapshot.velocity_rad_s.push_back(motor.velocity_rad_s);
-        snapshot.torque_percent.push_back(motor.torque_percent);
-        snapshot.comm_ok.push_back(motor.comm_ok ? 1U : 0U);
-        snapshot.enabled.push_back(motor.enabled ? 1U : 0U);
-    }
-}
-
 }  // namespace
 
 RobotMotorSession::RobotMotorSession(MotorConfig config,
@@ -86,10 +61,8 @@ bool RobotMotorSession::initialize(bool defer_communication_protection)
 
     adapter_ = std::make_shared<myactua::EthercatAdapterIGH>();
     myactua::MyActMotorController::Options controller_options;
-    if (runtime_.enabled) {
-        controller_options.rt_thread_options = runtime_.motor_rt;
-        controller_options.background_thread_options = runtime_.background;
-    }
+    controller_options.rt_thread_options = runtime_.motor_rt;
+    controller_options.background_thread_options = runtime_.background;
     controller_ = std::make_unique<myactua::MyActMotorController>(
         adapter_, config_.num_motors, controller_options);
     // 仅策略启动链延后通信锁存，直到第一次正式推理；独立电机入口默认开启。
@@ -317,8 +290,9 @@ motor_base::CommandTiming RobotMotorSession::target_command_timing(
     return timing;
 }
 
-bool RobotMotorSession::apply_targets_rad(const std::vector<double>& target_motor_rad,
-                                         std::int64_t absolute_deadline_ns)
+bool RobotMotorSession::apply_targets_rad(
+    const std::array<double, motor_base::kMaxMotors>& target_motor_rad,
+    std::int64_t absolute_deadline_ns)
 {
     if (!initialized_.load() || !controller_) {
         return false;
@@ -328,25 +302,22 @@ bool RobotMotorSession::apply_targets_rad(const std::vector<double>& target_moto
                   << "Call restart(-1) first.\n";
         return false;
     }
-    if (static_cast<int>(target_motor_rad.size()) != config_.num_motors) {
-        std::cerr << "[RobotMotorSession] apply_targets_rad rejected: target size mismatch\n";
-        return false;
-    }
-
     motor_base::ControlCommand command;
     if (is_mit_mode(config_.control_mode)) {
-        std::vector<motor_base::ImpedanceSetpoint> impedance_setpoints(config_.num_motors);
-        for (int i = 0; i < config_.num_motors; ++i) {
+        std::array<motor_base::ImpedanceSetpoint,
+                   motor_base::kMaxMotorCommandSetpoints> impedance_setpoints{};
+        for (std::size_t i = 0; i < target_motor_rad.size(); ++i) {
             impedance_setpoints[i] = motor_base::ImpedanceSetpoint(target_motor_rad[i],
                                                                    0.0,
                                                                    0.0,
                                                                    config_.mit_kp[i],
                                                                    config_.mit_kd[i]);
         }
-        command = motor_base::ControlCommand::set_impedance_targets(
-            std::move(impedance_setpoints));
+        command = motor_base::ControlCommand::set_impedance_targets_fixed(
+            impedance_setpoints.data(), impedance_setpoints.size());
     } else if (config_.control_mode == motor_base::MotorControlMode::POSITION) {
-        command = motor_base::ControlCommand::set_position_targets_rad(target_motor_rad);
+        command = motor_base::ControlCommand::set_position_targets_rad_fixed(
+            target_motor_rad.data(), target_motor_rad.size());
     } else {
         std::cerr << "[RobotMotorSession] apply_targets_rad supports only impedance or position mode\n";
         return false;
@@ -418,12 +389,6 @@ bool RobotMotorSession::submit_command(const motor_base::ControlCommand& command
 
 
 
-std::vector<double> RobotMotorSession::get_joint_q() const
-{
-    return controller_->get_positions_rad();
-}
-
-
 MotorStateSnapshot RobotMotorSession::get_motor_snapshot() const
 {
     MotorStateSnapshot snapshot;
@@ -432,22 +397,25 @@ MotorStateSnapshot RobotMotorSession::get_motor_snapshot() const
     }
 
     // 优先读 policy 线程专属的 RT feedback 通道；无新帧时沿用缓存帧。
-    // 启动窗口内尚未收到任何反馈帧时退回公共状态通道，保持旧行为。
     std::array<motor_base::MotorStatusSnapshot,
                motor_base::kMaxMotorCommandSetpoints> latest_feedback;
     if (controller_->try_consume_latest_status_policy(latest_feedback)) {
         latest_feedback_ = latest_feedback;
         has_policy_feedback_ = true;
     }
-    if (!has_policy_feedback_) {
-        const std::vector<motor_base::MotorStatusSnapshot> status = controller_->get_status();
-        fill_motor_snapshot_from_range(snapshot, status.begin(), status.end());
-        return snapshot;
-    }
+    // 尚无反馈时保持 timestamp=0，由策略/复位入口的反馈有效性检查拒绝。
+    if (!has_policy_feedback_) return snapshot;
 
-    const std::size_t motor_count = static_cast<std::size_t>(config_.num_motors);
-    fill_motor_snapshot_from_range(snapshot, latest_feedback_.data(),
-                                    latest_feedback_.data() + motor_count);
+    snapshot.timestamp_ns = latest_feedback_[0].host_timestamp_ns;
+    for (std::size_t i = 0; i < snapshot.position_rad.size(); ++i) {
+        const auto& motor = latest_feedback_[i];
+        snapshot.timestamp_ns = std::min(snapshot.timestamp_ns, motor.host_timestamp_ns);
+        snapshot.position_rad[i] = motor.position_rad;
+        snapshot.velocity_rad_s[i] = motor.velocity_rad_s;
+        snapshot.torque_percent[i] = motor.torque_percent;
+        snapshot.comm_ok[i] = motor.comm_ok;
+        snapshot.enabled[i] = motor.enabled;
+    }
 
     return snapshot;
 }

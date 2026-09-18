@@ -23,14 +23,12 @@ RobotImuSession::~RobotImuSession()
 
 bool RobotImuSession::initialize()
 {
-    if (initialized_.load()) {
+    if (initialized_) {
         return true;
     }
 
     imu_base::ReaderConfig imu_cfg = make_reader_config(config_);
-    if (runtime_.enabled) {
-        imu_cfg.thread_options = runtime_.imu_reader;
-    }
+    imu_cfg.thread_options = runtime_.imu_reader;
 
     ahrs_state_channel_.reset_empty();
     latest_ahrs_state_cache_ = AhrsStateSnapshot();
@@ -67,11 +65,11 @@ bool RobotImuSession::initialize()
     if (!reader_->start(imu_cfg)) {
         std::cerr << "[RobotInterface] IMU start failed.\n";
         reader_.reset();
-        initialized_.store(false);
+        initialized_ = false;
         return false;
     }
 
-    initialized_.store(true);
+    initialized_ = true;
     return true;
 }
 
@@ -81,7 +79,7 @@ void RobotImuSession::deinitialize()
         reader_->stop();
     }
     reader_.reset();
-    initialized_.store(false);
+    initialized_ = false;
     ahrs_state_channel_.reset_empty();
     latest_ahrs_state_cache_ = AhrsStateSnapshot();
     has_ahrs_state_cache_ = false;

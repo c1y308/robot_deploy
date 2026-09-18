@@ -186,15 +186,9 @@ MyActMotorController::MyActMotorController(std::shared_ptr<EthercatAdapter> adap
 
     set_event_fallback_printer(print_myact_event);
 
-    diagnostics_channel_.configure(_motors.size(),
-                                   options_.status_publish_period_ms,
-                                   "motor_diag",
-                                   options_.background_thread_options);
-
-    status_monitor_.set_status_provider([this]() { return diagnostics_channel_.get_status(); });
     status_monitor_.set_status_printer(print_myact_status_table);
-    status_monitor_.configure_thread(options_.background_thread_options);
-    
+    status_monitor_.configure(_motors.size(), options_.background_thread_options);
+
     _adapter->set_event_sink(this, &MyActMotorController::event_sink_trampoline);
 }
 
@@ -302,15 +296,9 @@ bool MyActMotorController::realtime_start_callback()
     process_data_fail_count_ = 0;
 
     if (status_monitor_.has_print_motor_ids()) {
-        if (!diagnostics_channel_.start()) {
-            std::cerr << "[MYACTUA] motor_diag setup failed: "
-                      << diagnostics_channel_.last_start_error() << std::endl;
-            return false;
-        }
         if (!status_monitor_.start()) {
             std::cerr << "[MYACTUA] motor_mon setup failed: "
                       << status_monitor_.last_start_error() << std::endl;
-            diagnostics_channel_.stop();
             return false;
         }
     }
@@ -336,7 +324,6 @@ void MyActMotorController::realtime_cycle_callback()
 void MyActMotorController::realtime_stop_callback() noexcept
 {
     status_monitor_.stop();
-    diagnostics_channel_.stop();
     std::cout << "[MYACTUA] 实时控制线程已停止" << std::endl;
 }
 
@@ -976,13 +963,13 @@ void MyActMotorController::discrete_command_failed_callback(
 
 void MyActMotorController::discrete_queue_full_callback(
     int motor_index,
-    const mb::ControlCommand& cmd)
+    const mb::DiscreteCommand& cmd)
 {
     mb::RtEvent event;
     event.type = mb::RtEventType::DISCRETE_QUEUE_FULL;
     event.tick = discrete_command_tick();
     event.motor_index = motor_index;
-    event.command_type = cmd.discrete_type;
+    event.command_type = cmd.type;
     event.reason = static_cast<int>(mb::DiscreteFailReason::MAX_RETRY);
     push_event(event);
 }
@@ -1042,12 +1029,12 @@ void MyActMotorController::update_diagnostics_snapshot()
         return;
     }
 
-    MotorState* diagnostics_slot = diagnostics_channel_.acquire_write_slot();
+    MotorState* diagnostics_slot = status_monitor_.acquire_write_slot();
     for (size_t i = 0; i < _motors.size(); i++) {
         diagnostics_slot[i] = _motors[i];
     }
 
-    diagnostics_channel_.publish_written();
+    status_monitor_.publish_written();
 }
 
 

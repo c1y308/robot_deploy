@@ -8,7 +8,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <limits>
 
 namespace imu::detail {
 
@@ -19,24 +18,11 @@ struct ClockOffsetSample {
     std::int64_t monotonic_end_ns = 0;
 };
 
-inline bool subtract_ns(std::int64_t lhs, std::int64_t rhs,
-                        std::int64_t& result)
-{
-    if ((rhs > 0 && lhs < std::numeric_limits<std::int64_t>::min() + rhs) ||
-        (rhs < 0 && lhs > std::numeric_limits<std::int64_t>::max() + rhs)) {
-        return false;
-    }
-    result = lhs - rhs;
-    return true;
-}
-
 inline bool timestamp_to_ns(std::int64_t seconds, std::int64_t nanoseconds,
                             std::int64_t& result)
 {
     constexpr std::int64_t kNsPerSecond = 1'000'000'000;
-    if (seconds < 0 || nanoseconds < 0 || nanoseconds >= kNsPerSecond ||
-        seconds > (std::numeric_limits<std::int64_t>::max() - nanoseconds) /
-                      kNsPerSecond) {
+    if (seconds < 0 || nanoseconds < 0 || nanoseconds >= kNsPerSecond) {
         return false;
     }
     result = seconds * kNsPerSecond + nanoseconds;
@@ -109,14 +95,13 @@ inline bool receive_monotonic_timestamp(std::int64_t realtime_ns,
                                         const ClockOffsetSample& current,
                                         std::int64_t& timestamp_ns)
 {
-    std::int64_t offset_delta_ns = 0, converted_ns = 0, future_ns = 0;
-    if (!subtract_ns(current.offset_ns, baseline_offset_ns, offset_delta_ns) ||
-        offset_delta_ns < -kClockOffsetToleranceNs ||
+    // 内核时钟及当前系统年份处于正常 int64 纳秒时间域。
+    const std::int64_t offset_delta_ns = current.offset_ns - baseline_offset_ns;
+    const std::int64_t converted_ns = realtime_ns - current.offset_ns;
+    if (offset_delta_ns < -kClockOffsetToleranceNs ||
         offset_delta_ns > kClockOffsetToleranceNs ||
-        !subtract_ns(realtime_ns, current.offset_ns, converted_ns) ||
         converted_ns <= 0 ||
-        !subtract_ns(converted_ns, current.monotonic_end_ns, future_ns) ||
-        future_ns > kClockOffsetToleranceNs) {
+        converted_ns - current.monotonic_end_ns > kClockOffsetToleranceNs) {
         return false;
     }
     timestamp_ns = converted_ns;

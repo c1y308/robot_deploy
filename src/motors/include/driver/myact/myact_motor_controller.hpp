@@ -51,7 +51,6 @@ private:
     std::shared_ptr<EthercatAdapter> _adapter;
     std::vector<MotorState> _motors;
 
-    motor_base::LatestStatusChannel<MotorState> diagnostics_channel_;
     motor_base::MotorStatusMonitor<MotorState>  status_monitor_;
 
     uint32_t process_data_fail_count_{0};
@@ -83,7 +82,7 @@ private:
         motor_base::DiscreteFailReason reason) override;
     void discrete_queue_full_callback(
         int motor_index,
-        const motor_base::ControlCommand& cmd) override;
+        const motor_base::DiscreteCommand& cmd) override;
 
     bool realtime_start_callback() override;
     void realtime_cycle_callback() override;

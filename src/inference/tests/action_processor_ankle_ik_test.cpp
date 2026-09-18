@@ -8,11 +8,11 @@
 #include <iostream>
 #include <memory>
 #include <string>
-#include <vector>
 
 namespace {
 
 constexpr int kDof = 12;
+using JointTargets = std::array<double, kDof>;
 constexpr int kLeftPitchDof = 8;
 constexpr int kRightPitchDof = 9;
 constexpr int kLeftRollDof = 10;
@@ -118,9 +118,9 @@ inference::robot_detail::ActionProcessor make_processor()
         torque_config);
 }
 
-std::vector<double> make_model_target(double pitch_deg, double roll_deg)
+JointTargets make_model_target(double pitch_deg, double roll_deg)
 {
-    std::vector<double> target(kDof, 0.0);
+    JointTargets target{};
     target[static_cast<std::size_t>(kLeftPitchDof)] = deg_to_rad(pitch_deg);
     target[static_cast<std::size_t>(kRightPitchDof)] = deg_to_rad(pitch_deg);
     target[static_cast<std::size_t>(kLeftRollDof)] = deg_to_rad(roll_deg);
@@ -128,11 +128,10 @@ std::vector<double> make_model_target(double pitch_deg, double roll_deg)
     return target;
 }
 
-void expect_ankle_targets_near(const std::vector<double>& actual,
-                               const std::vector<double>& expected,
+void expect_ankle_targets_near(const JointTargets& actual,
+                               const JointTargets& expected,
                                const std::string& message)
 {
-    expect(actual.size() == expected.size(), message + ": size mismatch");
     for (int motor_index : kAnkleMotorIndices) {
         expect_near(actual[static_cast<std::size_t>(motor_index)],
                     expected[static_cast<std::size_t>(motor_index)],
@@ -144,13 +143,13 @@ void expect_ankle_targets_near(const std::vector<double>& actual,
 void test_first_unreachable_fails()
 {
     auto processor = make_processor();
-    const std::vector<double> target = make_model_target(45.0, 0.0);
+    const JointTargets target = make_model_target(45.0, 0.0);
 
     const ankle_motor_ik::MotorAngles raw_result =
         ankle_motor_ik::solve(0.0, deg_to_rad(45.0));
     expect(!raw_result.reachable(), "test pose should be IK unreachable");
 
-    std::vector<double> motor_targets;
+    JointTargets motor_targets{};
     std::string error;
     const bool ok = processor.build_motor_targets(target, motor_targets, error);
 
@@ -163,14 +162,14 @@ void test_first_unreachable_fails()
 void test_unreachable_after_valid_solution_holds_last()
 {
     auto processor = make_processor();
-    const std::vector<double> reachable_target = make_model_target(0.0, 30.0);
-    const std::vector<double> unreachable_target = make_model_target(45.0, 0.0);
+    const JointTargets reachable_target = make_model_target(0.0, 30.0);
+    const JointTargets unreachable_target = make_model_target(45.0, 0.0);
 
     const ankle_motor_ik::MotorAngles raw_reachable =
         ankle_motor_ik::solve(deg_to_rad(30.0), 0.0);
     expect(raw_reachable.reachable(), "initial hold-last seed pose should be reachable");
 
-    std::vector<double> valid_motor_targets;
+    JointTargets valid_motor_targets{};
     std::string error;
     expect(processor.build_motor_targets(reachable_target,
                                          valid_motor_targets,
@@ -185,7 +184,7 @@ void test_unreachable_after_valid_solution_holds_last()
     }
     expect(nonzero_ankle_target, "valid ankle IK target should not be all zeros");
 
-    std::vector<double> held_motor_targets;
+    JointTargets held_motor_targets{};
     error.clear();
     expect(processor.build_motor_targets(unreachable_target,
                                          held_motor_targets,
@@ -198,9 +197,9 @@ void test_unreachable_after_valid_solution_holds_last()
 
 void test_partial_unreachable_does_not_pollute_solver_history()
 {
-    const std::vector<double> partial_unreachable_target =
+    const JointTargets partial_unreachable_target =
         make_model_target(65.0, -70.0);
-    const std::vector<double> next_reachable_target =
+    const JointTargets next_reachable_target =
         make_model_target(-20.0, -180.0);
 
     const ankle_motor_ik::MotorAngles partial_raw =
@@ -211,14 +210,14 @@ void test_partial_unreachable_does_not_pollute_solver_history()
            "partial test pose should have exactly one reachable motor");
 
     auto processor_after_partial = make_processor();
-    std::vector<double> ignored_targets;
+    JointTargets ignored_targets{};
     std::string error;
     expect(!processor_after_partial.build_motor_targets(partial_unreachable_target,
                                                         ignored_targets,
                                                         error),
            "partial first IK target should fail closed");
 
-    std::vector<double> after_partial_targets;
+    JointTargets after_partial_targets{};
     error.clear();
     expect(processor_after_partial.build_motor_targets(next_reachable_target,
                                                        after_partial_targets,
@@ -226,7 +225,7 @@ void test_partial_unreachable_does_not_pollute_solver_history()
            "reachable IK after partial failure should succeed: " + error);
 
     auto fresh_processor = make_processor();
-    std::vector<double> fresh_targets;
+    JointTargets fresh_targets{};
     error.clear();
     expect(fresh_processor.build_motor_targets(next_reachable_target,
                                                fresh_targets,

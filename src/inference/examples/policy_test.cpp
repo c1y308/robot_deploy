@@ -9,7 +9,6 @@
 #include <chrono>
 #include <cstdint>
 #include <csignal>
-#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -29,12 +28,6 @@ std::atomic<bool> g_stop_requested{false};
 void signal_handler(int)
 {
     g_stop_requested.store(true);
-}
-
-bool file_readable(const std::string& path)
-{
-    std::ifstream file(path, std::ios::binary);
-    return file.good();
 }
 
 /* 打印配置摘要，便于确认加载结果 */
@@ -122,12 +115,6 @@ int main(int argc, char** argv)
     xbox_control::XboxController controller;
     if (!controller.open_device()) {
         std::cerr << "[ERROR] " << controller.last_error() << "\n";
-        return 1;
-    }
-
-    if (!file_readable(cfg.policy.model_path)) {
-        std::cerr << "[ERROR] Policy model is not readable: "
-                  << cfg.policy.model_path << "\n";
         return 1;
     }
 

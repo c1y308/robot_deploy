@@ -82,7 +82,7 @@ private:
     void refresh_command_locked();
 
 
-    /* 文件描述符 */
+    /* 主线程串行管理生命周期：open → start → stop/join → close；polling 期间 fd 不变 */
     int fd_ = -1;
     /* 设备路径 */
     std::string device_path_ = kXboxDevicePath;
@@ -91,7 +91,6 @@ private:
 
     VelocityCommand command_;
 
-    mutable std::mutex io_mutex_;
     mutable std::mutex state_mutex_;
 
     std::atomic<bool> polling_active_{false};           // 后台线程现在是否处于运行状态

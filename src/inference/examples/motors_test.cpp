@@ -8,7 +8,7 @@
 #include <iostream>
 #include <string>
 #include <thread>
-#include <vector>
+#include <array>
 
 #ifndef ROBOT_DEPLOY_CONFIG_PATH
 #define ROBOT_DEPLOY_CONFIG_PATH ""
@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     std::cout << "[MOTORS_TEST] 3/4 send zero-position command in rad" << std::endl;
-    if (!motors.apply_targets_rad(std::vector<double>(cfg.num_motors, 0.0))) {
+    if (!motors.apply_targets_rad(std::array<double, motor_base::kMaxMotors>{})) {
         if (!motors.deinitialize()) {
             std::cerr << "Stop not confirmed; RT retained. Destruction will keep waiting.\n";
             return 1;

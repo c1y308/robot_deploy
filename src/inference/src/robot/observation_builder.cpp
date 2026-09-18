@@ -11,7 +11,6 @@
 namespace inference::robot_detail {
 
 using robot_base::finite_array;
-using robot_base::finite_vector;
 
 namespace {
 
@@ -145,10 +144,6 @@ bool ObservationBuilder::build(
     PolicyObservation&           observation,       // 完整策略观测历史
     std::string& error)
 {
-    if (motor_state.position_rad.size() != kDof || motor_state.velocity_rad_s.size() != kDof) {
-        error = "motor state position/velocity size mismatch";
-        return false;
-    }
     if (!ahrs_state.projected_gravity_valid) {
         error = "projected gravity is invalid";
         return false;
@@ -157,7 +152,7 @@ bool ObservationBuilder::build(
         error = "velocity command is not finite";
         return false;
     }
-    if (!finite_vector(motor_state.position_rad) || !finite_vector(motor_state.velocity_rad_s) ||
+    if (!finite_array(motor_state.position_rad) || !finite_array(motor_state.velocity_rad_s) ||
         !finite_array(ahrs_state.body_ang_vel)   || !finite_array(ahrs_state.projected_gravity)) {
         error = "observation source value is not finite";
         return false;
@@ -180,19 +175,8 @@ bool ObservationBuilder::build(
     current_terms.last_action = last_action_raw_;
 
 
-    MotorStateArray q_motor_rad{};
-    MotorStateArray dq_motor_rad_s{};
-
-    std::copy(motor_state.position_rad.begin(),
-               motor_state.position_rad.end(),
-              q_motor_rad.begin());
-
-    std::copy(motor_state.velocity_rad_s.begin(),
-               motor_state.velocity_rad_s.end(),
-              dq_motor_rad_s.begin());
-
-    if (!fill_joint_terms(q_motor_rad,
-                          dq_motor_rad_s,
+    if (!fill_joint_terms(motor_state.position_rad,
+                          motor_state.velocity_rad_s,
                           current_terms.joint_pos_rel,
                           current_terms.joint_vel_rel,
                           error)) {

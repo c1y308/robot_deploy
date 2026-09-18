@@ -88,7 +88,6 @@ struct PolicyRuntimeConfig {
 struct SensorGuardConfig {
     double max_imu_sample_age_s    = 0.050; // IMU 数据最大延迟，超过该值视为过期
     double max_motor_sample_age_s  = 0.020; // 电机状态最大延迟，超过该值视为过期
-    double max_sensor_state_skew_s = 0.030; // IMU 与电机状态的时间戳差值最大允许值，超过该值视为不同步
 };
 
 /* 策略帧和 RT 连续命令的独立新鲜度预算。单位 ms。 */
@@ -115,12 +114,13 @@ struct AnkleTorqueControlConfig {
 };
 
 struct RuntimeThreadingConfig {
-    bool enabled{false};
     bool require_host_preflight{false};
     bool require_process_memory_lock{false};
 
     robot_base::ThreadRuntimeOptions policy_main;
-    robot_base::ThreadRuntimeOptions motor_rt;
+    // 保留独立电机工具的 FIFO80 默认调度，不指定 CPU 集合。
+    robot_base::ThreadRuntimeOptions motor_rt{
+        {}, robot_base::ThreadSchedulingPolicy::FIFO, 80, 0};
     robot_base::ThreadRuntimeOptions policy_command;
     robot_base::ThreadRuntimeOptions imu_reader;
     robot_base::ThreadRuntimeOptions background;

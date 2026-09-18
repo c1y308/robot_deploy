@@ -7,7 +7,6 @@
 #include <iostream>
 #include <cstring>
 #include <unistd.h>
-#include <vector>  
 #include <time.h>
 
 #define NSEC_PER_SEC (1000000000L)
@@ -110,7 +109,6 @@ ec_sync_info_t EthercatAdapterIGH::device_syncs[] = {
 EthercatAdapterIGH::EthercatAdapterIGH() {
     slave_offsets.resize(kNumSlaves);
     for (std::size_t i = 0; i < kNumSlaves; ++i) {
-        slave_configured[i].store(false, std::memory_order_relaxed);
         tx_shadow[i] = {};
         tx_shadow[i].control_word = CMD_SHUTDOWN;
         tx_shadow[i].target_pos = 0;
@@ -121,7 +119,6 @@ EthercatAdapterIGH::EthercatAdapterIGH() {
         tx_shadow[i].op_mode = 0;
         tx_shadow[i].reserved = 0;
     }
-    is_initialized = false;
 }    
 
 EthercatAdapterIGH::~EthercatAdapterIGH() {
@@ -219,15 +216,11 @@ bool EthercatAdapterIGH::init()
               << ", interval_cycles=" << diag_interval_cycles
               << " (env: MYACTUA_ECAT_DIAG / MYACTUA_ECAT_DIAG_INTERVAL)" << std::endl;
 
-    is_initialized = true;
     return true;    
 }
 
 void EthercatAdapterIGH::write_txpdo_to_domain(std::size_t index, const TxPDO& pdo)
 {
-    if (!domain1_pd || index >= slave_offsets.size()) {
-        return;
-    }
     SlaveOffsets& off = slave_offsets[index];
     EC_WRITE_U16(domain1_pd + off.off_ctrl_word, pdo.control_word);
     EC_WRITE_S32(domain1_pd + off.off_target_pos, pdo.target_pos);
@@ -253,16 +246,12 @@ void EthercatAdapterIGH::set_event_sink(void* context, RtEventSink sink)
 
 void EthercatAdapterIGH::send(int index, const TxPDO& pdo)
 {
-    if (index < 0 || static_cast<std::size_t>(index) >= slave_offsets.size()) return;
-
     tx_shadow[index] = pdo;
 }
 
 RxPDO EthercatAdapterIGH::receive(int index)
 {
     RxPDO pdo = {};
-    if (index < 0 || static_cast<std::size_t>(index) >= slave_offsets.size()) return pdo;
-
     SlaveOffsets& off = slave_offsets[index];
     pdo.status_word = EC_READ_U16(domain1_pd + off.off_status_word);
     pdo.pos         = EC_READ_S32(domain1_pd + off.off_pos);
@@ -275,10 +264,6 @@ RxPDO EthercatAdapterIGH::receive(int index)
 }
 
 void EthercatAdapterIGH::receive_physical() {
-    if (!is_initialized || !master || !domain1 || !domain1_pd) {
-        return;
-    }
-
     struct timespec time;
     clock_gettime(CLOCK_TO_USE, &time);
     ecrt_master_application_time(master, TIMESPEC2NS(time));
@@ -289,25 +274,13 @@ void EthercatAdapterIGH::receive_physical() {
     ecrt_domain_process(domain1);
     ecrt_master_state(master, &master_state);
     ecrt_domain_state(domain1, &domain1_state);
-    health_master_link_up.store(master_state.link_up != 0, std::memory_order_relaxed);
-    health_wc_state.store(static_cast<int>(domain1_state.wc_state),
-                          std::memory_order_relaxed);
-    health_working_counter.store(domain1_state.working_counter,
-                                 std::memory_order_relaxed);
-
     for (std::size_t i = 0; i < kNumSlaves; ++i) {
         ecrt_slave_config_state(sc[i], &sc_state[i]);
-        const bool ok = sc_state[i].online && sc_state[i].operational;
-        slave_configured[i].store(ok, std::memory_order_relaxed);
     }
 }
 
 
 void EthercatAdapterIGH::send_physical() {
-    if (!is_initialized || !master || !domain1 || !domain1_pd) {
-        return;
-    }
-
     for (std::size_t i = 0; i < kNumSlaves; ++i) {
         write_txpdo_to_domain(i, tx_shadow[i]);
     }
@@ -344,21 +317,16 @@ void EthercatAdapterIGH::send_physical() {
 
 // 检查特定从站的配置状态
 bool EthercatAdapterIGH::is_configured(int index) {
-    if (index < 0 || index >= static_cast<int>(kNumSlaves)) {
-        return false;
-    }
-    return slave_configured[index].load(std::memory_order_relaxed);
+    return sc_state[index].online && sc_state[index].operational;
 }
 
 
 EthercatBusHealthSnapshot EthercatAdapterIGH::get_bus_health() const
 {
     EthercatBusHealthSnapshot health;
-    health.master_link_up = health_master_link_up.load(std::memory_order_relaxed);
-    health.wc_state = static_cast<ec_wc_state_t>(
-        health_wc_state.load(std::memory_order_relaxed));
-    health.working_counter =
-        health_working_counter.load(std::memory_order_relaxed);
+    health.master_link_up = master_state.link_up != 0;
+    health.wc_state = domain1_state.wc_state;
+    health.working_counter = domain1_state.working_counter;
     return health;
 }
 

@@ -4,7 +4,6 @@
 #include "spsc_latest_channel/spsc_latest_channel.hpp"
 
 #include <array>
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <type_traits>
@@ -44,6 +43,7 @@ inline imu_base::ReaderConfig make_reader_config(const ImuConfig& config)
 
 class RobotImuSession {
 public:
+    // 生命周期和状态读取由所有者线程串行调用；AHRS 回调仅发布独立快照。
     explicit RobotImuSession(ImuConfig config,
                              RuntimeThreadingConfig runtime = {});
     ~RobotImuSession();
@@ -54,7 +54,7 @@ public:
     bool initialize();
     void deinitialize();
 
-    bool is_initialized() const noexcept { return initialized_.load(); }
+    bool is_initialized() const noexcept { return initialized_; }
 
     bool get_ahrs_snapshot(AhrsStateSnapshot& out);
 
@@ -63,7 +63,7 @@ private:
     RuntimeThreadingConfig runtime_;
     std::unique_ptr<imu_base::IMUReaderBase> reader_;
 
-    std::atomic<bool> initialized_{false};
+    bool initialized_{false};
 
     robot_base::SpscLatestChannel<AhrsStateSnapshot> ahrs_state_channel_;
     AhrsStateSnapshot latest_ahrs_state_cache_;

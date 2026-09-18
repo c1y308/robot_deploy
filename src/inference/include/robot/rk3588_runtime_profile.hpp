@@ -37,7 +37,6 @@ inline robot_base::ThreadRuntimeOptions make_fifo_thread_options(
 inline RuntimeThreadingConfig make_rk3588_runtime_profile()
 {
     RuntimeThreadingConfig profile;
-    profile.enabled = true;
     profile.require_host_preflight = true;
     profile.require_process_memory_lock = true;
     profile.policy_main     = make_other_thread_options({4, 5}, 128U * 1024U);
