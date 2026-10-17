@@ -55,8 +55,9 @@ namespace {
 constexpr std::size_t kDof = motor_base::kMaxMotors;
 constexpr std::size_t kSampleCapacity = 28'000;
 constexpr std::int64_t kCommandValidityNs = 10'000'000;
-constexpr double kFrequencyStartHz = 0.1;
-constexpr double kFrequencyEndHz = 10.0;
+constexpr int kMotorReadyTimeoutMs = 50'000;
+constexpr double kFrequencyStartHz = 0.4;
+constexpr double kFrequencyEndHz = 6.0;
 constexpr double kChirpDurationS = 20.0;
 constexpr double kRampToNominalS = 3.0;
 constexpr double kNominalHoldS = 1.0;
@@ -73,6 +74,11 @@ constexpr std::array<const char*, kDof> kJointNames = {
     "left_hip_yaw", "right_hip_yaw", "left_knee_pitch", "right_knee_pitch",
     "left_ankle_pitch", "right_ankle_pitch", "left_ankle_roll", "right_ankle_roll",
 };
+constexpr std::array<const char*, kDof> kPaceJointNames = {
+    "left_hip_roll", "left_hip_pitch", "left_hip_yaw", "left_knee_pitch",
+    "left_ankle_pitch", "left_ankle_roll", "right_hip_roll", "right_hip_pitch",
+    "right_hip_yaw", "right_knee_pitch", "right_ankle_pitch", "right_ankle_roll",
+};
 constexpr std::array<int, kDof> kJointIdsMap = {0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11};
 constexpr std::array<int, kDof> kMotorDirection = {
     -1, -1, 1, 1, -1, -1, -1, 1, 1, -1, -1, -1,
@@ -86,8 +92,8 @@ constexpr std::array<double, kDof> kChirpSign = {
 // invalid default: it prevents a partially configured test from enabling motors.
 constexpr double kUnset = std::numeric_limits<double>::quiet_NaN();
 const std::array<double, kDof> kChirpAmplitudeRad = {
-    0.1, 0.1, 0.1, 0.1, 0.1, 0.1,
-    0.1, 0.1, 0.1, 0.1, 0.1, 0.1,
+    0.12, 0.12, 0.20, 0.20, 0.16, 0.16,
+    0.20, 0.20, 0.0, 0.0, 0.12, 0.12,
 };
 const std::array<double, kDof> kModelSafeMinRad = {
     -3.3, -3.3, -3.3, -3.3, -3.3, -3.3,
@@ -206,6 +212,7 @@ struct ChirpContext {
     std::array<double, kDof> last_dq_actual{};
     bool start_captured{false};
     std::int64_t start_ns{0};
+    std::int64_t recording_start_ns{0};
     std::int64_t last_sample_ns{0};
     std::uint64_t cycle_index{0};
 
@@ -374,7 +381,6 @@ struct ChirpContext {
         }
         last_q_actual = q_actual;
         last_dq_actual = dq_actual;
-        if (queued.valid) applying = queued;
         for (std::size_t i = 0; i < kDof; ++i) {
             if (!std::isfinite(q_actual[i]) || !std::isfinite(dq_actual[i]) ||
                 q_actual[i] < kModelSafeMinRad[i] || q_actual[i] > kModelSafeMaxRad[i]) {
@@ -430,6 +436,10 @@ struct ChirpContext {
         queued.chirp_elapsed_s = eval.chirp_elapsed_s;
         queued.phase = eval.phase;
         queued.q_target = q_target;
+        // The controller consumes the just-published policy command later in
+        // this same RT cycle.  Keep log metadata paired with that TxPDO rather
+        // than the previous cycle's target; this does not affect control.
+        applying = queued;
     }
 
     void tx_rt(int index, const myactua::TxPDO& pdo) noexcept
@@ -451,21 +461,37 @@ struct ChirpContext {
             tx_count = 0;
             return;
         }
+
+        // 关节回零和稳态等待只用于把系统带到激励起点，不属于辨识数据。
+        // applying 对应的是本周期实际下发的命令，因此首条样本一定是已经
+        // 开始扫频的命令，而不是刚产生、尚未作用到电机的 Chirp 命令。
+        if (applying.phase != Phase::Chirp) {
+            tx_count = 0;
+            return;
+        }
+        const std::int64_t now_ns = robot_base::monotonic_now_ns();
+        // 记录时间轴以第一条实际扫频样本为原点；回零/等待阶段不影响导出
+        // 数据的时间戳。命令生成时间可为负值，表示该命令在首次下发前产生。
+        if (sample_count.load(std::memory_order_relaxed) == 0) {
+            recording_start_ns = now_ns;
+            last_sample_ns = now_ns;
+            cycle_index = 0;
+        }
         const std::size_t index = sample_count.fetch_add(1, std::memory_order_relaxed);
         if (index >= samples.size()) {
             abort_rt(9);
             tx_count = 0;
             return;
         }
-        const std::int64_t now_ns = robot_base::monotonic_now_ns();
+        const std::int64_t recording_elapsed_ns = now_ns - recording_start_ns;
         Sample& sample = samples[index];
-        sample.timestamp_ns = now_ns;
-        sample.generation_ns = applying.generation_ns;
-        sample.feedback_timestamp_ns = now_ns;
+        sample.timestamp_ns = recording_elapsed_ns;
+        sample.generation_ns = applying.generation_ns - recording_start_ns;
+        sample.feedback_timestamp_ns = recording_elapsed_ns;
         sample.cycle_index = cycle_index++;
-        sample.elapsed_s = applying.elapsed_s;
+        sample.elapsed_s = static_cast<double>(recording_elapsed_ns) / 1'000'000'000.0;
         sample.chirp_elapsed_s = applying.chirp_elapsed_s;
-        sample.cycle_dt_s = last_sample_ns == 0 ? 0.0 :
+        sample.cycle_dt_s = index == 0 ? 0.0 :
             static_cast<double>(now_ns - last_sample_ns) / 1'000'000'000.0;
         sample.phase = static_cast<std::uint8_t>(applying.phase);
         sample.command_applied = 1;
@@ -629,9 +655,29 @@ std::string python_prefix()
     return "import sys; sys.path.insert(0, " + std::string("r'") + bundled.string() + "'); ";
 }
 
+// Derive the PACE column mapping from the raw joint names.  This detects a
+// renamed, missing, or duplicated raw joint instead of silently relying on a
+// positional assumption.
+bool make_pace_source_indices(std::array<std::size_t, kDof>& indices) noexcept
+{
+    for (std::size_t pace_index = 0; pace_index < kDof; ++pace_index) {
+        bool found = false;
+        for (std::size_t raw_index = 0; raw_index < kDof; ++raw_index) {
+            if (std::strcmp(kPaceJointNames[pace_index], kJointNames[raw_index]) != 0) continue;
+            if (found) return false;
+            indices[pace_index] = raw_index;
+            found = true;
+        }
+        if (!found) return false;
+    }
+    return true;
+}
+
 bool write_csv_and_pt(const ChirpContext& context, const std::filesystem::path& output,
                       bool interrupted)
 {
+    std::array<std::size_t, kDof> pace_source_indices{};
+    if (!make_pace_source_indices(pace_source_indices)) return false;
     const std::size_t count = std::min(context.sample_count.load(std::memory_order_acquire), kSampleCapacity);
     const std::filesystem::path csv = output.string() + ".csv";
     std::ofstream stream(csv);
@@ -674,22 +720,56 @@ csv_path, output_path, metadata_json = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(csv_path, newline='') as f:
     rows = list(csv.DictReader(f))
 def ints(name): return torch.tensor([int(r[name]) for r in rows], dtype=torch.int64)
-def floats(prefix): return torch.tensor([[float(r[f'{prefix}_{i}']) for i in range(12)] for r in rows], dtype=torch.float64)
-def raw(prefix): return torch.tensor([[int(r[f'{prefix}_{i}']) for i in range(12)] for r in rows], dtype=torch.int64)
+def floats(prefix):
+    values = [[float(r[f'{prefix}_{i}']) for i in range(12)] for r in rows]
+    return torch.tensor(values, dtype=torch.float64) if values else torch.empty((0, 12), dtype=torch.float64)
+def raw(prefix):
+    values = [[int(r[f'{prefix}_{i}']) for i in range(12)] for r in rows]
+    return torch.tensor(values, dtype=torch.int64) if values else torch.empty((0, 12), dtype=torch.int64)
+metadata = json.loads(metadata_json)
+pace_joint_names = [
+  'left_hip_roll', 'left_hip_pitch', 'left_hip_yaw', 'left_knee_pitch',
+  'left_ankle_pitch', 'left_ankle_roll', 'right_hip_roll', 'right_hip_pitch',
+  'right_hip_yaw', 'right_knee_pitch', 'right_ankle_pitch', 'right_ankle_roll',
+]
+raw_joint_names = metadata['joint_names']
+if len(raw_joint_names) != 12 or len(set(raw_joint_names)) != 12:
+    raise ValueError('metadata.joint_names must contain 12 unique raw joint names')
+if len(pace_joint_names) != 12 or len(set(pace_joint_names)) != 12:
+    raise ValueError('PACE joint names must contain 12 unique names')
+missing = [name for name in pace_joint_names if name not in raw_joint_names]
+if missing:
+    raise ValueError(f'missing PACE joint names in raw log: {missing}')
+pace_source_indices = [raw_joint_names.index(name) for name in pace_joint_names]
+if metadata.get('pace_joint_names') != pace_joint_names:
+    raise ValueError('metadata.pace_joint_names does not match PACE standard order')
+if metadata.get('pace_source_indices') != pace_source_indices:
+    raise ValueError('metadata.pace_source_indices does not match metadata.joint_names')
+elapsed_time = torch.tensor([float(r['elapsed_s']) for r in rows], dtype=torch.float64)
+q_target = floats('q_target')
+q_actual = floats('q_actual')
+time = (elapsed_time - elapsed_time[0]).to(torch.float32) if len(rows) else torch.empty(0, dtype=torch.float32)
+dof_pos = q_actual[:, pace_source_indices].to(torch.float32)
+des_dof_pos = q_target[:, pace_source_indices].to(torch.float32)
+if not (torch.isfinite(time).all() and torch.isfinite(dof_pos).all() and torch.isfinite(des_dof_pos).all()):
+    raise ValueError('PACE fields contain non-finite values')
+if len(rows) and (time[0].item() != 0.0 or not torch.all(time[1:] > time[:-1])):
+    raise ValueError('PACE time must start at zero and be strictly increasing')
 data = {
   'timestamp_ns': ints('timestamp_ns'), 'generation_ns': ints('generation_ns'),
   'feedback_timestamp_ns': ints('feedback_timestamp_ns'), 'cycle_index': ints('cycle_index'),
-  'elapsed_time': torch.tensor([float(r['elapsed_s']) for r in rows], dtype=torch.float64),
+  'elapsed_time': elapsed_time,
   'chirp_elapsed_time': torch.tensor([float(r['chirp_elapsed_s']) for r in rows], dtype=torch.float64),
   'cycle_dt_s': torch.tensor([float(r['cycle_dt_s']) for r in rows], dtype=torch.float64),
-  'phase': ints('phase'), 'q_target': floats('q_target'), 'q_actual': floats('q_actual'),
+  'phase': ints('phase'), 'q_target': q_target, 'q_actual': q_actual,
   'dq_actual': floats('dq_actual'), 'motor_position': floats('motor_position'),
   'motor_velocity': floats('motor_velocity'), 'motor_torque_percent': floats('motor_torque_percent'),
   'working_counter': ints('working_counter'), 'command_applied': ints('command_applied'),
   'tx_target_pos_raw': raw('tx_target_pos_raw'), 'tx_target_vel_raw': raw('tx_target_vel_raw'),
   'tx_target_torque_raw': raw('tx_target_torque_raw'), 'tx_pvt_kp_raw': raw('tx_pvt_kp_raw'),
   'tx_pvt_kd_raw': raw('tx_pvt_kd_raw'), 'tx_op_mode': raw('tx_op_mode'),
-  'metadata': json.loads(metadata_json)}
+  'time': time, 'dof_pos': dof_pos, 'des_dof_pos': des_dof_pos,
+  'metadata': metadata}
 torch.save(data, output_path)
 )PY";
     // 配置数值序列化：非有限值输出 null，保证 metadata 始终是合法 JSON
@@ -699,9 +779,16 @@ torch.save(data, output_path)
         else out << "null";
     };
     std::ostringstream metadata;
-    metadata << std::setprecision(17) << "{\"clock\":\"CLOCK_MONOTONIC\",\"frequency_hz\":[0.1,10.0],\"duration_s\":20.0,\"joint_names\":[";
+    metadata << std::setprecision(17) << "{\"clock\":\"CLOCK_MONOTONIC\",\"frequency_hz\":["
+             << kFrequencyStartHz << ',' << kFrequencyEndHz
+             << "],\"duration_s\":20.0,\"joint_names\":[";
     for (std::size_t i = 0; i < kDof; ++i) metadata << (i == 0 ? "" : ",") << '\"' << kJointNames[i] << '\"';
-    metadata << "],\"joint_ids_map\":[";
+    metadata << "],\"pace_joint_names\":[";
+    for (std::size_t i = 0; i < kDof; ++i) metadata << (i == 0 ? "" : ",") << '\"' << kPaceJointNames[i] << '\"';
+    metadata << "],\"pace_source_indices\":[";
+    for (std::size_t i = 0; i < kDof; ++i) metadata << (i == 0 ? "" : ",") << pace_source_indices[i];
+    metadata << "],\"pace_time_source\":\"elapsed_time\",\"pace_units\":{\"time\":\"s\",\"dof_pos\":\"rad\",\"des_dof_pos\":\"rad\"}";
+    metadata << ",\"joint_ids_map\":[";
     for (std::size_t i = 0; i < kDof; ++i) metadata << (i == 0 ? "" : ",") << kJointIdsMap[i];
     metadata << "],\"motor_direction\":[";
     for (std::size_t i = 0; i < kDof; ++i) metadata << (i == 0 ? "" : ",") << kMotorDirection[i];
@@ -755,7 +842,8 @@ bool self_test_chirp_math()
     }
     const auto frequency = [](double t) { return kFrequencyStartHz +
         (kFrequencyEndHz - kFrequencyStartHz) * t / kChirpDurationS; };
-    if (!(frequency(0.0) == 0.1 && frequency(10.0) > frequency(1.0) && frequency(20.0) == 10.0)) return false;
+    if (!(frequency(0.0) == kFrequencyStartHz && frequency(10.0) > frequency(1.0) &&
+          frequency(20.0) == kFrequencyEndHz)) return false;
     if (ChirpContext::smoothstep(0.0) != 0.0 || ChirpContext::smoothstep(1.0) != 1.0) return false;
     if (!std::isfinite(ChirpContext::smoothstep(nan_value))) return false;
     return true;
@@ -931,8 +1019,8 @@ bool self_test_rt_compute_audit()
     return after.uordblks == before.uordblks && after.hblks == before.hblks;
 }
 
-// 生成/下发样本对应：send_rt 写入的样本携带生成时间、阶段、目标与实际 TxPDO；
-// PDO 集不完整时立即终止且不写样本。
+// 生成/下发样本对应：仅实际下发的 Chirp 命令会写入，样本携带生成时间、
+// 阶段、目标与实际 TxPDO；PDO 集不完整时立即终止且不写样本。
 bool self_test_sample_pairing()
 {
     auto context = std::make_unique<ChirpContext>();
@@ -940,23 +1028,28 @@ bool self_test_sample_pairing()
     fill_enabled_neutral_rx(*context);
 
     context->applying.valid = true;
+    context->applying.phase = Phase::NominalHold;
+    myactua::TxPDO pdo{};
+    pdo.target_pos = 42;
+    for (std::size_t i = 0; i < kDof; ++i) context->tx_rt(static_cast<int>(i), pdo);
+    context->send_rt(adapter);
+    if (context->sample_count.load() != 0 || context->aborted.load()) return false;
+
     context->applying.generation_ns = 1'700'000'000'000'000;
     context->applying.elapsed_s = 4.25;
     context->applying.chirp_elapsed_s = 0.25;
     context->applying.phase = Phase::Chirp;
     context->applying.q_target.fill(0.07);
 
-    myactua::TxPDO pdo{};
-    pdo.target_pos = 42;
     for (std::size_t i = 0; i < kDof; ++i) context->tx_rt(static_cast<int>(i), pdo);
     context->send_rt(adapter);
     if (context->sample_count.load() != 1) return false;
     const Sample& sample = context->samples[0];
-    if (sample.generation_ns != 1'700'000'000'000'000 ||
-        sample.elapsed_s != 4.25 || sample.chirp_elapsed_s != 0.25 ||
+    if (sample.timestamp_ns != 0 || sample.feedback_timestamp_ns != 0 ||
+        sample.elapsed_s != 0.0 || sample.cycle_dt_s != 0.0 ||
+        sample.chirp_elapsed_s != 0.25 ||
         sample.phase != static_cast<std::uint8_t>(Phase::Chirp) ||
-        sample.command_applied != 1 || sample.cycle_index != 0 ||
-        sample.timestamp_ns <= 0) return false;
+        sample.command_applied != 1 || sample.cycle_index != 0) return false;
     for (std::size_t i = 0; i < kDof; ++i) {
         if (sample.q_target[i] != 0.07 || sample.tx[i].target_pos != 42) return false;
     }
@@ -986,7 +1079,7 @@ bool self_test_export_round_trip()
         sample.working_counter = 12;
         for (std::size_t i = 0; i < kDof; ++i) {
             sample.q_target[i] = 0.25 * static_cast<double>(row) + 0.001 * static_cast<double>(i);
-            sample.q_actual[i] = -0.5;
+            sample.q_actual[i] = -0.5 * static_cast<double>(row) - 0.002 * static_cast<double>(i);
             sample.dq_actual[i] = 0.0;
             sample.motor_position[i] = 0.3;
             sample.motor_velocity[i] = 0.0;
@@ -1007,7 +1100,7 @@ bool self_test_export_round_trip()
 
     const std::string verify = python_prefix() + R"PY(
 import sys, torch
-data = torch.load(sys.argv[1], weights_only=True)
+data = torch.load(sys.argv[1], map_location='cpu', weights_only=True)
 assert data['q_target'].shape == (3, 12)
 assert data['q_target'].dtype == torch.float64
 assert data['timestamp_ns'].dtype == torch.int64
@@ -1022,6 +1115,22 @@ assert meta['joint_ids_map'] == [0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11]
 assert meta['kp'][0] == 180.0 and meta['kd'][0] == 10.0
 assert meta['aborted'] is False and meta['abort_reason'] == 0
 assert meta['interrupted'] is True
+assert data['time'].shape == (3,) and data['time'].dtype == torch.float32
+assert data['dof_pos'].shape == (3, 12) and data['dof_pos'].dtype == torch.float32
+assert data['des_dof_pos'].shape == (3, 12) and data['des_dof_pos'].dtype == torch.float32
+assert data['time'][0].item() == 0.0 and torch.all(data['time'][1:] > data['time'][:-1])
+assert torch.isfinite(data['time']).all() and torch.isfinite(data['dof_pos']).all()
+assert torch.isfinite(data['des_dof_pos']).all()
+indices = [0, 2, 4, 6, 8, 10, 1, 3, 5, 7, 9, 11]
+assert meta['pace_joint_names'] == [
+    'left_hip_roll', 'left_hip_pitch', 'left_hip_yaw', 'left_knee_pitch',
+    'left_ankle_pitch', 'left_ankle_roll', 'right_hip_roll', 'right_hip_pitch',
+    'right_hip_yaw', 'right_knee_pitch', 'right_ankle_pitch', 'right_ankle_roll']
+assert meta['pace_source_indices'] == indices
+assert meta['pace_time_source'] == 'elapsed_time'
+assert meta['pace_units'] == {'time': 's', 'dof_pos': 'rad', 'des_dof_pos': 'rad'}
+assert torch.allclose(data['dof_pos'], data['q_actual'][:, indices].float())
+assert torch.allclose(data['des_dof_pos'], data['q_target'][:, indices].float())
 )PY";
     const bool verified = run_python(verify, {output.string()});
     std::filesystem::remove(output, ec);
@@ -1048,12 +1157,12 @@ bool self_test()
 int main(int argc, char** argv)
 {
     bool run_self_test = false;
-    std::filesystem::path output = "chirp_data.pt";
+    std::filesystem::path output = "logs/chirp_data.pt";
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--self-test") == 0) run_self_test = true;
         else if (std::strcmp(argv[i], "--output") == 0 && i + 1 < argc) output = argv[++i];
         else {
-            std::cerr << "usage: chirp_test [--self-test] [--output chirp_data.pt]\n";
+            std::cerr << "usage: chirp_test [--self-test] [--output logs/chirp_data.pt]\n";
             return 2;
         }
     }
@@ -1063,6 +1172,16 @@ int main(int argc, char** argv)
         return passed ? 0 : 1;
     }
     if (!validate_config()) return 2;
+    const std::filesystem::path output_directory = output.parent_path();
+    if (!output_directory.empty()) {
+        std::error_code directory_error;
+        std::filesystem::create_directories(output_directory, directory_error);
+        if (directory_error) {
+            std::cerr << "[chirp] cannot create output directory " << output_directory
+                      << ": " << directory_error.message() << '\n';
+            return 2;
+        }
+    }
     if (std::filesystem::exists(output) || std::filesystem::exists(output.string() + ".csv")) {
         std::cerr << "[chirp] output already exists; choose a new --output path\n";
         return 2;
@@ -1115,8 +1234,10 @@ int main(int argc, char** argv)
                                                                kMotorKp, kMotorKd, torque_config);
     context.action_processor = &action_processor;
 
-    std::cout << "[chirp] duration=20 s frequency=0.1->10 Hz control_rate=1000 Hz joints=12\n";
-    if (!controller.connect() || !controller.wait_all_motors_ready(20'000, 100)) {
+    std::cout << "[chirp] duration=" << kChirpDurationS << " s frequency="
+              << kFrequencyStartHz << "->" << kFrequencyEndHz
+              << " Hz control_rate=1000 Hz joints=12\n";
+    if (!controller.connect() || !controller.wait_all_motors_ready(kMotorReadyTimeoutMs, 100)) {
         std::cerr << "[chirp] EtherCAT is not ready\n";
         return 1;
     }

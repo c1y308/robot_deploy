@@ -1,0 +1,68 @@
+joint_ids_map: [0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11]
+step_dt: 0.02
+stiffness: [180.0, 180.0, 180.0, 180.0, 180.0, 180.0, 180.0, 180.0, 187.0, 187.0,
+  187.0, 187.0]
+damping: [10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 9.07, 9.07, 9.07, 9.07]
+default_joint_pos: [0.0, 0.0, -0.2, -0.2, 0.0, 0.0, 0.2, 0.2, -0.05, -0.05, 0.0, 0.0]
+commands:
+  base_velocity:
+    ranges:
+      lin_vel_x: [-0.4, 0.5]
+      lin_vel_y: [-0.25, 0.25]
+      ang_vel_z: [-0.5, 0.5]
+      heading: null
+actions:
+  JointPositionAction:
+    clip:
+    - [-0.12, 0.12]
+    - [-0.12, 0.12]
+    - [-0.4, 0.38]
+    - [-0.4, 0.38]
+    - [-0.12, 0.12]
+    - [-0.12, 0.12]
+    - [-0.22, 0.7]
+    - [-0.22, 0.7]
+    - [-0.3, 0.3]
+    - [-0.3, 0.3]
+    - [-0.1, 0.1]
+    - [-0.1, 0.1]
+    joint_names: [.*]
+    scale: [0.1, 0.1, 0.32, 0.32, 0.08, 0.08, 0.48, 0.48, 0.22, 0.22, 0.08, 0.08]
+    offset: [0.0, 0.0, -0.2, -0.2, 0.0, 0.0, 0.2, 0.2, -0.05, -0.05, 0.0, 0.0]
+    raw_action_clip: 1.0
+    min_inference_delay: 0
+    max_inference_delay: 1
+    min_communication_delay: 0
+    max_communication_delay: 1
+    joint_ids: null
+observations:
+  base_ang_vel:
+    params: {}
+    clip: null
+    scale: [0.2, 0.2, 0.2]
+    history_length: 15
+  projected_gravity:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0]
+    history_length: 15
+  velocity_commands:
+    params: {command_name: base_velocity}
+    clip: null
+    scale: [1.0, 1.0, 1.0]
+    history_length: 15
+  joint_pos_rel:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 15
+  joint_vel_rel:
+    params: {}
+    clip: null
+    scale: [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05]
+    history_length: 15
+  last_action:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 15

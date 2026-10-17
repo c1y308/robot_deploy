@@ -19,8 +19,8 @@ struct JointMappingConfig {
     std::vector<int> model_to_motor_index = {0, 6, 1, 7, 2, 8, 3, 9};
     /* 物理电机顺序：电机方向与模型方向的关系，1 同向 / -1 反向 */
     std::array<int, 12> motor_to_model_direction = {
-        -1, -1, 1,  1, -1, -1,
-        -1,  1, 1, -1, -1, -1
+        -1, -1, 1, 1, -1, -1,
+        -1, 1, 1, -1, -1, -1
     };
 
     AnkleParallelMap left_ankle_parallel  = {8, 10, 4, 5};
