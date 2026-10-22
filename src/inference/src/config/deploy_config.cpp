@@ -849,23 +849,11 @@ private:
 }  // namespace
 
 bool load_deploy_config(const std::string& yaml_path,
-                        const DeployConfigLoadOptions& options,
                         RobotInterfaceConfig& config,
                         std::string& error)
 {
-    const std::string root_dir = options.root_dir.empty()
-                                     ? std::string(ROBOT_INFERENCE_ROOT_DIR)
-                                     : options.root_dir;
-    DeployConfigLoader loader(root_dir, config);
+    DeployConfigLoader loader(ROBOT_INFERENCE_ROOT_DIR, config);
     return loader.load(yaml_path, error);
-}
-
-bool load_deploy_config(const std::string& yaml_path,
-                        RobotInterfaceConfig& config,
-                        std::string& error)
-{
-    return load_deploy_config(yaml_path, DeployConfigLoadOptions{}, config,
-                              error);
 }
 
 }  // namespace inference

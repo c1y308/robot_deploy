@@ -1,7 +1,7 @@
 #pragma once
 
 #include "recorder/inference_record.hpp"
-#include "tool/thread_runtime.hpp"
+#include "rt_thread_config/thread_runtime.hpp"
 
 #include <condition_variable>
 #include <cstdint>

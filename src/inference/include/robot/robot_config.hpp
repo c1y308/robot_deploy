@@ -5,11 +5,13 @@
 #include "policy/policy_observation_config.hpp"
 #include "recorder/inference_recorder_config.hpp"
 #include "robot/joint_mapping_config.hpp"
-#include "tool/thread_runtime.hpp"
+#include "rt_thread_config/thread_runtime.hpp"
 
 #include <array>
+#include <cstddef>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace inference {
@@ -100,7 +102,7 @@ struct SafetyConfig {
    顺序: left upper, left lower, right upper, right lower。 */
 struct AnkleMotorLimitConfig {
     std::array<double, 4> min_rad = {-1.1, -1.1, -1.1, -1.1};
-    std::array<double, 4> max_rad = {1.1, 1.1, 1.1, 1.1};
+    std::array<double, 4> max_rad = { 1.1,  1.1,  1.1,  1.1};
 };
 
 struct AnkleTorqueControlConfig {
@@ -129,6 +131,50 @@ struct RuntimeThreadingConfig {
     int torch_inter_op_threads{0};
     int openblas_threads{0};
 };
+
+inline robot_base::ThreadRuntimeOptions make_other_thread_options(
+    std::vector<int> cpu_ids,
+    std::size_t stack_prefault_bytes = 0U)
+{
+    robot_base::ThreadRuntimeOptions options;
+    options.cpu_ids = std::move(cpu_ids);
+    options.stack_prefault_bytes = stack_prefault_bytes;
+    options.scheduling_policy    = robot_base::ThreadSchedulingPolicy::OTHER;
+    options.priority = 0;
+    return options;
+}
+
+
+inline robot_base::ThreadRuntimeOptions make_fifo_thread_options(
+    int cpu_id,
+    int priority,
+    std::size_t stack_prefault_bytes = 0U)
+{
+    robot_base::ThreadRuntimeOptions options;
+    options.cpu_ids = {cpu_id};
+    options.stack_prefault_bytes = stack_prefault_bytes;
+    options.scheduling_policy    = robot_base::ThreadSchedulingPolicy::FIFO;
+    options.priority = priority;
+    return options;
+}
+
+
+// 固定 RK3588 部署配置，由调用方显式选择。
+inline RuntimeThreadingConfig make_rk3588_runtime_profile()
+{
+    RuntimeThreadingConfig profile;
+    profile.require_host_preflight = true;
+    profile.require_process_memory_lock = true;
+    profile.policy_main     = make_other_thread_options({4, 5}, 128U * 1024U);
+    profile.motor_rt        = make_fifo_thread_options(7, 80, 128U * 1024U);
+    profile.policy_command  = make_fifo_thread_options(6, 70, 128U * 1024U);
+    profile.imu_reader      = make_other_thread_options({2}, 64U * 1024U);
+    profile.background      = make_other_thread_options({0, 1});
+    profile.torch_intra_op_threads = 2;
+    profile.torch_inter_op_threads = 1;
+    profile.openblas_threads = 1;
+    return profile;
+}
 
 struct RobotInterfaceConfig {
     // 电机 运行配置

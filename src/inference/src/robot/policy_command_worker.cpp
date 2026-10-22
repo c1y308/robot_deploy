@@ -2,7 +2,7 @@
 
 #include "robot/action_processor.hpp"
 #include "robot/robot_motor_session.hpp"
-#include "tool/thread_runtime.hpp"
+#include "rt_thread_config/thread_runtime.hpp"
 #include "tool/tool.hpp"
 
 #include <algorithm>

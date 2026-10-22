@@ -1,6 +1,6 @@
 #include "config/deploy_config.hpp"
-#include "robot/rk3588_host_preflight.hpp"
-#include "robot/rk3588_runtime_profile.hpp"
+#include "environment_check/environment_check.hpp"
+#include "robot/robot_config.hpp"
 #include "robot/robot_interface.hpp"
 #include "xbox_controller.hpp"
 
@@ -74,6 +74,7 @@ bool safe_shutdown(inference::RobotInterface& robot)
 
 }  // namespace
 
+
 int main(int argc, char** argv)
 {
     std::signal(SIGINT, signal_handler);
@@ -96,7 +97,7 @@ int main(int argc, char** argv)
     }
 
     if (cfg.runtime.require_host_preflight &&
-        !inference::verify_rk3588_host_layout(config_error)) {
+        !robot_base::environment_check(config_error)) {
         std::cerr << "[ERROR] RK3588 RT host preflight failed: "
                   << config_error << "\n";
         return 1;
