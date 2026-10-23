@@ -14,7 +14,7 @@
 #include "motor_base/command_types.hpp"
 #include "motor_base/rt_event_dispatcher.hpp"
 #include "motor_base/status_channel.hpp"
-#include "tool/thread_runtime.hpp"
+#include "rt_thread_config/thread_runtime.hpp"
 
 namespace motor_base {
 

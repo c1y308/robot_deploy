@@ -1,6 +1,6 @@
 #pragma once
 
-#include "tool/thread_runtime.hpp"
+#include "rt_thread_config/thread_runtime.hpp"
 
 #include <atomic>
 #include <chrono>

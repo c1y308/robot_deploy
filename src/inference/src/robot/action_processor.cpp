@@ -438,7 +438,7 @@ bool ActionProcessor::build_reset_start_model_pose(
 
     // 按照模型顺序遍历，将电机角度转换为模型关节角度
     for (int model_index = 0; model_index < count; ++model_index) {
-        // 跳过脚踝关节的模型 DOF，它们的角度由 IK 求解器计算得出
+        // 跳过脚踝关节的模型 DOF，它们的角度由 FK 求解器计算得出
         if (mapping_->is_parallel_model_dof(model_index)) {
             continue;
         }
@@ -450,7 +450,8 @@ bool ActionProcessor::build_reset_start_model_pose(
             mapping_->direction_for_motor(motor_index) * current_motor_q[static_cast<std::size_t>(motor_index)];
     }
 
-    auto fill_ankle_start_model_q = [&](const AnkleParallelMap& ankle_map) {
+    auto fill_ankle_start_model_q = [&](const char* ankle_name,
+                                       const AnkleParallelMap& ankle_map) {
         const double upper_motor =
             mapping_->direction_for_motor(ankle_map.upper_motor_index) *
             current_motor_q[static_cast<std::size_t>(ankle_map.upper_motor_index)];
@@ -465,18 +466,27 @@ bool ActionProcessor::build_reset_start_model_pose(
         const ankle_motor_fk::FootAngles foot =
             ankle_motor_fk::solve(upper_motor, lower_motor, initial_roll, initial_pitch);
 
-        if (foot.reachable) {
-            start_model_q[pitch_index] = foot.pitch;
-            start_model_q[roll_index] = foot.roll;
-        } else {
-            start_model_q[pitch_index] = initial_pitch;
-            start_model_q[roll_index] = initial_roll;
+        if (!foot.reachable ||
+            !std::isfinite(foot.pitch) || !std::isfinite(foot.roll)) {
+            // 电机角已转换到求解器方向；失败时不能用目标姿态替代真实起点。
+            error = std::string(ankle_name) +
+                    " ankle FK failed while building reset start pose: upper_motor=" +
+                    std::to_string(upper_motor) + " rad, lower_motor=" +
+                    std::to_string(lower_motor) + " rad, reachable=" +
+                    (foot.reachable ? "true" : "false") +
+                    ", pitch=" + std::to_string(foot.pitch) +
+                    " rad, roll=" + std::to_string(foot.roll) + " rad";
+            return false;
         }
+        start_model_q[pitch_index] = foot.pitch;
+        start_model_q[roll_index] = foot.roll;
         return true;
     };
 
-    fill_ankle_start_model_q(mapping_->left_ankle());
-    fill_ankle_start_model_q(mapping_->right_ankle());
+    if (!fill_ankle_start_model_q("left", mapping_->left_ankle()) ||
+        !fill_ankle_start_model_q("right", mapping_->right_ankle())) {
+        return false;
+    }
     error.clear();
     return true;
 }

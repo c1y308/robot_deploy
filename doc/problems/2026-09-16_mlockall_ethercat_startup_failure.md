@@ -128,7 +128,7 @@ mlockall(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT);
 
 恢复锁内存时的代码修复涉及：
 
-- [RK3588 profile](../../src/inference/include/robot/rk3588_runtime_profile.hpp)：恢复锁内存开关。
+- [RK3588 profile](../../src/inference/include/robot/robot_config.hpp)：恢复锁内存开关。
 - [RobotInterface](../../src/inference/src/robot/robot_interface.cpp)：增加 `MCL_ONFAULT`，同步错误信息和问题说明注释。
 - [内存锁定初始化测试](../../src/inference/tests/robot_initialization_memory_lock_test.cpp)：断言三个锁定标志及失败前不启动硬件/recorder。
 - [部署说明](../../deploy/rk3588/README.md)：同步按需锁页语义和限制。

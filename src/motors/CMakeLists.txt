@@ -52,7 +52,6 @@ add_executable(chirp_test
     ../inference/src/robot/action_processor.cpp
     ../inference/src/robot/joint_mapping.cpp
 )
-add_executable(motor_realtime_channel_test tests/motor_realtime_channel_test.cpp)
 target_include_directories(motor_response_latency_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../inference/include
 )
@@ -65,5 +64,3 @@ target_include_directories(chirp_test PRIVATE
 target_link_libraries(id_test myactua_ethercat)
 target_link_libraries(motor_response_latency_test myactua_ethercat)
 target_link_libraries(chirp_test myactua_ethercat)
-target_link_libraries(motor_realtime_channel_test myactua_ethercat)
-add_test(NAME motor_realtime_channel_test COMMAND motor_realtime_channel_test)

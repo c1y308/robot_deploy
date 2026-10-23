@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "motor_base/command_types.hpp"
-#include "tool/thread_runtime.hpp"
+#include "rt_thread_config/thread_runtime.hpp"
 
 namespace motor_base {
 

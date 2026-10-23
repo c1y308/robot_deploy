@@ -2,6 +2,9 @@
 #include "tool/tool.hpp"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <time.h>
@@ -163,11 +166,12 @@ void MotorControllerBase::shutdown()
     const bool was_running = running_.exchange(false, std::memory_order_acq_rel);
     rt_scheduling_ready_.store(false, std::memory_order_release);
 
+    const bool thread_needs_cleanup = rt_thread_.joinable();
     if (rt_thread_.joinable()) {
         rt_thread_.join();
     }
 
-    if (was_running) {
+    if (was_running || thread_needs_cleanup) {
         realtime_stop_callback();
         rt_event_dispatcher_.stop();
         status_channel_.stop();
@@ -184,6 +188,8 @@ void MotorControllerBase::thread_func()
 {
     timespec next_period{};
     clock_gettime(kClockToUse, &next_period);
+    std::uint64_t missed_periods = 0;
+    std::uint64_t max_lateness_ns = 0;
 
     while (running_.load(std::memory_order_acquire)) {
         ++discrete_cmd_tick_;
@@ -200,7 +206,53 @@ void MotorControllerBase::thread_func()
         realtime_cycle_callback();
 
         add_period_ns(next_period, rt_options_.rt_period_ns);
-        clock_nanosleep(kClockToUse, TIMER_ABSTIME, &next_period, nullptr);
+
+        timespec now{};
+        clock_gettime(kClockToUse, &now);
+        // 如果当前时间已经超过了下一个周期的时间，则需要调整下一个周期的时间
+        if (next_period.tv_sec < now.tv_sec || (next_period.tv_sec == now.tv_sec && next_period.tv_nsec <= now.tv_nsec)) {
+            
+            // 计算相较于原本发送时刻超时的纳秒数
+            std::uint64_t seconds_late = static_cast<std::uint64_t>(now.tv_sec - next_period.tv_sec);
+            long nanoseconds_late = now.tv_nsec - next_period.tv_nsec;
+            if (nanoseconds_late < 0) {
+                --seconds_late;
+                nanoseconds_late += kNsecPerSec;
+            }
+            const std::uint64_t lateness_ns =
+                seconds_late * static_cast<std::uint64_t>(kNsecPerSec) +
+                static_cast<std::uint64_t>(nanoseconds_late);
+
+            const auto period_ns = static_cast<std::uint64_t>(rt_options_.rt_period_ns);
+            const std::uint64_t periods_to_skip = lateness_ns / period_ns + 1;
+            missed_periods += periods_to_skip;
+            max_lateness_ns = std::max(max_lateness_ns, lateness_ns);
+
+            next_period = now;
+            const long remainder_ns = static_cast<long>(lateness_ns % period_ns);
+            add_period_ns(next_period, rt_options_.rt_period_ns - remainder_ns);
+        }
+
+        int sleep_result = 0;
+        do {
+            sleep_result = clock_nanosleep(
+                kClockToUse, TIMER_ABSTIME, &next_period, nullptr);
+        } while (sleep_result == EINTR);
+
+        if (sleep_result != 0) {
+            std::cerr << "[MotorControllerBase] clock_nanosleep failed: "
+                      << std::strerror(sleep_result) << " ("
+                      << sleep_result << ")" << std::endl;
+            running_.store(false, std::memory_order_release);
+            rt_scheduling_ready_.store(false, std::memory_order_release);
+            break;
+        }
+    }
+
+    if (missed_periods > 0) {
+        std::cerr << "[MotorControllerBase] realtime cycle skipped "
+                  << missed_periods << " periods; maximum lateness was "
+                  << max_lateness_ns << " ns" << std::endl;
     }
 }
 

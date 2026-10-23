@@ -18,20 +18,6 @@
 
 namespace robot_base {
 
-// 调度策略
-enum class ThreadSchedulingPolicy {
-    INHERIT,    // 继承，不修改当前线程的调度策略和优先级
-    OTHER,      // SCHED_OTHER，普通调度策略，优先级为 0（用 nice 值）
-    FIFO,       // SCHED_FIFO，实时调度策略，优先级范围为 [1, 99]
-};
-
-// 线程运行时选项
-struct ThreadRuntimeOptions {
-    std::vector<int> cpu_ids;   // 允许线程运行的 CPU 集合
-    ThreadSchedulingPolicy scheduling_policy{ThreadSchedulingPolicy::INHERIT};  // 调度策略 
-    int priority{0};    // 调度优先级
-    std::size_t stack_prefault_bytes{0};  // 进入业务循环前预触碰的栈空间
-};
 
 // 线程启动握手的设置结果。
 struct ThreadSetupResult {
@@ -86,6 +72,23 @@ inline constexpr std::size_t kMaxStackPrefaultBytes = 1024U * 1024U;
 }
 
 
+// 调度策略
+enum class ThreadSchedulingPolicy {
+    INHERIT,    // 继承，不修改当前线程的调度策略和优先级
+    OTHER,      // SCHED_OTHER，普通调度策略，优先级为 0（用 nice 值）
+    FIFO,       // SCHED_FIFO，实时调度策略，优先级范围为 [1, 99]
+};
+
+
+// 线程运行时选项
+struct ThreadRuntimeOptions {
+    std::vector<int> cpu_ids;               // 允许线程运行的 CPU 集合
+    ThreadSchedulingPolicy scheduling_policy{ThreadSchedulingPolicy::INHERIT};  // 调度策略 
+    int priority{0};                        // 调度优先级
+    std::size_t stack_prefault_bytes{0};    // 进入业务循环前预触碰的栈空间
+};
+
+
 // 配置顺序固定为：名称与 affinity -> 栈预触碰 -> 调度策略与优先级。
 inline ThreadSetupResult configure_current_thread(
     const char* name,
@@ -100,11 +103,9 @@ inline ThreadSetupResult configure_current_thread(
         return thread_setup_error("thread name exceeds Linux 15-byte limit", ERANGE);
     }
 
-    // 获取当前线程的 pthread_t 对象
+    // 获取当前线程的 pthread_t 对象 设置线程名称
     const pthread_t self = pthread_self();
-    // 设置线程名称
     int result = pthread_setname_np(self, name);
-
     if (result != 0) {
         return thread_setup_error("pthread_setname_np", result);
     }
@@ -135,13 +136,6 @@ inline ThreadSetupResult configure_current_thread(
         if (!CPU_EQUAL(&expected, &actual)) {
             return thread_setup_error("thread affinity verification", 0);
         }
-    }
-
-    const int prefault_error =
-        prefault_current_thread_stack(options.stack_prefault_bytes);
-    if (prefault_error != 0) {
-        return thread_setup_error("stack prefault (maximum 1 MiB; valid page size required)",
-                                  prefault_error);
     }
 
     // 设置线程调度策略和优先级（采用带有时间片的是否更好？）
@@ -180,6 +174,14 @@ inline ThreadSetupResult configure_current_thread(
         if (actual_policy != policy || actual.sched_priority != options.priority) {
             return thread_setup_error("thread scheduling verification", 0);
         }
+    }
+
+    // 预先建立当前线程的栈页映射
+    const int prefault_error =
+        prefault_current_thread_stack(options.stack_prefault_bytes);
+    if (prefault_error != 0) {
+        return thread_setup_error("stack prefault (maximum 1 MiB; valid page size required)",
+                                  prefault_error);
     }
 
     ThreadSetupResult success;

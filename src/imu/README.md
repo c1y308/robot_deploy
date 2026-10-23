@@ -100,26 +100,6 @@ Quaternion 和 RateOfTurn 使用最新值配对：自上次发布以来，两路
 
 parser 的 `feed()`、同步回调和 `get_ahrs_data()` 应在同一线程执行；跨线程使用者应复制快照并通过已有同步通道传递。机器人策略线程使用现有 `SpscLatestChannel` 接收副本。
 
-## 测试
-
-IMU Debug 构建及全部无硬件测试：
-
-```bash
-cmake -S src/imu -B /tmp/robot-deploy-imu-debug -DCMAKE_BUILD_TYPE=Debug
-cmake --build /tmp/robot-deploy-imu-debug -j4
-ctest --test-dir /tmp/robot-deploy-imu-debug --output-on-failure
-```
-
-`socket_can_timestamp_test` 使用内部时间辅助函数和仅用于测试目标的链接包装，覆盖 ancillary 数据、时钟转换、`EINTR` 重试和错误路径，不修改主机墙钟或公开驱动接口。
-
-真实设备测试需显式指定已启动且有输入的接口，单独执行，不加入普通 CTest：
-
-```bash
-/tmp/robot-deploy-imu-debug/socket_can_timestamp_integration_test --interface can0
-```
-
-该程序只被动接收，不配置接口、不发送数据、不初始化或使能电机。确认可读后暂停 100 ms，检查首帧年龄至少 95 ms，再连续接收 5 秒并报告输入与 AHRS 频率。持续输入在 drain 后可能产生新鲜快照，因此本测试不要求最终 AHRS 被年龄守卫拒绝。旧 AHRS 的 50 ms 年龄拒绝由 inference 的 `robot_policy_target_timing_test` 使用受控旧测量单独验证。
-
 ## A100 数据帧协议
 
 ```

@@ -77,8 +77,8 @@
 - [myact_motor_controller.cpp#L344](../../src/motors/src/drivers/myact/myact_motor_controller.cpp#L344)
   将单轴现实故障收敛为整机锁存，[myact_motor_controller.cpp#L434](../../src/motors/src/drivers/myact/myact_motor_controller.cpp#L434)
   对全轴应用 quick-stop。
-- [rk3588_runtime_profile.hpp#L32](../../src/inference/include/robot/rk3588_runtime_profile.hpp#L32)
-  固定线程布局和 Torch/OpenBLAS 线程数；[thread_runtime.hpp#L53](../../src/base/include/tool/thread_runtime.hpp#L53)
+- [robot_config.hpp](../../src/inference/include/robot/robot_config.hpp)
+  固定线程布局和 Torch/OpenBLAS 线程数；[thread_runtime.hpp#L53](../../src/base/include/rt_thread_config/thread_runtime.hpp#L53)
   对名称、亲和性和调度参数设置后读回验证，失败时业务线程不会进入主体。
 - [policy_test.cpp#L82](../../src/inference/examples/policy_test.cpp#L82) 在打开 Xbox、模型和机器人硬件前
   强制执行主机预检，当前配置错误会快速失败。

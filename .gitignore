@@ -15,6 +15,7 @@ compile_commands.json
 src/inference/third_party/
 
 # Log files
+/logs/
 src/inference/log/
 
 # Compiled objects and binaries
