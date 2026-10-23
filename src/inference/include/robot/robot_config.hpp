@@ -74,7 +74,7 @@ struct ObservationScaleConfig {
 
 /* 策略运行时：PolicyRuntime / command worker 消费。 */
 struct PolicyRuntimeConfig {
-    std::string model_path = "model/policy.pt";
+    std::string model_path = "model/policy.onnx";
     double step_dt = 0.02;
 
     /* gait_phase 存在于 deploy.yaml 时使用 705 维观测，否则使用 675 维观测。 */
@@ -127,33 +127,20 @@ struct RuntimeThreadingConfig {
     robot_base::ThreadRuntimeOptions imu_reader;
     robot_base::ThreadRuntimeOptions background;
 
-    int torch_intra_op_threads{0};
-    int torch_inter_op_threads{0};
-    int openblas_threads{0};
+    int onnx_intra_op_threads{1};
+    int onnx_worker_cpu_id{-1};  // 双线程实验模式的额外 worker；单线程时不使用。
 };
 
-inline robot_base::ThreadRuntimeOptions make_other_thread_options(
+inline robot_base::ThreadRuntimeOptions make_thread_options(
     std::vector<int> cpu_ids,
+    robot_base::ThreadSchedulingPolicy scheduling_policy,
+    int priority = 0,
     std::size_t stack_prefault_bytes = 0U)
 {
     robot_base::ThreadRuntimeOptions options;
     options.cpu_ids = std::move(cpu_ids);
     options.stack_prefault_bytes = stack_prefault_bytes;
-    options.scheduling_policy    = robot_base::ThreadSchedulingPolicy::OTHER;
-    options.priority = 0;
-    return options;
-}
-
-
-inline robot_base::ThreadRuntimeOptions make_fifo_thread_options(
-    int cpu_id,
-    int priority,
-    std::size_t stack_prefault_bytes = 0U)
-{
-    robot_base::ThreadRuntimeOptions options;
-    options.cpu_ids = {cpu_id};
-    options.stack_prefault_bytes = stack_prefault_bytes;
-    options.scheduling_policy    = robot_base::ThreadSchedulingPolicy::FIFO;
+    options.scheduling_policy = scheduling_policy;
     options.priority = priority;
     return options;
 }
@@ -165,14 +152,18 @@ inline RuntimeThreadingConfig make_rk3588_runtime_profile()
     RuntimeThreadingConfig profile;
     profile.require_host_preflight = true;
     profile.require_process_memory_lock = true;
-    profile.policy_main     = make_other_thread_options({4, 5}, 128U * 1024U);
-    profile.motor_rt        = make_fifo_thread_options(7, 80, 128U * 1024U);
-    profile.policy_command  = make_fifo_thread_options(6, 70, 128U * 1024U);
-    profile.imu_reader      = make_other_thread_options({2}, 64U * 1024U);
-    profile.background      = make_other_thread_options({0, 1});
-    profile.torch_intra_op_threads = 2;
-    profile.torch_inter_op_threads = 1;
-    profile.openblas_threads = 1;
+    using robot_base::ThreadSchedulingPolicy;
+    profile.policy_main     = make_thread_options({4}, ThreadSchedulingPolicy::OTHER,
+                                                  0, 128U * 1024U);
+    profile.motor_rt        = make_thread_options({7}, ThreadSchedulingPolicy::FIFO,
+                                                  80, 128U * 1024U);
+    profile.policy_command  = make_thread_options({6}, ThreadSchedulingPolicy::FIFO,
+                                                  70, 128U * 1024U);
+    profile.imu_reader      = make_thread_options({2}, ThreadSchedulingPolicy::OTHER,
+                                                  0, 64U * 1024U);
+    profile.background      = make_thread_options({0, 1}, ThreadSchedulingPolicy::OTHER);
+    profile.onnx_intra_op_threads = 1;
+    profile.onnx_worker_cpu_id = 5;
     return profile;
 }
 

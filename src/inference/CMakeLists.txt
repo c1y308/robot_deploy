@@ -6,45 +6,32 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)
 enable_testing()
 
-set(LOCAL_LIBTORCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libtorch)
-set(LOCAL_PYTORCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/python_torch/torch)
-set(LOCAL_PYTORCH_LIBS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/python_torch/torch.libs)
-set(TORCH_PREFIX_HINTS)
-
-if(EXISTS "${LOCAL_LIBTORCH_DIR}/share/cmake/Torch/TorchConfig.cmake")
-    list(APPEND TORCH_PREFIX_HINTS "${LOCAL_LIBTORCH_DIR}")
+set(ONNXRUNTIME_ROOT
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime-1.30.0"
+    CACHE PATH "Path to the ONNX Runtime Linux AArch64 C++ SDK")
+set(ONNXRUNTIME_INCLUDE_DIR "${ONNXRUNTIME_ROOT}/include")
+set(ONNXRUNTIME_LIBRARY "${ONNXRUNTIME_ROOT}/lib/libonnxruntime.so")
+if(NOT EXISTS "${ONNXRUNTIME_INCLUDE_DIR}/onnxruntime_cxx_api.h" OR
+   NOT EXISTS "${ONNXRUNTIME_LIBRARY}")
+    message(FATAL_ERROR "ONNX Runtime C++ SDK not found at ONNXRUNTIME_ROOT=${ONNXRUNTIME_ROOT}")
 endif()
-
-if(EXISTS "${LOCAL_PYTORCH_DIR}/share/cmake/Torch/TorchConfig.cmake")
-    list(APPEND TORCH_PREFIX_HINTS "${LOCAL_PYTORCH_DIR}/share/cmake")
+if(NOT EXISTS "${ONNXRUNTIME_ROOT}/VERSION_NUMBER")
+    message(FATAL_ERROR "ONNX Runtime SDK lacks VERSION_NUMBER at ${ONNXRUNTIME_ROOT}")
 endif()
-
-find_program(PYTHON3_EXECUTABLE python3)
-if(PYTHON3_EXECUTABLE)
-    execute_process(
-        COMMAND "${PYTHON3_EXECUTABLE}" -c "import torch; print(torch.utils.cmake_prefix_path, end='')"
-        RESULT_VARIABLE PYTORCH_PREFIX_RESULT
-        OUTPUT_VARIABLE PYTORCH_CMAKE_PREFIX
-        ERROR_QUIET
-    )
-    if(PYTORCH_PREFIX_RESULT EQUAL 0 AND EXISTS "${PYTORCH_CMAKE_PREFIX}/Torch/TorchConfig.cmake")
-        list(APPEND TORCH_PREFIX_HINTS "${PYTORCH_CMAKE_PREFIX}")
-    endif()
+file(READ "${ONNXRUNTIME_ROOT}/VERSION_NUMBER" ONNXRUNTIME_VERSION)
+string(STRIP "${ONNXRUNTIME_VERSION}" ONNXRUNTIME_VERSION)
+if(NOT ONNXRUNTIME_VERSION STREQUAL "1.30.0")
+    message(FATAL_ERROR "ONNX Runtime 1.30.0 required, found ${ONNXRUNTIME_VERSION}")
 endif()
+add_library(ONNXRuntime::onnxruntime SHARED IMPORTED)
+set_target_properties(ONNXRuntime::onnxruntime PROPERTIES
+    IMPORTED_LOCATION "${ONNXRUNTIME_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_INCLUDE_DIR}")
+get_filename_component(ONNXRUNTIME_LIBRARY_DIR "${ONNXRUNTIME_LIBRARY}" DIRECTORY)
+set(CMAKE_BUILD_RPATH "${ONNXRUNTIME_LIBRARY_DIR}")
+set(CMAKE_INSTALL_RPATH "${ONNXRUNTIME_LIBRARY_DIR}")
 
-if(TORCH_PREFIX_HINTS)
-    set(CMAKE_PREFIX_PATH ${TORCH_PREFIX_HINTS} ${CMAKE_PREFIX_PATH})
-endif()
-
-find_package(Torch QUIET)
-if(NOT Torch_FOUND)
-    message(FATAL_ERROR "LibTorch/PyTorch C++ runtime not found. Put the CPU LibTorch SDK at src/inference/third_party/libtorch, install Python torch, install torch into src/inference/third_party/python_torch, or configure with -DCMAKE_PREFIX_PATH=/path/to/libtorch.")
-endif()
-
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
-
-# 不用系统包（新 ABI），因为 torch 强制 _GLIBCXX_USE_CXX11_ABI=0，
-# 同一进程内必须统一 ABI；此处以源码随工程编译旧 ABI 版本。
+# 与 ONNX Runtime 及其他系统库使用当前工具链的默认 C++ ABI。
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third_party/yaml-cpp
                  ${CMAKE_CURRENT_BINARY_DIR}/yaml_cpp_build)
 
@@ -65,7 +52,7 @@ target_include_directories(inference_recorder PUBLIC
 target_link_libraries(inference_recorder PUBLIC robot_base pthread)
 
 # deploy.yaml 加载器：解析真实 schema，并校验模型序/电机序边界。
-# 只依赖纯类型（MotorControlMode/ReaderType）与 JointMapping，不依赖 torch。
+# 只依赖纯类型（MotorControlMode/ReaderType）与 JointMapping，不依赖推理库。
 add_library(deploy_config STATIC
     src/config/deploy_config.cpp
     src/robot/joint_mapping.cpp
@@ -104,17 +91,9 @@ target_link_libraries(robot_interface
     myactua_ethercat
     imu_a100_core
     imu_xsens_mti_core
-    ${TORCH_LIBRARIES}
-    dl
+    ONNXRuntime::onnxruntime
     pthread
 )
-if(EXISTS "${LOCAL_PYTORCH_LIBS_DIR}")
-    target_link_libraries(robot_interface
-        PUBLIC
-        "-Wl,-rpath-link,${LOCAL_PYTORCH_LIBS_DIR}"
-        "-Wl,-rpath,${LOCAL_PYTORCH_LIBS_DIR}"
-    )
-endif()
 
 if(NOT TARGET xbox_control_core)
     add_library(xbox_control_core STATIC

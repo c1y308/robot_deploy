@@ -45,8 +45,8 @@ bool RobotInterface::initialize() {
         shutdown();
         return false;
     }
-    // 模型 load/dry-run、Torch worker 校验和内存锁定必须发生在任何硬件或
-    // recorder 线程启动之前，保证新增 TID 可归因且失败时不会触碰硬件。
+    // 模型 load/warmup、ORT worker 校验和内存锁定发生在电机、IMU 或
+    // recorder 线程启动之前，保证新增 TID 可归因且失败时不会触碰电机。
     if (!load_policy()) {
         shutdown();
         return false;
@@ -157,14 +157,9 @@ bool RobotInterface::initialize_model_processors() {
     return true;
 }
 
-/* 启动时加载 TorchScript 策略模型并开启日志记录。 */
+/* 启动时加载 ONNX 策略模型并开启日志记录。 */
 bool RobotInterface::load_policy() {
-    // 按配置的线程数和 CPU 集合加载模型；零线程数和空 CPU 集合保留默认行为。
-    if (!policy_runtime_.load(config_.policy,
-                              config_.runtime.torch_intra_op_threads,
-                              config_.runtime.torch_inter_op_threads,
-                              config_.runtime.openblas_threads,
-                              config_.runtime.policy_main.cpu_ids)) {
+    if (!policy_runtime_.load(config_.policy, config_.runtime)) {
         std::cerr << "[RobotInterface] load_policy failed: "
                   << policy_runtime_.last_error() << "\n";
         return false;

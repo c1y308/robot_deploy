@@ -1,5 +1,6 @@
 # CMake build directories
 build/
+build-onnx/
 cmake-build-*/
 
 # CMake generated files
@@ -10,6 +11,7 @@ compile_commands.json
 
 # Editor and language-server caches
 .cache/
+__pycache__/
 
 # Local third-party SDKs
 src/inference/third_party/
@@ -17,6 +19,7 @@ src/inference/third_party/
 # Log files
 /logs/
 src/inference/log/
+/:memory:.ses
 
 # Compiled objects and binaries
 *.o

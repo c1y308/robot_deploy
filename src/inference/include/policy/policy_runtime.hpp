@@ -11,6 +11,7 @@
 namespace inference {
 
 struct PolicyRuntimeConfig;
+struct RuntimeThreadingConfig;
 
 struct PolicyRuntimeStepResult {
     PolicyAction raw_action{};
@@ -30,10 +31,7 @@ public:
     PolicyRuntime& operator=(const PolicyRuntime&) = delete;
 
     bool load(const PolicyRuntimeConfig& config,
-              int intra_op_threads = 0,
-              int inter_op_threads = 0,
-              int openblas_threads = 0,
-              const std::vector<int>& expected_worker_cpus = {});
+              const RuntimeThreadingConfig& runtime);
     void shutdown();
 
     bool is_loaded() const;
@@ -45,10 +43,7 @@ public:
 private:
     struct Impl;
 
-    bool dry_run_and_validate_output();
-    bool configure_parallel_runtime(int intra_op_threads,
-                                    int inter_op_threads,
-                                    int openblas_threads);
+    bool warm_up();
     void unload();
     void set_error(std::string message);
 

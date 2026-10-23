@@ -138,6 +138,14 @@ inline ThreadSetupResult configure_current_thread(
         }
     }
 
+    // 在进入可能的 FIFO 实时调度前建立所需栈页映射。
+    const int prefault_error =
+        prefault_current_thread_stack(options.stack_prefault_bytes);
+    if (prefault_error != 0) {
+        return thread_setup_error("stack prefault (maximum 1 MiB; valid page size required)",
+                                  prefault_error);
+    }
+
     // 设置线程调度策略和优先级（采用带有时间片的是否更好？）
     if (options.scheduling_policy != ThreadSchedulingPolicy::INHERIT) {
         const int policy = options.scheduling_policy == ThreadSchedulingPolicy::FIFO
@@ -174,14 +182,6 @@ inline ThreadSetupResult configure_current_thread(
         if (actual_policy != policy || actual.sched_priority != options.priority) {
             return thread_setup_error("thread scheduling verification", 0);
         }
-    }
-
-    // 预先建立当前线程的栈页映射
-    const int prefault_error =
-        prefault_current_thread_stack(options.stack_prefault_bytes);
-    if (prefault_error != 0) {
-        return thread_setup_error("stack prefault (maximum 1 MiB; valid page size required)",
-                                  prefault_error);
     }
 
     ThreadSetupResult success;

@@ -42,7 +42,7 @@ struct InferenceRecord {
     std::int64_t target_hold_age_us{0};    // admission 前距上一有效发布的间隔
     bool policy_result_dropped{false};
 
-    PolicyObservation policy_observation{};                     // 真正送入 TorchScript 的 flatten policy 输入
+    PolicyObservation policy_observation{};                     // 真正送入 ONNX Runtime 的 flatten policy 输入
     std::array<float,  kInferenceDof> raw_action{};             // 模型输出的原始动作向量
     std::array<double, kInferenceDof> target_q_model_rad{};     // 处理之后的目标关节角度（弧度、模型顺序）
 
