@@ -111,7 +111,7 @@ void ObservationBuilder::reset_runtime_state()
 {
     reset_ankle_state(mapping_->left_ankle(),  left_ankle_fk_);
     reset_ankle_state(mapping_->right_ankle(), right_ankle_fk_);
-    last_action_raw_.fill(0.0F);
+    last_action_.fill(0.0F);
     observation_history_.fill(0.0F);
     observation_history_ready_ = false;
     frame_index_ = 0;
@@ -119,7 +119,9 @@ void ObservationBuilder::reset_runtime_state()
 
 void ObservationBuilder::commit_policy_action(const PolicyAction& raw_action) noexcept
 {
-    last_action_raw_ = raw_action;
+    for (std::size_t i = 0; i < raw_action.size(); ++i) {
+        last_action_[i] = std::clamp(raw_action[i], -1.0F, 1.0F);
+    }
 }
 
 void ObservationBuilder::advance_frame() noexcept
@@ -172,7 +174,7 @@ bool ObservationBuilder::build(
             static_cast<float>(ahrs_state.projected_gravity[i]);
     }
     
-    current_terms.last_action = last_action_raw_;
+    current_terms.last_action = last_action_;
 
 
     if (!fill_joint_terms(motor_state.position_rad,

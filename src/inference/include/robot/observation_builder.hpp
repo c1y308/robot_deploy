@@ -68,7 +68,7 @@ private:
     ObservationScaleConfig scales_;
     std::array<double, policy_observation::kDof> default_joint_pos_rad_;
     PolicyRuntimeConfig policy_config_;
-    PolicyAction last_action_raw_{};
+    PolicyAction last_action_{};  // 裁剪到 [-1, 1] 的无量纲历史动作。
     PolicyObservation observation_history_{};
     bool observation_history_ready_{false};
     std::uint64_t frame_index_{0};
