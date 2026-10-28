@@ -20,7 +20,7 @@ namespace inference {
 struct MotorConfig {
     int num_motors = static_cast<int>(motor_base::kMaxMotors);
 
-    int wait_all_motors_timeout_ms = 20000;
+    int wait_all_motors_timeout_ms = 40000;
     int wait_all_motors_poll_ms    = 100;
 
     int discrete_command_completion_timeout_ms = 4000;
@@ -79,7 +79,7 @@ struct PolicyRuntimeConfig {
 
     /* gait_phase 存在于 deploy.yaml 时使用 705 维观测，否则使用 675 维观测。 */
     struct GaitPhase {
-        bool enabled           = false;
+        bool enabled           = true;
         double period          = 0.74;
         double stand_threshold = 0.05;
         double move_threshold  = 0.15;

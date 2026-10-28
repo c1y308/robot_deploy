@@ -117,7 +117,10 @@ bool validate_port(const Ort::TypeInfo& type,
         return false;
     }
     const auto shape = info.GetShape();
-    if (shape != expected) {
+    // Model metadata may declare a dynamic batch; runtime tensors use batch 1.
+    if (shape.size() != expected.size() ||
+        (shape[0] != expected[0] && shape[0] != -1) ||
+        !std::equal(shape.begin() + 1, shape.end(), expected.begin() + 1)) {
         std::ostringstream out;
         out << "ONNX " << role << " shape mismatch: expected [";
         for (std::size_t i = 0; i < expected.size(); ++i) {
@@ -167,12 +170,8 @@ bool PolicyRuntime::load(const PolicyRuntimeConfig& config,
 {
     unload();
     last_error_.clear();
-    if (config.gait.enabled) {
-        set_error("current ONNX policy requires 675 observations; gait phase adds 30");
-        return false;
-    }
-    constexpr std::size_t input_size =
-        policy_observation::kObservationSizeWithoutGaitPhase;
+    const std::size_t input_size =
+        policy_observation::observation_size(config.gait.enabled);
     if (std::filesystem::path(config.model_path).extension() != ".onnx") {
         set_error("policy model path must name an .onnx file");
         return false;

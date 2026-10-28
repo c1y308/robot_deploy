@@ -1,17 +1,37 @@
 # CMake build directories
 build/
-build-onnx/
+build-*/
 cmake-build-*/
 
 # CMake generated files
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
+CTestTestfile.cmake
+install_manifest.txt
 compile_commands.json
+Testing/
+build.ninja
+rules.ninja
+.ninja_deps
+.ninja_log
 
-# Editor and language-server caches
+# Python and language-server caches
 .cache/
 __pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Editor temporary files and OS metadata
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Local AWS configuration and credentials
+/.aws/
 
 # Local third-party SDKs
 src/inference/third_party/
@@ -19,6 +39,7 @@ src/inference/third_party/
 # Log files
 /logs/
 src/inference/log/
+*.log
 /:memory:.ses
 
 # Compiled objects and binaries
@@ -26,5 +47,6 @@ src/inference/log/
 *.o.d
 *.a
 *.so
+*.so.*
 *.out
 *.exe
