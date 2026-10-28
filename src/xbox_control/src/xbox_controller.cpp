@@ -44,6 +44,19 @@ double negative_axis_scale(int raw_value)
            usable_range;
 }
 
+/* 按共同死区归一化摇杆输入，线速度与角速度分别应用各自的上限。 */
+double normalize_axis(int raw_value)
+{
+    double normalized = 0.0;
+    if (raw_value > kAxisCenter + kDeadzone) {
+        normalized = positive_axis_scale(raw_value);
+    } else if (raw_value < kAxisCenter - kDeadzone) {
+        normalized = negative_axis_scale(raw_value);
+    }
+
+    return std::clamp(normalized, -1.0, 1.0);
+}
+
 }  // namespace
 
 /* 构造控制器对象，实际设备打开由 open_device() 完成 */
@@ -280,32 +293,27 @@ std::string XboxController::last_error() const
 /* 按死区和最大速度限制，将原始摇杆轴值转换为线速度 */
 double XboxController::axis_to_speed(int raw_value)
 {
-    double normalized = 0.0;
-    if (raw_value > kAxisCenter + kDeadzone) {
-        normalized = positive_axis_scale(raw_value);
-    } else if (raw_value < kAxisCenter - kDeadzone) {
-        normalized = negative_axis_scale(raw_value);
-    }
-
-    normalized = std::clamp(normalized, -1.0, 1.0);
-    return normalized * kMaxSpeedMps;
+    return normalize_axis(raw_value) * kMaxSpeedMps;
 }
 
-/* 使用给定的 X/Y 轴原始值生成机器人平面速度控制指令 */
-VelocityCommand XboxController::map_axes(int abs_x, int abs_y)
+/* 左摇杆前后控制 vx，右摇杆左右控制 yaw_rate。 */
+VelocityCommand XboxController::map_axes(int abs_x, int abs_y, int abs_rx)
 {
     VelocityCommand command;
     command.raw_abs_x = abs_x;
     command.raw_abs_y = abs_y;
+    command.raw_abs_rx = abs_rx;
     command.has_abs_x = true;
     command.has_abs_y = true;
+    command.has_abs_rx = true;
     command.vx = std::clamp(-axis_to_speed(abs_y), -kMaxSpeedMps, kMaxSpeedMps);
     command.vy = 0.0;
-    command.yaw_rate = kYawRate;
+    // 右摇杆左推为正角速度，右推为负角速度。
+    command.yaw_rate = -normalize_axis(abs_rx) * kMaxYawRateRadS;
     return command;
 }
 
-/* 通过 ioctl 读取设备当前 ABS_X/ABS_Y 轴值 */
+/* 通过 ioctl 读取设备当前 ABS_X/ABS_Y/ABS_RX 轴值 */
 void XboxController::initialize_axis_values()
 {
     std::lock_guard<std::mutex> state_lock(state_mutex_);
@@ -321,9 +329,15 @@ void XboxController::initialize_axis_values()
         command_.raw_abs_y = abs_info.value;
         command_.has_abs_y = true;
     }
+
+    abs_info = {};
+    if (::ioctl(fd_, EVIOCGABS(ABS_RX), &abs_info) == 0) {
+        command_.raw_abs_rx = abs_info.value;
+        command_.has_abs_rx = true;
+    }
 }
 
-/* 根据 ABS_X/ABS_Y 事件更新缓存轴值。 */
+/* 根据 ABS_X/ABS_Y/ABS_RX 事件更新缓存轴值。 */
 void XboxController::process_abs_event(int code, int value)
 {
     std::lock_guard<std::mutex> state_lock(state_mutex_);
@@ -334,6 +348,10 @@ void XboxController::process_abs_event(int code, int value)
     } else if (code == ABS_Y) {
         command_.raw_abs_y = value;
         command_.has_abs_y = true;
+        refresh_command_locked();
+    } else if (code == ABS_RX) {
+        command_.raw_abs_rx = value;
+        command_.has_abs_rx = true;
         refresh_command_locked();
     }
 }
@@ -348,11 +366,11 @@ void XboxController::set_error(std::string error)
 /* 根据缓存的轴值刷新 vx/vy/yaw_rate 控制量 */
 void XboxController::refresh_command_locked()
 {
-    command_.vx = std::clamp(-axis_to_speed(command_.raw_abs_y),
-                             -kMaxSpeedMps,
-                             kMaxSpeedMps);
-    command_.vy = 0.0;
-    command_.yaw_rate = kYawRate;
+    const VelocityCommand mapped = map_axes(
+        command_.raw_abs_x, command_.raw_abs_y, command_.raw_abs_rx);
+    command_.vx = mapped.vx;
+    command_.vy = mapped.vy;
+    command_.yaw_rate = mapped.yaw_rate;
 }
 
 }  // namespace xbox_control

@@ -77,9 +77,9 @@ struct PolicyRuntimeConfig {
     std::string model_path = "model/policy.onnx";
     double step_dt = 0.02;
 
-    /* gait_phase 存在于 deploy.yaml 时使用 705 维观测，否则使用 675 维观测。 */
+    /* 由 YAML 中 observations.gait_phase 是否存在决定；注释掉或缺失时使用 675 维。 */
     struct GaitPhase {
-        bool enabled           = true;
+        bool enabled           = false;
         double period          = 0.74;
         double stand_threshold = 0.05;
         double move_threshold  = 0.15;

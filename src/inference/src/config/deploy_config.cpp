@@ -674,8 +674,8 @@ private:
         std::array<double, 3> projected_gravity_scale{};
         std::array<double, kDof> last_action_scale{};
         const YAML::Node gait_phase = observations["gait_phase"];
-        config_.policy.gait.enabled = false;
-        if (gait_phase.IsDefined()) {
+        config_.policy.gait.enabled = gait_phase.IsDefined();
+        if (config_.policy.gait.enabled) {
             std::array<double, policy_observation::kGaitPhaseSize>
                 gait_phase_scale{};
             if (!load_observation_item(observations, "gait_phase",
@@ -688,7 +688,6 @@ private:
                             "because runtime does not apply a configurable scale",
                             error);
             }
-            config_.policy.gait.enabled = true;
         }
 
         if (!load_observation_item(observations, "base_ang_vel",

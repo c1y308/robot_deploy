@@ -160,7 +160,7 @@ int main(int argc, char** argv)
             return 1;
         }
         // robot.set_target_velocity(0.0, 0.0, 0.0);
-        robot.set_target_velocity( command.vx, 0.0, 0.0);
+        robot.set_target_velocity(command.vx, 0.0, command.yaw_rate);
         // robot.set_target_velocity( 0.0, command.vx, 0.0);
 
         const auto step_start = Clock::now();

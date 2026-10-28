@@ -21,11 +21,13 @@ bool command_changed(const xbox_control::VelocityCommand& lhs,
 {
     return lhs.raw_abs_x != rhs.raw_abs_x ||
            lhs.raw_abs_y != rhs.raw_abs_y ||
+           lhs.raw_abs_rx != rhs.raw_abs_rx ||
            lhs.vx != rhs.vx ||
            lhs.vy != rhs.vy ||
            lhs.yaw_rate != rhs.yaw_rate ||
            lhs.has_abs_x != rhs.has_abs_x ||
-           lhs.has_abs_y != rhs.has_abs_y;
+           lhs.has_abs_y != rhs.has_abs_y ||
+           lhs.has_abs_rx != rhs.has_abs_rx;
 }
 
 void print_command(const xbox_control::VelocityCommand& command)
@@ -33,6 +35,7 @@ void print_command(const xbox_control::VelocityCommand& command)
     std::cout << std::fixed << std::setprecision(3)
               << "ABS_X=" << std::setw(7) << command.raw_abs_x
               << " ABS_Y=" << std::setw(7) << command.raw_abs_y
+              << " ABS_RX=" << std::setw(7) << command.raw_abs_rx
               << " vx=" << std::setw(7) << command.vx
               << " vy=" << std::setw(7) << command.vy
               << " yaw_rate=" << std::setw(7) << command.yaw_rate

@@ -15,14 +15,17 @@ constexpr int kAxisMin = -32768;
 constexpr int kAxisCenter = 0;
 constexpr int kAxisMax = 32767;
 constexpr int kDeadzone = 8000;
-constexpr double kMaxSpeedMps = 0.3;
+constexpr double kMaxSpeedMps = 1.0;
+constexpr double kMaxYawRateRadS = 0.6;
 constexpr double kYawRate = 0.0;
 
 struct VelocityCommand {
     int raw_abs_x = kAxisCenter;
     int raw_abs_y = kAxisCenter;
+    int raw_abs_rx = kAxisCenter;
     bool has_abs_x = false;
     bool has_abs_y = false;
+    bool has_abs_rx = false;
     double vx = 0.0;
     double vy = 0.0;
     double yaw_rate = kYawRate;
@@ -64,8 +67,9 @@ public:
 
     /* 将原始摇杆轴值映射为速度值 */
     static double axis_to_speed(int raw_value);
-    /* 根据 X/Y 轴原始值生成速度控制指令 */
-    static VelocityCommand map_axes(int abs_x, int abs_y);
+    /* 左摇杆 ABS_Y 控制前后速度，右摇杆 ABS_RX 控制绕 Z 轴转向。 */
+    static VelocityCommand map_axes(int abs_x, int abs_y,
+                                   int abs_rx = kAxisCenter);
 
 private:
     /* 读取设备当前轴值，作为初始控制状态 */
