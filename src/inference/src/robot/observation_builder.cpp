@@ -6,7 +6,6 @@
 #include <cstddef>
 #include <cmath>
 #include <utility>
-#include <vector>
 
 namespace inference::robot_detail {
 
@@ -22,19 +21,6 @@ struct ObservationTerms {
     std::array<float, policy_observation::kJointVelRelSize> joint_vel_rel{};
     PolicyAction last_action{};
 };
-
-std::array<float, 2> gait_phase_observation(std::uint64_t episode_length,
-                                            double step_dt,
-                                            double period)
-{
-    constexpr double kTwoPi = 6.28318530717958647692;
-    const double global_phase =
-        std::fmod(static_cast<double>(episode_length) * step_dt, period) / period;
-    return {
-        static_cast<float>(std::sin(global_phase * kTwoPi)),
-        static_cast<float>(std::cos(global_phase * kTwoPi))
-    };
-}
 
 std::array<float, 2> gated_gait_phase_observation(
     const ObservationTerms& terms,
@@ -54,42 +40,36 @@ std::array<float, 2> gated_gait_phase_observation(
         1.0);
     gate = gate * gate * (3.0 - 2.0 * gate);
 
-    const std::array<float, 2> phase =
-        gait_phase_observation(episode_length,
-                               policy_config.step_dt,
-                               policy_config.gait.period);
+    constexpr double kTwoPi = 6.28318530717958647692;
+    const double global_phase = std::fmod(
+        static_cast<double>(episode_length) * policy_config.step_dt,
+        policy_config.gait.period) / policy_config.gait.period;
+    const std::array<float, 2> phase{
+        static_cast<float>(std::sin(global_phase * kTwoPi)),
+        static_cast<float>(std::cos(global_phase * kTwoPi))
+    };
     return {
         static_cast<float>(phase[0] * gate),
         static_cast<float>(phase[1] * gate)
     };
 }
 
-template <std::size_t TermSize, std::size_t ObservationSize>
-void fill_term_history(std::array<float, ObservationSize>& history,
-                       std::size_t offset,
-                       std::size_t frame_stack,
-                       const std::array<float, TermSize>& current_term)
-{
-    for (std::size_t frame = 0; frame < frame_stack; ++frame) {
-        std::copy(current_term.begin(),
-                  current_term.end(),
-                  history.begin() + offset + frame * TermSize);
-    }
-}
-
-template <std::size_t TermSize, std::size_t ObservationSize>
-void append_term_history(std::array<float, ObservationSize>& history,
+template <std::size_t TermSize>
+void update_term_history(PolicyObservation& history,
                          std::size_t offset,
-                         std::size_t frame_stack,
-                         const std::array<float, TermSize>& current_term)
+                         const std::array<float, TermSize>& current_term,
+                         bool history_ready)
 {
-    const std::size_t term_history_size = frame_stack * TermSize;
-    std::copy(history.begin() + offset + TermSize,
-              history.begin() + offset + term_history_size,
-              history.begin() + offset);
-    std::copy(current_term.begin(),
-              current_term.end(),
-              history.begin() + offset + term_history_size - TermSize);
+    const auto begin = history.begin() + offset;
+    const auto end = begin + policy_observation::kFrameStack * TermSize;
+    if (history_ready) {
+        std::copy(begin + TermSize, end, begin);
+        std::copy(current_term.begin(), current_term.end(), end - TermSize);
+    } else {
+        for (auto frame = begin; frame != end; frame += TermSize) {
+            std::copy(current_term.begin(), current_term.end(), frame);
+        }
+    }
 }
 
 }  // namespace
@@ -214,50 +194,25 @@ bool ObservationBuilder::build(
     const std::size_t last_action_offset =
         joint_vel_rel_offset + kJointVelRelHistorySize;
 
-    if (!observation_history_ready_) {
-        fill_term_history(observation_history_, kBaseAngVelOffset,
-                          policy_observation::kFrameStack, current_terms.base_ang_vel);
-        fill_term_history(observation_history_, kProjectedGravityOffset,
-                          policy_observation::kFrameStack, current_terms.projected_gravity);
-        fill_term_history(observation_history_, kVelocityCommandsOffset,
-                          policy_observation::kFrameStack, current_terms.velocity_commands);
-        if (gait_phase_enabled) {
-            const std::array<float, 2> gait_phase =
-                gated_gait_phase_observation(current_terms,
-                                             policy_config_,
-                                             frame_index_);
-            fill_term_history(observation_history_, kGaitPhaseOffset,
-                              policy_observation::kFrameStack, gait_phase);
-        }
-        fill_term_history(observation_history_, joint_pos_rel_offset,
-                          policy_observation::kFrameStack, current_terms.joint_pos_rel);
-        fill_term_history(observation_history_, joint_vel_rel_offset,
-                          policy_observation::kFrameStack, current_terms.joint_vel_rel);
-        fill_term_history(observation_history_, last_action_offset,
-                          policy_observation::kFrameStack, current_terms.last_action);
-        observation_history_ready_ = true;
-    } else {
-        append_term_history(observation_history_, kBaseAngVelOffset,
-                            policy_observation::kFrameStack, current_terms.base_ang_vel);
-        append_term_history(observation_history_, kProjectedGravityOffset,
-                            policy_observation::kFrameStack, current_terms.projected_gravity);
-        append_term_history(observation_history_, kVelocityCommandsOffset,
-                            policy_observation::kFrameStack, current_terms.velocity_commands);
-        if (gait_phase_enabled) {
-            const std::array<float, 2> gait_phase =
-                gated_gait_phase_observation(current_terms,
-                                             policy_config_,
-                                             frame_index_);
-            append_term_history(observation_history_, kGaitPhaseOffset,
-                                policy_observation::kFrameStack, gait_phase);
-        }
-        append_term_history(observation_history_, joint_pos_rel_offset,
-                            policy_observation::kFrameStack, current_terms.joint_pos_rel);
-        append_term_history(observation_history_, joint_vel_rel_offset,
-                            policy_observation::kFrameStack, current_terms.joint_vel_rel);
-        append_term_history(observation_history_, last_action_offset,
-                            policy_observation::kFrameStack, current_terms.last_action);
+    update_term_history(observation_history_, kBaseAngVelOffset,
+                        current_terms.base_ang_vel, observation_history_ready_);
+    update_term_history(observation_history_, kProjectedGravityOffset,
+                        current_terms.projected_gravity, observation_history_ready_);
+    update_term_history(observation_history_, kVelocityCommandsOffset,
+                        current_terms.velocity_commands, observation_history_ready_);
+    if (gait_phase_enabled) {
+        const auto gait_phase = gated_gait_phase_observation(
+            current_terms, policy_config_, frame_index_);
+        update_term_history(observation_history_, kGaitPhaseOffset,
+                            gait_phase, observation_history_ready_);
     }
+    update_term_history(observation_history_, joint_pos_rel_offset,
+                        current_terms.joint_pos_rel, observation_history_ready_);
+    update_term_history(observation_history_, joint_vel_rel_offset,
+                        current_terms.joint_vel_rel, observation_history_ready_);
+    update_term_history(observation_history_, last_action_offset,
+                        current_terms.last_action, observation_history_ready_);
+    observation_history_ready_ = true;
 
     observation = observation_history_;
     error.clear();

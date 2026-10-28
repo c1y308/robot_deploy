@@ -30,11 +30,6 @@ constexpr std::size_t kMotorCount = motor_base::kMaxMotors;
 constexpr std::size_t kDirectDriveDofCount = kDof - 4;
 constexpr double kValueTolerance = 1e-12;
 
-bool finite_positive(double value)
-{
-    return std::isfinite(value) && value > 0.0;
-}
-
 template <std::size_t N>
 bool all_near(const std::array<double, N>& values, double expected)
 {
@@ -79,7 +74,8 @@ public:
         }
 
         config_ = RobotInterfaceConfig{};
-        resolve_runtime_default_paths();
+        config_.policy.model_path = resolve_path(config_.policy.model_path).string();
+        config_.recorder.directory = resolve_path(config_.recorder.directory.string());
 
         if (!check_known_keys(root,
                               {"joint_ids_map", "step_dt", "stiffness",
@@ -90,7 +86,8 @@ public:
         }
 
         return load_joint_topology(root, error) &&
-               load_step_dt(root, error) &&
+               require_finite_positive(root, "step_dt", config_.policy.step_dt,
+                                       "root", error) &&
                load_motor_gains(root, error) &&
                load_default_joint_pos(root, error) &&
                load_commands(root, error) &&
@@ -265,7 +262,7 @@ private:
         if (!require_value(parent, key, out, where, error)) {
             return false;
         }
-        if (!finite_positive(out)) {
+        if (!std::isfinite(out) || out <= 0.0) {
             return fail(where + " key " + key +
                         " must be a finite positive value", error);
         }
@@ -342,14 +339,6 @@ private:
         return std::filesystem::path(root_dir_) / path;
     }
 
-    void resolve_runtime_default_paths()
-    {
-        config_.policy.model_path =
-            resolve_path(config_.policy.model_path).string();
-        config_.recorder.directory =
-            resolve_path(config_.recorder.directory.string());
-    }
-
     bool load_joint_topology(const YAML::Node& root, std::string& error)
     {
         std::vector<int> joint_ids_map;
@@ -405,13 +394,6 @@ private:
             joint_ids_map.begin() + kDirectDriveDofCount);
 
         return true;
-    }
-
-    bool load_step_dt(const YAML::Node& root, std::string& error)
-    {
-        return require_finite_positive(root, "step_dt",
-                                       config_.policy.step_dt,
-                                       "root", error);
     }
 
     bool load_motor_gains(const YAML::Node& root, std::string& error)

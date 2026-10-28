@@ -10,7 +10,8 @@
 | 0–1 | Xbox、状态、诊断、事件、监控及 recorder 后台线程 |
 | 2 | `imu_can_rx` / `imu_serial_rx` 与 CAN0 IRQ |
 | 3 | 普通内核任务和未显式固定的 IRQ；为网络路径保留余量 |
-| 4–5 | `policy_main`、ATen/OpenMP 推理线程 |
+| 4 | `policy_main`，ORT CPU 单线程推理 |
+| 5 | 预留给 ORT 双线程实验的额外 worker（默认不创建） |
 | 6 | `policy_cmd`, `SCHED_FIFO 70` |
 | 7 | `ecat_rt`, `SCHED_FIFO 80` |
 
@@ -54,13 +55,18 @@ sudo /usr/local/sbin/robot-rt-setup check
 
 ## 策略启动与内存锁定
 
-`policy_test` 在任何 ATen/OpenMP 设置、模型加载和 dry-run 之前，将
-`policy_main` 永久绑定到 CPU4–5 并设为 `SCHED_OTHER/0`。模型只执行现有的
-一次 dry-run；该步骤既验证输出，也触发固定模型图所需的 Torch worker 创建。
-随后程序枚举新增 TID，要求它们的 affinity 是 `{4,5}` 的子集且调度策略为
-`SCHED_OTHER/0`。任一校验失败都会在 recorder、EtherCAT、电机和 IMU 启动前退出。
+`policy_test` 在模型加载之前，将 `policy_main` 永久绑定到 CPU4 并设为
+`SCHED_OTHER/0`。推理只使用 ONNX Runtime CPU，默认 intra-op=1、顺序执行、
+完整图优化，关闭线程池 spinning，不创建额外 intra-op worker。模型加载时校验
+实际节点名称、float32 类型及 `[1,675]`（启用 gait phase 时为 `[1,705]`）输入和
+`[1,12]` 输出，完成现有的 20 次零输入预热并检查输出有限性。
 
-worker 校验后程序执行 `mlockall(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT)`。
+双线程实验须显式设置 intra-op=2，主线程仍在 CPU4，额外 worker 固定 CPU5；
+加载前后枚举 TID，要求恰好一个新增 worker 使用 CPU5，其他新增辅助线程使用
+CPU4，均为 `SCHED_OTHER/0`。主线程亲和性或 worker 校验失败，会在 recorder、
+EtherCAT、电机和 IMU 启动前退出。单线程模式只校验主线程，不枚举新增 TID。
+
+模型预热及所需线程校验后程序执行 `mlockall(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT)`。
 `MCL_ONFAULT` 锁住当前驻留页，其余页面在首次触及时锁住；新映射不因锁定而
 一次性填充整个默认线程栈，避免拉长 EtherCAT 启动收发交接空档并引发失同步。
 RK3588 profile 采用 fail-closed，因此运行账号必须具备足够的 `RLIMIT_MEMLOCK`
@@ -72,8 +78,8 @@ RK3588 profile 采用 fail-closed，因此运行账号必须具备足够的 `RLI
 未触及且尚未驻留的页面首次访问仍可能缺页，按需锁页不等价于所有页面预先驻留。
 内存锁定只保证已锁页面不被换出，并不能消除 `malloc`、`mmap`、allocator
 bookkeeping 或 lazy operator initialization 的运行时开销。应用也不能直接预触碰
-Torch 内部 worker 的完整栈；单次 dry-run 未覆盖的数据相关分支仍可能有首次分配
-抖动。本 profile 不增加多轮模型预热，也不提升 Torch worker 的实时优先级。
+ORT 内部 worker 的完整栈；20 次预热未覆盖的数据相关分支仍可能有首次分配
+抖动。本 profile 不提升 ORT worker 的实时优先级，也不承诺推理内部零堆分配。
 
 若 `/dev/EtherCAT0` 未出现，先检查物理映射、NetworkManager 排除规则和主站
 MAC。下面的命令不假定 EtherCAT 一定叫 `eth0`：
@@ -143,7 +149,7 @@ ps -eLo pid,tid,psr,cls,rtprio,comm
 taskset -pc <tid>
 ```
 
-要求 `policy_main` 和新增 Torch workers 只使用 CPU4–5，`policy_cmd` 只使用
+要求 `policy_main` 只使用 CPU4，双线程实验的额外 ORT worker 只使用 CPU5；`policy_cmd` 只使用
 CPU6/FIFO70，`ecat_rt` 只使用 CPU7/FIFO80。进入正式控制循环后还应持续观察这些
 线程的 major/minor fault。确认 CPU3 的实际竞争和调度等待
 后，再决定是否约束 IgH `run_on_cpu`、隔离 CPU3 或调整内核线程优先级。

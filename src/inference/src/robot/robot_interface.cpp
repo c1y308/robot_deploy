@@ -47,9 +47,56 @@ bool RobotInterface::initialize() {
     }
     // 模型 load/warmup、ORT worker 校验和内存锁定发生在电机、IMU 或
     // recorder 线程启动之前，保证新增 TID 可归因且失败时不会触碰电机。
-    if (!load_policy()) {
+    if (!policy_runtime_.load(config_.policy, config_.runtime)) {
+        std::cerr << "[RobotInterface] load_policy failed: "
+                  << policy_runtime_.last_error() << "\n";
         shutdown();
         return false;
+    }
+
+    // 进程/主线程运行环境：模型就绪后、其他线程和硬件启动前完成。
+    if (config_.runtime.require_process_memory_lock) {
+        // 解决 MCL_FUTURE 在创建线程时一次性填充并锁定整个默认栈，
+        // 拉长 EtherCAT 启动收发交接空档并导致失同步的问题。
+        // 按需锁页，时序敏感线程仍在进入业务循环前预触碰所需栈页。
+        if (::mlockall(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT) != 0) {
+            const int saved_errno = errno;
+            std::cerr << "[RobotInterface] mlockall(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT) "
+                      << "failed: errno=" << saved_errno << " ("
+                      << std::strerror(saved_errno)
+                      << "). Check RLIMIT_MEMLOCK and CAP_IPC_LOCK.\n";
+            policy_runtime_.shutdown();
+            shutdown();
+            return false;
+        }
+
+        const int prefault_error =
+            robot_base::prefault_current_thread_stack(
+                config_.runtime.policy_main.stack_prefault_bytes);
+        if (prefault_error != 0) {
+            std::cerr << "[RobotInterface] policy_main stack prefault after "
+                      << "mlockall failed: errno=" << prefault_error << " ("
+                      << std::strerror(prefault_error)
+                      << "); maximum 1 MiB and valid page size required\n";
+            policy_runtime_.shutdown();
+            shutdown();
+            return false;
+        }
+    }
+
+    // 日志生命周期：按已校验的观测维度启动独立记录器。
+    if (config_.recorder.enabled) {
+        config_.recorder.policy_observation_size =
+            policy_observation::observation_size(config_.policy.gait.enabled);
+        if (!inference_recorder_.start(config_.recorder, config_.runtime.background)) {
+            std::cerr << "[RobotInterface] failed to open inference log: "
+                      << inference_recorder_.last_error() << "\n";
+            inference_recorder_failed_ = true;
+            shutdown();
+            return false;
+        }
+        std::cout << "[RobotInterface] inference log: "
+                  << inference_recorder_.log_path() << "\n";
     }
 
     // 初始化电机
@@ -115,7 +162,20 @@ ShutdownResult RobotInterface::shutdown() {
 
     worker_.stop();
     record_completed_policy_frame();
-    unload_policy();
+    policy_runtime_.shutdown();
+    inference_recorder_.stop();
+    inference_recorder_failed_ = false;
+    policy_step_phase_ = PolicyStepPhase::Idle;
+    policy_step_phase_started_ns_ = 0;
+    last_policy_target_published_ns_ = 0;
+    first_policy_inference_started_ns_.store(0, std::memory_order_release);
+    worker_.reset_channels();
+    if (action_processor_) {
+        action_processor_->reset_runtime_state();
+    }
+    if (observation_builder_) {
+        observation_builder_->reset_runtime_state();
+    }
     imu_session_.deinitialize();
     motor_session_.release_controller();
     return stop_confirmed ? ShutdownResult::Confirmed
@@ -157,72 +217,10 @@ bool RobotInterface::initialize_model_processors() {
     return true;
 }
 
-/* 启动时加载 ONNX 策略模型并开启日志记录。 */
-bool RobotInterface::load_policy() {
-    if (!policy_runtime_.load(config_.policy, config_.runtime)) {
-        std::cerr << "[RobotInterface] load_policy failed: "
-                  << policy_runtime_.last_error() << "\n";
-        return false;
-    }
-
-    // 进行锁页
-    if (config_.runtime.require_process_memory_lock) {
-        // 解决 MCL_FUTURE 在创建线程时一次性填充并锁定整个默认栈，
-        // 拉长 EtherCAT 启动收发交接空档并导致失同步的问题。
-        // 按需锁页，时序敏感线程仍在进入业务循环前预触碰所需栈页。
-        if (::mlockall(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT) != 0) {
-            const int saved_errno = errno;
-            std::cerr << "[RobotInterface] mlockall(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT) "
-                      << "failed: errno=" << saved_errno << " ("
-                      << std::strerror(saved_errno)
-                      << "). Check RLIMIT_MEMLOCK and CAP_IPC_LOCK.\n";
-            policy_runtime_.shutdown();
-            return false;
-        }
-
-        const int prefault_error =
-            robot_base::prefault_current_thread_stack(
-                config_.runtime.policy_main.stack_prefault_bytes);
-        if (prefault_error != 0) {
-            std::cerr << "[RobotInterface] policy_main stack prefault after "
-                      << "mlockall failed: errno=" << prefault_error << " ("
-                      << std::strerror(prefault_error)
-                      << "); maximum 1 MiB and valid page size required\n";
-            policy_runtime_.shutdown();
-            return false;
-        }
-    }
-
-    // 是否开启日志记录
-    if (config_.recorder.enabled) {
-
-        config_.recorder.policy_observation_size =
-            policy_observation::observation_size(config_.policy.gait.enabled);
-
-        if (!inference_recorder_.start(config_.recorder, config_.runtime.background)) {
-            std::cerr << "[RobotInterface] failed to open inference log: "
-                      << inference_recorder_.last_error() << "\n";
-            inference_recorder_failed_ = true;
-            return false;
-        }
-        std::cout << "[RobotInterface] inference log: "
-                  << inference_recorder_.log_path() << "\n";
-
-    }
-    return true;
-}
-
-
 /* 保存策略使用的机器人目标速度指令，顺序为 [vx, vy, yaw_rate]。 */
 void RobotInterface::set_target_velocity(double vx, double vy, double yaw_rate) {
     target_velocity_ = {vx, vy, yaw_rate};
 }
-
-/* 获取当前保存的机器人目标速度指令。 */
-std::array<double, 3> RobotInterface::get_target_velocity() const {
-    return target_velocity_;
-}
-
 
 /* 按平滑插值将关节恢复到 default_joint_pos_rad 初始姿态。 */
 bool RobotInterface::reset_joints(
@@ -281,34 +279,6 @@ bool RobotInterface::reset_joints(
 }
 
 
-/* 卸载策略模型并清空策略运行状态。 */
-void RobotInterface::unload_policy() {
-    policy_runtime_.shutdown();
-    inference_recorder_.stop();
-    inference_recorder_failed_ = false;
-    initialize_policy_runtime_state();
-}
-
-
-void RobotInterface::initialize_policy_runtime_state() {
-    reset_policy_command_state();
-    if (action_processor_) {
-        action_processor_->reset_runtime_state();
-    }
-    if (observation_builder_) {
-        observation_builder_->reset_runtime_state();
-    }
-}
-
-void RobotInterface::reset_policy_command_state() noexcept
-{
-    policy_step_phase_ = PolicyStepPhase::Idle;
-    policy_step_phase_started_ns_ = 0;
-    last_policy_target_published_ns_ = 0;
-    first_policy_inference_started_ns_.store(0, std::memory_order_release);
-    worker_.reset_channels();
-}
-
 // 独立 latest-value 数据源只检查各自的时间戳和年龄。
 bool RobotInterface::validate_policy_sensor_timing(
     std::int64_t motor_timestamp_ns,
@@ -337,15 +307,6 @@ bool RobotInterface::validate_policy_sensor_timing(
         return false;
     }
     return true;
-}
-
-
-std::uint64_t RobotInterface::begin_policy_inference(std::int64_t now_ns) noexcept
-{
-    if (first_policy_inference_started_ns_.load(std::memory_order_relaxed) == 0) {
-        first_policy_inference_started_ns_.store(now_ns, std::memory_order_release);
-    }
-    return observation_builder_->frame_index() + 1;
 }
 
 
@@ -404,7 +365,7 @@ bool RobotInterface::policy_step() {
 
     set_policy_step_phase(PolicyStepPhase::Precheck);
 
-    const std::array<double, 3> target_velocity = get_target_velocity();
+    const std::array<double, 3> target_velocity = target_velocity_;
 
     std::string worker_error;
 
@@ -454,8 +415,11 @@ bool RobotInterface::policy_step() {
     // 从正式策略推理开始恢复通信保护。
     motor_session_.enable_communication_protection();
     set_policy_step_phase(PolicyStepPhase::Inference);
-    const std::uint64_t policy_seq =
-        begin_policy_inference(robot_base::monotonic_now_ns());
+    const std::int64_t inference_started_ns = robot_base::monotonic_now_ns();
+    if (first_policy_inference_started_ns_.load(std::memory_order_relaxed) == 0) {
+        first_policy_inference_started_ns_.store(inference_started_ns, std::memory_order_release);
+    }
+    const std::uint64_t policy_seq = observation_builder_->frame_index() + 1;
     PolicyRuntimeStepResult policy_result;
     if (!policy_runtime_.infer(policy_observation, policy_result)) {
         return handle_policy_step_failure(policy_runtime_.last_error());

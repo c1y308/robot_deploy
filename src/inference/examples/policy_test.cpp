@@ -85,24 +85,28 @@ int main(int argc, char** argv)
 
     inference::RobotInterfaceConfig cfg;
     std::string config_error;
+
+    // 加载 yaml 配置文件，覆盖默认值
     if (!inference::load_deploy_config(config_path, cfg, config_error)) {
         std::cerr << "[ERROR] Failed to load deploy config: "
                   << config_error << "\n";
         return 1;
     }
+
+    // 配置线程运行时选项
     cfg.runtime = inference::make_rk3588_runtime_profile();
     cfg.motor.print_motors_info = kPrintMotorsInfo;
     if (!kPrintMotorsInfo) {
         cfg.motor.print_motor_ids.clear();
     }
-
+    // 检查 RK3588 部署环境是否满足要求
     if (cfg.runtime.require_host_preflight &&
         !robot_base::environment_check(config_error)) {
         std::cerr << "[ERROR] RK3588 RT host preflight failed: "
                   << config_error << "\n";
         return 1;
     }
-
+    // 配置主线程运行时选项
     const robot_base::ThreadSetupResult main_setup =
         robot_base::configure_current_thread("policy_main",
                                              cfg.runtime.policy_main);
@@ -111,8 +115,10 @@ int main(int argc, char** argv)
                   << main_setup.error << "\n";
         return 1;
     }
+    // 打印配置摘要，便于确认加载结果
     print_config_summary(cfg);
 
+    // 初始化 Xbox 控制器
     xbox_control::XboxController controller;
     if (!controller.open_device()) {
         std::cerr << "[ERROR] " << controller.last_error() << "\n";

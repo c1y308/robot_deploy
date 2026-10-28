@@ -1,4 +1,5 @@
 #include "recorder/inference_recorder.hpp"
+#include "tool/tool.hpp"
 
 #include <ctime>
 #include <exception>
@@ -11,8 +12,7 @@ namespace inference {
 
 namespace {
 
-/* 返回本地时间戳，用于文件名，例如：0813_1425 */
-std::string local_timestamp_for_filename()
+std::string make_log_filename(const InferenceRecorderConfig& config)
 {
     const auto now = std::chrono::system_clock::now();
     const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
@@ -22,13 +22,7 @@ std::string local_timestamp_for_filename()
 
     std::ostringstream stream;
     stream << std::put_time(&local_time, "%m%d_%H%M");
-    return stream.str();
-}
-
-
-std::string make_log_filename(const InferenceRecorderConfig& config)
-{
-    const std::string timestamp = local_timestamp_for_filename();
+    const std::string timestamp = stream.str();
     if (config.file_prefix.empty()) {
         return timestamp + ".csv";
     }
@@ -81,19 +75,6 @@ void write_header(std::ostream& stream, std::size_t observation_size)
 }
 
 
-std::int64_t elapsed_us_for_record(const InferenceRecord& record,
-                                   std::int64_t session_start_timestamp_ns)
-{
-    return (record.inference_start_ns - session_start_timestamp_ns) / 1000;
-}
-
-
-std::int64_t inference_duration_us_for_record(const InferenceRecord& record)
-{
-    return (record.inference_end_ns - record.inference_start_ns) / 1000;
-}
-
-
 template <typename Value, std::size_t Count>
 void append_values(std::ostream& stream, const std::array<Value, Count>& values)
 {
@@ -129,11 +110,11 @@ void write_record(std::ostream&          stream,
 {
     stream << std::setprecision(17)
            << record.frame_index << ','
-           << elapsed_us_for_record(record, session_start_timestamp_ns) << ','
+           << (record.inference_start_ns - session_start_timestamp_ns) / 1000 << ','
            << record.motor_sample_timestamp_ns << ','
            << record.inference_start_ns << ','
            << record.inference_end_ns << ','
-           << inference_duration_us_for_record(record) << ','
+           << (record.inference_end_ns - record.inference_start_ns) / 1000 << ','
            << record.command_timestamp_ns << ','
            << (record.command_applied ? 1 : 0) << ','
            << record.policy_seq << ','
@@ -233,7 +214,7 @@ bool InferenceRecorder::start(
         queue_.clear();
         dropped_records_ = 0;
         last_error_.clear();
-        session_start_timestamp_ns_ = steady_now_ns();
+        session_start_timestamp_ns_ = robot_base::monotonic_now_ns();
         stop_requested_ = false;
         running_ = true;
     }

@@ -190,7 +190,7 @@ inline ThreadSetupResult configure_current_thread(
 }
 
 
-// 启动配置好的线程（用启动握手消除竞态，什么意思？）
+// 启动配置好的线程（用启动握手消除竞态）
 template <typename Callable>
 bool start_configured_thread(std::thread& output,   // 线程对象
                              const char*  name,     // 线程名称

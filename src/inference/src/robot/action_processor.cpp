@@ -100,7 +100,7 @@ bool ActionProcessor::build_motor_targets(
     std::array<double, motor_base::kMaxMotors>& target_motor_rad,    // 电机目标角(引用传递)
     std::string& error)
 {
-    const int count = dof_count();
+    const int count = mapping_->dof_count();
     target_motor_rad.fill(0.0);
 
     for (int model_index = 0; model_index < count; ++model_index) {
@@ -226,7 +226,7 @@ bool ActionProcessor::build_policy_impedance_command(
     FixedPolicyMotorCommand& command,
     std::string& error)
 {
-    const int count = dof_count();
+    const int count = mapping_->dof_count();
 
     for (int motor_index = 0; motor_index < count; ++motor_index) {
         const auto& motor =
@@ -422,18 +422,13 @@ bool ActionProcessor::apply_ankle_torque_control(
     return true;
 }
 
-int ActionProcessor::dof_count() const noexcept
-{
-    return mapping_->dof_count();
-}
-
 bool ActionProcessor::build_reset_start_model_pose(
     const std::array<double, motor_base::kMaxMotors>& current_motor_q, // 当前电机真实角度(rad)
     const FixedModelTarget& target_model_q,  // 期望的模型关节角(作为fk初始值)
     FixedModelTarget& start_model_q,   // 输出: 当前的模型关节角(rad)
     std::string& error) const
 {
-    const int count = dof_count();
+    const int count = mapping_->dof_count();
     start_model_q.fill(0.0);
 
     // 按照模型顺序遍历，将电机角度转换为模型关节角度

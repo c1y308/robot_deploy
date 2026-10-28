@@ -21,15 +21,6 @@ bool ankle_parallel_map_indices_in_range(const inference::AnkleParallelMap& ankl
            index_in_range(ankle_map.lower_motor_index, count);
 }
 
-// 检查方向数组值是否为 1 或 -1
-template <typename DirectionContainer>
-bool valid_motor_direction_values(const DirectionContainer& directions)
-{
-    return std::all_of(directions.begin(), directions.end(), [](int direction) {
-        return direction == 1 || direction == -1;
-    });
-}
-
 }  // namespace
 
 std::shared_ptr<const JointMapping> JointMapping::create(
@@ -39,27 +30,28 @@ std::shared_ptr<const JointMapping> JointMapping::create(
 {
     std::shared_ptr<JointMapping> mapping(new JointMapping());
     mapping->config_ = config;
-    if (!mapping->configure(dof_count)) {
-        error = mapping->last_error();
+    if (!mapping->configure(dof_count, error)) {
         return {};
     }
     error.clear();
     return mapping;
 }
 
-bool JointMapping::configure(int dof_count)
+bool JointMapping::configure(int dof_count, std::string& error)
 {
     if (dof_count <= 0) {
-        last_error_ = "dof_count must be positive";
+        error = "dof_count must be positive";
         return false;
     }
 
     if (static_cast<int>(config_.motor_to_model_direction.size()) != dof_count) {
-        last_error_ = "motor_to_model_direction must have one value per motor";
+        error = "motor_to_model_direction must have one value per motor";
         return false;
     }
-    if (!valid_motor_direction_values(config_.motor_to_model_direction)) {
-        last_error_ = "motor_to_model_direction values must be 1 or -1";
+    if (!std::all_of(config_.motor_to_model_direction.begin(),
+                     config_.motor_to_model_direction.end(),
+                     [](int direction) { return direction == 1 || direction == -1; })) {
+        error = "motor_to_model_direction values must be 1 or -1";
         return false;
     }
 
@@ -67,7 +59,7 @@ bool JointMapping::configure(int dof_count)
                                              dof_count) ||
         !ankle_parallel_map_indices_in_range(config_.right_ankle_parallel,
                                              dof_count)) {
-        last_error_ = "ankle parallel maps contain an out-of-range index";
+        error = "ankle parallel maps contain an out-of-range index";
         return false;
     }
 
@@ -99,7 +91,7 @@ bool JointMapping::configure(int dof_count)
         !mark_model_dof(left.model_roll_dof)   ||
         !mark_model_dof(right.model_pitch_dof) ||
         !mark_model_dof(right.model_roll_dof)) {
-        last_error_ = "ankle parallel model DOFs must be distinct";
+        error = "ankle parallel model DOFs must be distinct";
         return false;
     }
 
@@ -107,7 +99,7 @@ bool JointMapping::configure(int dof_count)
         !mark_motor(left.lower_motor_index) ||
         !mark_motor(right.upper_motor_index) ||
         !mark_motor(right.lower_motor_index)) {
-        last_error_ = "ankle parallel motor indices must be distinct";
+        error = "ankle parallel motor indices must be distinct";
         return false;
     }
 
@@ -117,7 +109,7 @@ bool JointMapping::configure(int dof_count)
                    0U));
     if (static_cast<int>(config_.model_to_motor_index.size()) !=
         direct_model_dof_count) {
-        last_error_ = "model_to_motor_index must have one value per direct model DOF";
+        error = "model_to_motor_index must have one value per direct model DOF";
         return false;
     }
 
@@ -133,11 +125,11 @@ bool JointMapping::configure(int dof_count)
         ++mapping_slot;
 
         if (!index_in_range(motor_index, dof_count)) {
-            last_error_ = "model_to_motor_index contains an out-of-range motor index";
+            error = "model_to_motor_index contains an out-of-range motor index";
             return false;
         }
         if (!mark_motor(motor_index)) {
-            last_error_ = "direct and ankle motor mappings must be a permutation without duplicates";
+            error = "direct and ankle motor mappings must be a permutation without duplicates";
             return false;
         }
 
@@ -148,7 +140,7 @@ bool JointMapping::configure(int dof_count)
     if (std::any_of(seen_motor.begin(), seen_motor.end(), [](unsigned char seen) {
             return seen == 0U;
         })) {
-        last_error_ = "direct and ankle motor mappings must cover all motors";
+        error = "direct and ankle motor mappings must cover all motors";
         return false;
     }
 

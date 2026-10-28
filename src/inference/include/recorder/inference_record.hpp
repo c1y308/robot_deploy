@@ -2,23 +2,15 @@
 
 #include "policy/policy_observation_config.hpp"
 #include "recorder/inference_recorder_config.hpp"
-#include "tool/tool.hpp"
 
 #include <array>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <string>
 
 namespace inference {
 
 inline constexpr std::size_t kInferenceDof = policy_observation::kDof;
 inline constexpr std::size_t kInferenceMotorCount = policy_observation::kDof;
-
-inline std::int64_t steady_now_ns() noexcept
-{
-    return robot_base::monotonic_now_ns();
-}
 
 /* 日志数据一帧定义 */
 struct InferenceRecord {

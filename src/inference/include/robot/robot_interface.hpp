@@ -30,7 +30,8 @@ class ObservationBuilder;
 class RobotInterface {
 public:
     /* 构造函数只保存配置；配置由 load_deploy_config() 加载并完整校验。
-       initialize 只调用一次；启停、速度缓存及 policy_step 由同一所有者线程串行访问。
+       initialize 完成模型准备、锁页、日志/硬件启动及姿态复位，只调用一次。
+       启停、速度缓存及 policy_step 由同一所有者线程串行访问。
        初始化失败后仍可重复 shutdown，析构也会执行清理。 */
     explicit RobotInterface(RobotInterfaceConfig config);
     ~RobotInterface();
@@ -47,7 +48,6 @@ public:
     ShutdownResult shutdown();
 
     void set_target_velocity(double vx, double vy, double yaw_rate);
-    std::array<double, 3> get_target_velocity() const;
 
 
 private:
@@ -101,23 +101,15 @@ private:
     // worker_ 引用以上多个成员，声明顺序必须在其之后。
     robot_detail::PolicyCommandWorker worker_;
 
-    bool load_policy();
-    void unload_policy();
-
     bool initialize_model_processors();
 
     // 平滑复位到 default_joint_pos_rad，输出最后成功提交的电机目标。
     bool reset_joints(std::array<double, motor_base::kMaxMotors>& final_target_motor_rad);
 
-    void initialize_policy_runtime_state();
-    void reset_policy_command_state() noexcept;
-
     bool validate_policy_sensor_timing(std::int64_t motor_timestamp_ns,
                                        std::int64_t imu_timestamp_ns,
                                        std::int64_t now_ns,
                                        std::string& error) const;
-
-    std::uint64_t begin_policy_inference(std::int64_t now_ns) noexcept;
 
     PolicyResultAdmission admit_policy_result(std::int64_t observation_time_ns,
                                               std::int64_t decision_now_ns) const noexcept;

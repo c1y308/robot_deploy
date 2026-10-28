@@ -17,7 +17,6 @@ public:
 
     int dof_count() const noexcept { return dof_count_; }
 
-    const std::string& last_error() const noexcept { return last_error_; }
     const inference::AnkleParallelMap& left_ankle() const noexcept { return config_.left_ankle_parallel; }
     const inference::AnkleParallelMap& right_ankle() const noexcept { return config_.right_ankle_parallel; }
 
@@ -28,11 +27,10 @@ public:
 private:
     JointMapping() = default;
 
-    bool configure(int dof_count);
+    bool configure(int dof_count, std::string& error);
 
     inference::JointMappingConfig config_;
     int dof_count_ = 0;
-    std::string last_error_;
     std::vector<unsigned char> parallel_model_dof_;
     std::vector<int> direct_motor_for_model_dof_;
 };

@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <vector>
 
 namespace inference {
 
@@ -22,7 +21,6 @@ struct PolicyRuntimeStepResult {
 class PolicyRuntime {
 public:
     static constexpr std::size_t kDof = policy_observation::kDof;
-    static constexpr std::size_t kFrameStack = policy_observation::kFrameStack;
 
     PolicyRuntime();
     ~PolicyRuntime();
@@ -30,13 +28,13 @@ public:
     PolicyRuntime(const PolicyRuntime&) = delete;
     PolicyRuntime& operator=(const PolicyRuntime&) = delete;
 
+    // 由所有者线程串行调用；load 完成校验和预热，infer 复用固定缓冲区。
     bool load(const PolicyRuntimeConfig& config,
               const RuntimeThreadingConfig& runtime);
     void shutdown();
 
     bool is_loaded() const;
     bool infer(const PolicyObservation& observation, PolicyRuntimeStepResult& result);
-    std::size_t observation_size() const noexcept { return observation_size_; }
 
     const std::string& last_error() const noexcept { return last_error_; }
 
@@ -44,11 +42,8 @@ private:
     struct Impl;
 
     bool warm_up();
-    void unload();
-    void set_error(std::string message);
 
     std::unique_ptr<Impl> impl_;
-    std::size_t observation_size_{0};
     std::string last_error_;
 };
 

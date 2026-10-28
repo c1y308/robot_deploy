@@ -1,3 +1,5 @@
+> 历史记录：本文测量的是迁移前的 LibTorch 版本，文中的环境变量、`.pt` 路径和 benchmark 命令不适用于当前 ORT CPU 部署。当前构建与验证见 [inference README](../README.md)。
+
 # policy_test 约 42 Hz 的定位结果（2026-10-18）
 
 ## 实机复测更新：PASSIVE 未通过通信稳定性验证

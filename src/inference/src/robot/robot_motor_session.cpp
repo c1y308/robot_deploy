@@ -18,11 +18,6 @@ namespace inference {
 
 namespace {
 
-bool is_mit_mode(motor_base::MotorControlMode mode)
-{
-    return mode == motor_base::MotorControlMode::IMPEDANCE;
-}
-
 const char* command_submit_status_name(motor_base::CommandSubmitStatus status)
 {
     switch (status) {
@@ -303,7 +298,7 @@ bool RobotMotorSession::apply_targets_rad(
         return false;
     }
     motor_base::ControlCommand command;
-    if (is_mit_mode(config_.control_mode)) {
+    if (config_.control_mode == motor_base::MotorControlMode::IMPEDANCE) {
         std::array<motor_base::ImpedanceSetpoint,
                    motor_base::kMaxMotorCommandSetpoints> impedance_setpoints{};
         for (std::size_t i = 0; i < target_motor_rad.size(); ++i) {

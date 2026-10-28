@@ -85,8 +85,6 @@ private:
         void reset(double roll = 0.0, double pitch = 0.0);
     };
 
-    int dof_count() const noexcept;
-
     bool apply_ankle_ik(const FixedModelTarget& target_q_model_rad,
                         std::array<double, motor_base::kMaxMotors>& target_motor_rad,
                         const char* ankle_name,
