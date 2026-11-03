@@ -118,7 +118,7 @@ int main(int argc, char** argv)
     }
     // 配置主线程运行时选项
     const robot_base::ThreadSetupResult main_setup =
-        robot_base::configure_current_thread("policy_main",
+          robot_base::configure_current_thread("policy_main",
                                              cfg.runtime.policy_main);
     if (!main_setup.success) {
         std::cerr << "[ERROR] Failed to configure policy_main: "

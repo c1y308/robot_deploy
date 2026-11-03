@@ -10,6 +10,7 @@ namespace inference {
 
    YAML 配置分支中的必填项缺失时返回错误，不回退到默认值。
    未纳入 YAML 的硬件、线程等参数继续采用代码默认值。
+   观测 params 仅在启用 gait_phase 时读取必填 period，其余内容作为兼容项忽略。
 
    加载期一次性完成：解析 → 必填/未知键检查 → 模型序/电机序
    边界校验 → 类型/数值检查。任何失败都通过 error 返回描述。
@@ -20,6 +21,7 @@ namespace inference {
    顺序约定：
    - default_joint_pos / actions.JointPositionAction / observations 中
      按 DOF 维度的参数按模型 DOF 顺序书写；
+   - 默认姿态仅取根节点 default_joint_pos；动作 offset 保留为兼容字段并忽略；
    - stiffness / damping 按模型 DOF 顺序书写，加载器根据
      joint_ids_map 转换为物理电机顺序的 MIT 增益；
    - joint_ids_map 按模型 DOF 顺序指定物理电机下标；末四项依次为

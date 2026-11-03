@@ -5,6 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 enable_testing()
 
+if(NOT TARGET robot_thread_runtime)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../inference/src/thread
+                     ${CMAKE_CURRENT_BINARY_DIR}/thread_runtime_build)
+endif()
+
 add_library(robot_base INTERFACE)
 target_include_directories(robot_base INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -33,6 +38,6 @@ add_executable(thread_runtime_test
 )
 target_link_libraries(thread_runtime_test PRIVATE
     robot_base
-    pthread
+    robot_thread_runtime
 )
 add_test(NAME thread_runtime_test COMMAND thread_runtime_test)

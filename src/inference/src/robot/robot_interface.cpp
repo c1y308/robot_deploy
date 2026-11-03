@@ -3,6 +3,7 @@
 #include "robot/action_processor.hpp"
 #include "robot/joint_mapping.hpp"
 #include "robot/observation_builder.hpp"
+#include "policy/policy_execution_setup.hpp"
 
 #include <algorithm>
 #include <array>
@@ -41,17 +42,31 @@ RobotInterface::~RobotInterface() {
 /* 编排机器人完整运行态：电机、策略、IMU 和站立姿态复位。 */
 bool RobotInterface::initialize() {
 
-    if (!initialize_model_processors()) {
+    if (!initialize_processors()) {
         shutdown();
         return false;
     }
     // 模型 load/warmup、ORT worker 校验和内存锁定发生在电机、IMU 或
     // recorder 线程启动之前，保证新增 TID 可归因且失败时不会触碰电机。
-    if (!policy_runtime_.load(config_.policy, config_.runtime)) {
-        std::cerr << "[RobotInterface] load_policy failed: "
-                  << policy_runtime_.last_error() << "\n";
-        shutdown();
-        return false;
+    {
+        PolicyExecutionSetup execution;
+        std::string error;
+        if (!execution.prepare(config_.runtime, error)) {
+            std::cerr << "[RobotInterface] prepare_policy_execution failed: " << error << "\n";
+            shutdown();
+            return false;
+        }
+        if (!policy_runtime_.load(config_.policy, execution.session_options())) {
+            std::cerr << "[RobotInterface] load_policy failed: "
+                      << policy_runtime_.last_error() << "\n";
+            shutdown();
+            return false;
+        }
+        if (!execution.verify_workers(error)) {
+            std::cerr << "[RobotInterface] verify_policy_workers failed: " << error << "\n";
+            shutdown();
+            return false;
+        }
     }
 
     // 进程/主线程运行环境：模型就绪后、其他线程和硬件启动前完成。
@@ -183,16 +198,13 @@ ShutdownResult RobotInterface::shutdown() {
 }
 
 
-/* 检查配置有效性的职责已移到配置加载器（load_deploy_config），
-   在进程启动边界一次性完成。 */
-
-bool RobotInterface::initialize_model_processors() {
+bool RobotInterface::initialize_processors() {
     std::string error;
     auto mapping = robot_detail::JointMapping::create(static_cast<int>(policy_observation::kDof),
                                                          config_.joint_mapping,
                                                                  error);
     if (!mapping) {
-        std::cerr << "[RobotInterface] initialize_model_processors failed: "
+        std::cerr << "[RobotInterface] initialize_processors failed: "
                   << error << "\n";
         return false;
     }

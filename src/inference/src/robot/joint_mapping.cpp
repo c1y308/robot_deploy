@@ -95,8 +95,8 @@ bool JointMapping::configure(int dof_count, std::string& error)
         return false;
     }
 
-    if (!mark_motor(left.upper_motor_index) ||
-        !mark_motor(left.lower_motor_index) ||
+    if (!mark_motor(left.upper_motor_index)  ||
+        !mark_motor(left.lower_motor_index)  ||
         !mark_motor(right.upper_motor_index) ||
         !mark_motor(right.lower_motor_index)) {
         error = "ankle parallel motor indices must be distinct";

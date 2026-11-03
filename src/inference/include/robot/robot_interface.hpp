@@ -101,7 +101,7 @@ private:
     // worker_ 引用以上多个成员，声明顺序必须在其之后。
     robot_detail::PolicyCommandWorker worker_;
 
-    bool initialize_model_processors();
+    bool initialize_processors();
 
     // 平滑复位到 default_joint_pos_rad，输出最后成功提交的电机目标。
     bool reset_joints(std::array<double, motor_base::kMaxMotors>& final_target_motor_rad);

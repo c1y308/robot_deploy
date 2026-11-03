@@ -1,107 +1,18 @@
 #include "policy/policy_runtime.hpp"
 #include "robot/robot_config.hpp"
+#include "policy_session_options_impl.hpp"
 #include "tool/tool.hpp"
 
 #include <onnxruntime_cxx_api.h>
-#include <onnxruntime_session_options_config_keys.h>
 
 #include <algorithm>
-#include <cerrno>
-#include <chrono>
 #include <cmath>
-#include <cstring>
 #include <filesystem>
-#include <sched.h>
-#include <set>
 #include <sstream>
-#include <thread>
-#include <unistd.h>
+#include <vector>
 
 namespace inference {
 namespace {
-
-bool list_task_ids(std::set<pid_t>& ids, std::string& error)
-{
-    ids.clear();
-    try {
-        for (const auto& entry :
-             std::filesystem::directory_iterator("/proc/self/task")) {
-            const std::string name = entry.path().filename().string();
-            std::size_t parsed = 0;
-            const long value = std::stol(name, &parsed);
-            if (parsed == name.size() && value > 0) {
-                ids.insert(static_cast<pid_t>(value));
-            }
-        }
-    } catch (const std::exception& e) {
-        error = std::string("failed to enumerate process threads: ") + e.what();
-        return false;
-    }
-    return true;
-}
-
-bool cpu_mask(const std::vector<int>& cpus, cpu_set_t& mask, std::string& error)
-{
-    CPU_ZERO(&mask);
-    if (cpus.empty()) {
-        error = "expected CPU set is empty";
-        return false;
-    }
-    for (int cpu : cpus) {
-        if (cpu < 0 || cpu >= CPU_SETSIZE) {
-            error = "CPU id is outside cpu_set_t";
-            return false;
-        }
-        CPU_SET(cpu, &mask);
-    }
-    return true;
-}
-
-std::string format_mask(const cpu_set_t& mask)
-{
-    std::ostringstream out;
-    out << '{';
-    bool first = true;
-    for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
-        if (!CPU_ISSET(cpu, &mask)) continue;
-        if (!first) out << ',';
-        out << cpu;
-        first = false;
-    }
-    out << '}';
-    return out.str();
-}
-
-bool verify_task(pid_t tid, const cpu_set_t& expected,
-                 const char* role, std::string& error)
-{
-    cpu_set_t actual;
-    CPU_ZERO(&actual);
-    if (::sched_getaffinity(tid, sizeof(actual), &actual) != 0) {
-        error = std::string("sched_getaffinity failed for ") + role +
-                " TID " + std::to_string(tid) + ": " + std::strerror(errno);
-        return false;
-    }
-    if (!CPU_EQUAL(&actual, &expected)) {
-        error = std::string(role) + " TID " + std::to_string(tid) +
-                " affinity=" + format_mask(actual) +
-                " expected=" + format_mask(expected);
-        return false;
-    }
-    sched_param param{};
-    const int policy = ::sched_getscheduler(tid);
-    if (policy < 0 || ::sched_getparam(tid, &param) != 0) {
-        error = std::string("failed to read scheduler for ") + role +
-                " TID " + std::to_string(tid) + ": " + std::strerror(errno);
-        return false;
-    }
-    if (policy != SCHED_OTHER || param.sched_priority != 0) {
-        error = std::string(role) + " TID " + std::to_string(tid) +
-                " expected SCHED_OTHER/0";
-        return false;
-    }
-    return true;
-}
 
 bool validate_port(const Ort::TypeInfo& type,
                    const std::vector<int64_t>& expected,
@@ -160,7 +71,7 @@ PolicyRuntime::PolicyRuntime() = default;
 PolicyRuntime::~PolicyRuntime() = default;
 
 bool PolicyRuntime::load(const PolicyRuntimeConfig& config,
-                         const RuntimeThreadingConfig& runtime)
+                         const PolicySessionOptions& session_options)
 {
     shutdown();
     last_error_.clear();
@@ -170,55 +81,15 @@ bool PolicyRuntime::load(const PolicyRuntimeConfig& config,
         last_error_ = "policy model path must name an .onnx file";
         return false;
     }
-    if (runtime.onnx_intra_op_threads != 1 &&
-        runtime.onnx_intra_op_threads != 2) {
-        last_error_ = "ONNX intra-op threads must be 1 or 2";
-        return false;
-    }
-    const bool dual = runtime.onnx_intra_op_threads == 2;
-    if (dual && (runtime.policy_main.cpu_ids.size() != 1 ||
-                 runtime.onnx_worker_cpu_id < 0 ||
-                 runtime.onnx_worker_cpu_id >= CPU_SETSIZE ||
-                 runtime.policy_main.cpu_ids[0] == runtime.onnx_worker_cpu_id)) {
-        last_error_ = "two-thread ONNX mode requires distinct main and worker CPUs";
-        return false;
-    }
-
-    std::string setup_error;
-    if (!runtime.policy_main.cpu_ids.empty()) {
-        cpu_set_t main_mask;
-        if (!cpu_mask(runtime.policy_main.cpu_ids, main_mask, setup_error) ||
-            !verify_task(::gettid(), main_mask, "policy thread", setup_error)) {
-            last_error_ = setup_error;
-            return false;
-        }
-    }
-    std::set<pid_t> tasks_before;
-    if (dual && !list_task_ids(tasks_before, setup_error)) {
-        last_error_ = setup_error;
+    if (!session_options.impl_) {
+        last_error_ = "ONNX session options are not prepared";
         return false;
     }
 
     try {
         impl_ = std::make_unique<Impl>();
-        Ort::SessionOptions options;
-        options.SetIntraOpNumThreads(runtime.onnx_intra_op_threads);
-        options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
-        options.SetGraphOptimizationLevel(
-            GraphOptimizationLevel::ORT_ENABLE_ALL);
-        options.AddConfigEntry("session.intra_op.allow_spinning", "0");
-        options.AddConfigEntry("session.inter_op.allow_spinning", "0");
-        if (dual) {
-            // ORT's affinity string uses one-based processor numbers; Linux
-            // affinity APIs and RuntimeThreadingConfig use zero-based IDs.
-            // ORT sets this only on the extra intra-op worker.
-            const std::string cpu =
-                std::to_string(runtime.onnx_worker_cpu_id + 1);
-            options.AddConfigEntry(
-                kOrtSessionOptionsConfigIntraOpThreadAffinities, cpu.c_str());
-        }
         impl_->session = Ort::Session(
-            impl_->env, config.model_path.c_str(), options);
+            impl_->env, config.model_path.c_str(), session_options.impl_->options);
         if (impl_->session.GetInputCount() != 1 ||
             impl_->session.GetOutputCount() != 1) {
             last_error_ = "ONNX policy requires exactly one input and one output";
@@ -268,50 +139,6 @@ bool PolicyRuntime::load(const PolicyRuntimeConfig& config,
             return false;
         }
 
-        if (dual) {
-            cpu_set_t worker_mask;
-            CPU_ZERO(&worker_mask);
-            CPU_SET(runtime.onnx_worker_cpu_id, &worker_mask);
-            cpu_set_t main_mask;
-            if (!cpu_mask(runtime.policy_main.cpu_ids, main_mask, setup_error)) {
-                last_error_ = setup_error;
-                shutdown();
-                return false;
-            }
-            // ORT 设置 worker affinity 是异步的；短预热不保证 worker 已调度。
-            // 仅在硬件启动前等待有界的就绪窗口，超时仍拒绝加载。
-            const auto deadline = std::chrono::steady_clock::now() +
-                                  std::chrono::milliseconds(100);
-            std::set<pid_t> tasks_after;
-            for (;;) {
-                if (!list_task_ids(tasks_after, setup_error)) {
-                    last_error_ = setup_error;
-                    shutdown();
-                    return false;
-                }
-                std::size_t workers = 0;
-                bool tasks_valid = true;
-                for (pid_t tid : tasks_after) {
-                    if (tasks_before.count(tid)) continue;
-                    if (verify_task(tid, worker_mask, "ONNX worker", setup_error)) {
-                        ++workers;
-                    } else if (!verify_task(tid, main_mask,
-                                            "ONNX auxiliary thread", setup_error)) {
-                        tasks_valid = false;
-                        break;
-                    }
-                }
-                if (tasks_valid && workers == 1) break;
-                if (std::chrono::steady_clock::now() >= deadline) {
-                    last_error_ = tasks_valid
-                        ? "expected exactly one ONNX worker, found " + std::to_string(workers)
-                        : setup_error;
-                    shutdown();
-                    return false;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-        }
     } catch (const std::exception& e) {
         last_error_ = "failed to load ONNX policy: " + std::string(e.what());
         shutdown();

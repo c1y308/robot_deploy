@@ -13,6 +13,11 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+if(NOT TARGET robot_thread_runtime)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../inference/src/thread
+                     ${CMAKE_CURRENT_BINARY_DIR}/thread_runtime_build)
+endif()
+
 add_library(imu_a100_core STATIC
     src/drivers/serial_port.cpp
     src/protocol/a100/imu_parser.cpp
@@ -25,6 +30,8 @@ target_include_directories(imu_a100_core PUBLIC
 )
 
 target_link_libraries(imu_a100_core
+    PUBLIC robot_thread_runtime
+    PRIVATE
     m
     pthread
     rt
@@ -43,6 +50,8 @@ target_include_directories(imu_xsens_mti_core PUBLIC
 )
 
 target_link_libraries(imu_xsens_mti_core
+    PUBLIC robot_thread_runtime
+    PRIVATE
     m
     pthread
     rt

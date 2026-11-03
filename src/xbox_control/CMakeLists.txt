@@ -5,6 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)
 
+if(NOT TARGET robot_thread_runtime)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../inference/src/thread
+                     ${CMAKE_CURRENT_BINARY_DIR}/thread_runtime_build)
+endif()
+
 add_library(xbox_control_core STATIC
     src/xbox_controller.cpp
 )
@@ -12,7 +17,7 @@ target_include_directories(xbox_control_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../base/include
 )
-target_link_libraries(xbox_control_core PUBLIC pthread)
+target_link_libraries(xbox_control_core PUBLIC robot_thread_runtime)
 
 add_executable(xbox_input_test
     example/xbox_input_test.cpp

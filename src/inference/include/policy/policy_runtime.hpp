@@ -10,7 +10,7 @@
 namespace inference {
 
 struct PolicyRuntimeConfig;
-struct RuntimeThreadingConfig;
+class PolicySessionOptions;
 
 struct PolicyRuntimeStepResult {
     PolicyAction raw_action{};
@@ -18,6 +18,7 @@ struct PolicyRuntimeStepResult {
     std::int64_t inference_end_ns{0};
 };
 
+// 策略推理运行时
 class PolicyRuntime {
 public:
     static constexpr std::size_t kDof = policy_observation::kDof;
@@ -30,7 +31,7 @@ public:
 
     // 由所有者线程串行调用；load 完成校验和预热，infer 复用固定缓冲区。
     bool load(const PolicyRuntimeConfig& config,
-              const RuntimeThreadingConfig& runtime);
+              const PolicySessionOptions& session_options);
     void shutdown();
 
     bool is_loaded() const;

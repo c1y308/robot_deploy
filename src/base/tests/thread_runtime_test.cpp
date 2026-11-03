@@ -1,5 +1,8 @@
-#include "rt_thread_config/thread_runtime.hpp"
+#include "thread/thread_runtime.hpp"
 
+#include <cerrno>
+#include <pthread.h>
+#include <sched.h>
 #include <atomic>
 #include <iostream>
 #include <stdexcept>

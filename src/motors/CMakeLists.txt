@@ -38,6 +38,7 @@ target_include_directories(myactua_ethercat PUBLIC
 target_link_libraries(myactua_ethercat
     PUBLIC
     robot_base
+    robot_thread_runtime
     PRIVATE
     ethercat
     pthread

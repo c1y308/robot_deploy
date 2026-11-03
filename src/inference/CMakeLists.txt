@@ -6,6 +6,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)
 enable_testing()
 
+if(NOT TARGET robot_thread_runtime)
+    add_subdirectory(src/thread ${CMAKE_CURRENT_BINARY_DIR}/thread_runtime_build)
+endif()
+
 set(ONNXRUNTIME_ROOT
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime-1.30.0"
     CACHE PATH "Path to the ONNX Runtime Linux AArch64 C++ SDK")
@@ -46,7 +50,7 @@ add_library(inference_recorder STATIC
 target_include_directories(inference_recorder PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_link_libraries(inference_recorder PUBLIC robot_base)
+target_link_libraries(inference_recorder PUBLIC robot_base robot_thread_runtime)
 
 # deploy.yaml 加载器：解析真实 schema，并校验模型序/电机序边界。
 # 只依赖纯类型（MotorControlMode/ReaderType）与 JointMapping，不依赖推理库。
@@ -63,9 +67,18 @@ target_compile_definitions(deploy_config PUBLIC
     ROBOT_DEPLOY_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/deploy.yaml"
     ROBOT_INFERENCE_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )
-target_link_libraries(deploy_config PUBLIC robot_base yaml-cpp)
+target_link_libraries(deploy_config PUBLIC robot_base robot_thread_runtime yaml-cpp)
 
-# ORT 头文件和链接只属于模型运行时；硬件工具无需携带推理依赖。
+# ORT 执行准备和模型运行时分开，通用线程库及驱动无需携带 ORT。
+add_library(policy_execution_setup STATIC src/policy/policy_execution_setup.cpp)
+target_include_directories(policy_execution_setup
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/../imu/include
+)
+target_link_libraries(policy_execution_setup PRIVATE
+    robot_base robot_thread_runtime ONNXRuntime::onnxruntime)
+
 add_library(policy_runtime STATIC src/policy/policy_runtime.cpp)
 target_include_directories(policy_runtime
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -93,6 +106,7 @@ target_link_libraries(robot_interface
     myactua_ethercat
     imu_a100_core
     imu_xsens_mti_core
+    PRIVATE policy_execution_setup
 )
 
 if(NOT TARGET xbox_control_core)
@@ -125,7 +139,7 @@ target_link_libraries(policy_test PRIVATE
 
 add_executable(policy_runtime_test tests/policy_runtime_test.cpp)
 target_link_libraries(policy_runtime_test PRIVATE
-    policy_runtime deploy_config ONNXRuntime::onnxruntime)
+    policy_runtime policy_execution_setup deploy_config ONNXRuntime::onnxruntime)
 add_test(NAME policy_runtime_test COMMAND policy_runtime_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures)
 

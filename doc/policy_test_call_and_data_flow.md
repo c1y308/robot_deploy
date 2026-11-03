@@ -90,7 +90,7 @@ scale/clip 和各观测 scale/history。IMU 类型与设备、传感器年龄、
 
 ```text
 initialize
- ├─ initialize_model_processors
+ ├─ initialize_processors
  │   ├─ JointMapping::create → configure
  │   ├─ ActionProcessor 构造：IK/FK 状态、滤波系数和运行态初始化
  │   └─ ObservationBuilder 构造：历史全零、last_action 全零、frame_index=0

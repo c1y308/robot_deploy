@@ -1,6 +1,6 @@
 #pragma once
 
-#include "rt_thread_config/thread_runtime.hpp"
+#include "thread/thread_runtime.hpp"
 
 #include <cstdint>
 #include <functional>

@@ -5,7 +5,7 @@
 #include "policy/policy_observation_config.hpp"
 #include "recorder/inference_recorder_config.hpp"
 #include "robot/joint_mapping_config.hpp"
-#include "rt_thread_config/thread_runtime.hpp"
+#include "thread/thread_runtime.hpp"
 
 #include <array>
 #include <cstddef>
