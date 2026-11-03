@@ -151,10 +151,14 @@ bool ObservationBuilder::build(
         current_terms.base_ang_vel[i] = static_cast<float>(
             ahrs_state.body_ang_vel[i] * scales_.body_ang_vel_scale[i]);
         current_terms.projected_gravity[i] =
-            static_cast<float>(ahrs_state.projected_gravity[i]);
+            static_cast<float>(ahrs_state.projected_gravity[i] *
+                               scales_.projected_gravity_scale[i]);
     }
     
-    current_terms.last_action = last_action_;
+    for (std::size_t i = 0; i < last_action_.size(); ++i) {
+        current_terms.last_action[i] =
+            static_cast<float>(last_action_[i] * scales_.last_action_scale[i]);
+    }
 
 
     if (!fill_joint_terms(motor_state.position_rad,
@@ -201,8 +205,11 @@ bool ObservationBuilder::build(
     update_term_history(observation_history_, kVelocityCommandsOffset,
                         current_terms.velocity_commands, observation_history_ready_);
     if (gait_phase_enabled) {
-        const auto gait_phase = gated_gait_phase_observation(
+        auto gait_phase = gated_gait_phase_observation(
             current_terms, policy_config_, frame_index_);
+        for (std::size_t i = 0; i < gait_phase.size(); ++i) {
+            gait_phase[i] = static_cast<float>(gait_phase[i] * scales_.gait_phase_scale[i]);
+        }
         update_term_history(observation_history_, kGaitPhaseOffset,
                             gait_phase, observation_history_ready_);
     }

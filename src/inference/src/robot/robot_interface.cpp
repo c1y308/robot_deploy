@@ -217,8 +217,20 @@ bool RobotInterface::initialize_model_processors() {
     return true;
 }
 
-/* 保存策略使用的机器人目标速度指令，顺序为 [vx, vy, yaw_rate]。 */
+/* 按 YAML 中配置的范围限制并保存目标速度，顺序为 [vx, vy, yaw_rate]。 */
 void RobotInterface::set_target_velocity(double vx, double vy, double yaw_rate) {
+    if (config_.command_ranges.lin_vel_x) {
+        const auto& range = *config_.command_ranges.lin_vel_x;
+        vx = std::clamp(vx, range[0], range[1]);
+    }
+    if (config_.command_ranges.lin_vel_y) {
+        const auto& range = *config_.command_ranges.lin_vel_y;
+        vy = std::clamp(vy, range[0], range[1]);
+    }
+    if (config_.command_ranges.ang_vel_z) {
+        const auto& range = *config_.command_ranges.ang_vel_z;
+        yaw_rate = std::clamp(yaw_rate, range[0], range[1]);
+    }
     target_velocity_ = {vx, vy, yaw_rate};
 }
 

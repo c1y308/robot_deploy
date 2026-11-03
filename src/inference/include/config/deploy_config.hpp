@@ -8,6 +8,9 @@ namespace inference {
 
 /* 从真实 deploy.yaml 格式加载并完整校验机器人配置（唯一配置入口）。
 
+   YAML 配置分支中的必填项缺失时返回错误，不回退到默认值。
+   未纳入 YAML 的硬件、线程等参数继续采用代码默认值。
+
    加载期一次性完成：解析 → 必填/未知键检查 → 模型序/电机序
    边界校验 → 类型/数值检查。任何失败都通过 error 返回描述。
 
@@ -19,7 +22,8 @@ namespace inference {
      按 DOF 维度的参数按模型 DOF 顺序书写；
    - stiffness / damping 按模型 DOF 顺序书写，加载器根据
      joint_ids_map 转换为物理电机顺序的 MIT 增益；
-   - joint_ids_map 只用于生成模型 DOF → 物理电机下标的拓扑映射。 */
+   - joint_ids_map 按模型 DOF 顺序指定物理电机下标；末四项依次为
+     左上、右上、左下、右下脚踝电机。 */
 bool load_deploy_config(const std::string& yaml_path,
                         RobotInterfaceConfig& config,
                         std::string& error);

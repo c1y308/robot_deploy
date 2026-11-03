@@ -70,6 +70,19 @@ struct ObservationScaleConfig {
     };
     std::array<double, 3> command_scale      = {1.0, 1.0, 1.0};
     std::array<double, 3> body_ang_vel_scale = {0.2, 0.2, 0.2};
+    std::array<double, 3> projected_gravity_scale = {1.0, 1.0, 1.0};
+    std::array<double, policy_observation::kDof> last_action_scale = {
+        1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+        1.0, 1.0, 1.0, 1.0, 1.0, 1.0
+    };
+    std::array<double, policy_observation::kGaitPhaseSize> gait_phase_scale = {1.0, 1.0};
+};
+
+/* YAML 中的必填速度范围；加载器确保三项均已配置。 */
+struct VelocityCommandRangeConfig {
+    std::optional<std::array<double, 2>> lin_vel_x;
+    std::optional<std::array<double, 2>> lin_vel_y;
+    std::optional<std::array<double, 2>> ang_vel_z;
 };
 
 /* 策略运行时：PolicyRuntime / command worker 消费。 */
@@ -192,8 +205,11 @@ struct RobotInterfaceConfig {
     // 脚踝扭矩控制配置（包含虚拟阻尼、滤波器参数、目标扭矩限制）
     AnkleTorqueControlConfig ankle_torque;
 
-    // 观测缩放配置（包含关节位置、关节速度、命令、机体角速度的缩放参数）
+    // 各观测项的缩放配置
     ObservationScaleConfig observation_scales;
+
+    // YAML 提供的目标速度范围
+    VelocityCommandRangeConfig command_ranges;
 
     // 策略运行时配置（包含模型路径、步长、705 观测分支的步态参数）
     PolicyRuntimeConfig policy;

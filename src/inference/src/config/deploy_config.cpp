@@ -31,15 +31,6 @@ constexpr std::size_t kDirectDriveDofCount = kDof - 4;
 constexpr double kValueTolerance = 1e-12;
 
 template <std::size_t N>
-bool all_near(const std::array<double, N>& values, double expected)
-{
-    return std::all_of(values.begin(), values.end(), [expected](double value) {
-        return std::isfinite(value) &&
-               std::abs(value - expected) <= kValueTolerance;
-    });
-}
-
-template <std::size_t N>
 bool arrays_near(const std::array<double, N>& lhs,
                  const std::array<double, N>& rhs)
 {
@@ -86,8 +77,7 @@ public:
         }
 
         return load_joint_topology(root, error) &&
-               require_finite_positive(root, "step_dt", config_.policy.step_dt,
-                                       "root", error) &&
+               read_value(root, "step_dt", "root", config_.policy.step_dt, error) &&
                load_motor_gains(root, error) &&
                load_default_joint_pos(root, error) &&
                load_commands(root, error) &&
@@ -108,224 +98,166 @@ private:
         return false;
     }
 
+    // node 已由根节点检查或 read_map() 确认为 Map。
     static bool check_known_keys(const YAML::Node& node,
                                  const std::set<std::string>& allowed,
-                                 const std::string& where,
+                                 const std::string& node_path,
                                  std::string& error)
     {
-        if (!node.IsMap()) {
-            return fail(where + " must be a map", error);
-        }
         for (const auto& kv : node) {
             std::string key;
             try {
                 key = kv.first.as<std::string>();
             } catch (const YAML::BadConversion&) {
-                return fail(where + " contains a non-string key", error);
+                return fail(node_path + " contains a non-string key", error);
             }
             if (allowed.find(key) == allowed.end()) {
-                return fail(where + " contains unknown key: " + key, error);
+                return fail(node_path + " contains unknown key: " + key, error);
             }
         }
         return true;
     }
 
-    static bool require_map(const YAML::Node& parent,
-                            const char* key,
-                            YAML::Node& out,
-                            const std::string& where,
-                            std::string& error)
+    static bool read_map(const YAML::Node& parent_node,
+                         const char* key,
+                         const std::string& node_path,
+                         YAML::Node& output,
+                         std::string& error)
     {
-        const YAML::Node node = parent[key];
+        const YAML::Node node = parent_node[key];
         if (!node.IsDefined() || !node.IsMap()) {
-            return fail(where + " missing required map key: " + key, error);
+            return fail(node_path + " missing required map key: " + key, error);
         }
-        out = node;
+        output = node;
         return true;
     }
 
     template <typename T>
-    static bool require_value(const YAML::Node& parent,
-                              const char* key,
-                              T& out,
-                              const std::string& where,
-                              std::string& error)
+    static bool read_value(const YAML::Node& parent_node,
+                           const char* key,
+                           const std::string& node_path,
+                           T& output,
+                           std::string& error)
     {
-        const YAML::Node node = parent[key];
+        const YAML::Node node = parent_node[key];
         if (!node.IsDefined() || !node.IsScalar()) {
-            return fail(where + " missing required scalar key: " + key, error);
+            return fail(node_path + " missing required scalar key: " + key, error);
         }
         try {
-            out = node.as<T>();
+            output = node.as<T>();
         } catch (const YAML::BadConversion&) {
-            return fail(where + " key " + key + " has the wrong type", error);
+            return fail(node_path + " key " + key + " has the wrong type", error);
         }
         return true;
     }
 
-    static bool require_null(const YAML::Node& parent,
-                             const char* key,
-                             const std::string& where,
-                             std::string& error)
+    static bool check_null(const YAML::Node& parent_node,
+                           const char* key,
+                           const std::string& node_path,
+                           std::string& error)
     {
-        const YAML::Node node = parent[key];
+        const YAML::Node node = parent_node[key];
         if (!node.IsDefined() || !node.IsNull()) {
-            return fail(where + " key " + key + " must be null", error);
+            return fail(node_path + " key " + key + " must be null", error);
         }
         return true;
     }
 
     template <std::size_t N>
-    static bool require_double_array(const YAML::Node& parent,
-                                     const char* key,
-                                     std::array<double, N>& out,
-                                     const std::string& where,
-                                     std::string& error)
+    static bool read_double_array(const YAML::Node& parent_node,
+                                  const char* key,
+                                  const std::string& node_path,
+                                  std::array<double, N>& output,
+                                  std::string& error)
     {
-        const YAML::Node node = parent[key];
+        const YAML::Node node = parent_node[key];
         if (!node.IsDefined() || !node.IsSequence()) {
-            return fail(where + " missing required sequence key: " + key, error);
+            return fail(node_path + " missing required sequence key: " + key, error);
         }
         if (node.size() != N) {
-            return fail(where + " key " + key + " must have " +
+            return fail(node_path + " key " + key + " must have " +
                         std::to_string(N) + " elements, got " +
                         std::to_string(node.size()), error);
         }
         for (std::size_t i = 0; i < N; ++i) {
             try {
-                out[i] = node[i].as<double>();
+                output[i] = node[i].as<double>();
             } catch (const YAML::BadConversion&) {
-                return fail(where + " key " + key + " element " +
+                return fail(node_path + " key " + key + " element " +
                             std::to_string(i) + " is not a number", error);
             }
         }
         return true;
     }
 
-    static bool require_int_vector(const YAML::Node& parent,
-                                   const char* key,
-                                   std::vector<int>& out,
-                                   const std::string& where,
-                                   std::string& error)
+    static bool read_int_vector(const YAML::Node& parent_node,
+                                const char* key,
+                                const std::string& node_path,
+                                std::vector<int>& output,
+                                std::string& error)
     {
-        const YAML::Node node = parent[key];
+        const YAML::Node node = parent_node[key];
         if (!node.IsDefined() || !node.IsSequence()) {
-            return fail(where + " missing required sequence key: " + key, error);
+            return fail(node_path + " missing required sequence key: " + key, error);
         }
-        out.clear();
-        out.reserve(node.size());
+        output.clear();
+        output.reserve(node.size());
         for (std::size_t i = 0; i < node.size(); ++i) {
             try {
-                out.push_back(node[i].as<int>());
+                output.push_back(node[i].as<int>());
             } catch (const YAML::BadConversion&) {
-                return fail(where + " key " + key + " element " +
+                return fail(node_path + " key " + key + " element " +
                             std::to_string(i) + " is not an integer", error);
             }
         }
         return true;
     }
 
-    static bool require_double_pair(const YAML::Node& parent,
-                                    const char* key,
-                                    std::array<double, 2>& out,
-                                    const std::string& where,
-                                    std::string& error)
+    static bool read_double_pair(const YAML::Node& parent_node,
+                                 const char* key,
+                                 const std::string& node_path,
+                                 std::array<double, 2>& output,
+                                 std::string& error)
     {
-        const YAML::Node node = parent[key];
+        const YAML::Node node = parent_node[key];
         if (!node.IsDefined() || !node.IsSequence()) {
-            return fail(where + " missing required sequence key: " + key, error);
+            return fail(node_path + " missing required sequence key: " + key, error);
         }
         if (node.size() != 2) {
-            return fail(where + " key " + key + " must be [min, max]", error);
+            return fail(node_path + " key " + key + " must be [min, max]", error);
         }
         try {
-            out[0] = node[0].as<double>();
-            out[1] = node[1].as<double>();
+            output[0] = node[0].as<double>();
+            output[1] = node[1].as<double>();
         } catch (const YAML::BadConversion&) {
-            return fail(where + " key " + key + " must be two numbers", error);
+            return fail(node_path + " key " + key + " must be two numbers", error);
         }
-        if (!std::isfinite(out[0]) || !std::isfinite(out[1])) {
-            return fail(where + " key " + key + " values must be finite", error);
+        if (!std::isfinite(output[0]) || !std::isfinite(output[1])) {
+            return fail(node_path + " key " + key + " values must be finite", error);
         }
-        if (out[0] > out[1]) {
-            return fail(where + " key " + key + " min must be <= max", error);
-        }
-        return true;
-    }
-
-    static bool require_finite_positive(const YAML::Node& parent,
-                                        const char* key,
-                                        double& out,
-                                        const std::string& where,
-                                        std::string& error)
-    {
-        if (!require_value(parent, key, out, where, error)) {
-            return false;
-        }
-        if (!std::isfinite(out) || out <= 0.0) {
-            return fail(where + " key " + key +
-                        " must be a finite positive value", error);
+        if (output[0] > output[1]) {
+            return fail(node_path + " key " + key + " min must be <= max", error);
         }
         return true;
     }
 
-    static bool require_nonnegative_int(const YAML::Node& parent,
-                                        const char* key,
-                                        int& out,
-                                        const std::string& where,
-                                        std::string& error)
+    static bool check_string_sequence(const YAML::Node& parent_node,
+                                      const char* key,
+                                      const std::string& node_path,
+                                      std::string& error)
     {
-        if (!require_value(parent, key, out, where, error)) {
-            return false;
-        }
-        if (out < 0) {
-            return fail(where + " key " + key + " must be non-negative", error);
-        }
-        return true;
-    }
-
-    static bool require_string_sequence(const YAML::Node& parent,
-                                        const char* key,
-                                        const std::string& where,
-                                        std::string& error)
-    {
-        const YAML::Node node = parent[key];
+        const YAML::Node node = parent_node[key];
         if (!node.IsDefined() || !node.IsSequence()) {
-            return fail(where + " missing required sequence key: " + key, error);
+            return fail(node_path + " missing required sequence key: " + key, error);
         }
         if (node.size() == 0) {
-            return fail(where + " key " + key + " must not be empty", error);
+            return fail(node_path + " key " + key + " must not be empty", error);
         }
         for (std::size_t i = 0; i < node.size(); ++i) {
             if (!node[i].IsScalar()) {
-                return fail(where + " key " + key + " element " +
+                return fail(node_path + " key " + key + " element " +
                             std::to_string(i) + " must be a string", error);
             }
-            try {
-                (void)node[i].as<std::string>();
-            } catch (const YAML::BadConversion&) {
-                return fail(where + " key " + key + " element " +
-                            std::to_string(i) + " must be a string", error);
-            }
-        }
-        return true;
-    }
-
-    static bool validate_delay_range(const YAML::Node& action,
-                                     const char* min_key,
-                                     const char* max_key,
-                                     const std::string& where,
-                                     std::string& error)
-    {
-        int min_value = 0;
-        int max_value = 0;
-        if (!require_nonnegative_int(action, min_key, min_value, where, error) ||
-            !require_nonnegative_int(action, max_key, max_value, where, error)) {
-            return false;
-        }
-        if (min_value > max_value) {
-            return fail(where + " key " + min_key + " must be <= " + max_key,
-                        error);
         }
         return true;
     }
@@ -342,8 +274,8 @@ private:
     bool load_joint_topology(const YAML::Node& root, std::string& error)
     {
         std::vector<int> joint_ids_map;
-        if (!require_int_vector(root, "joint_ids_map", joint_ids_map,
-                                "root", error)) {
+        if (!read_int_vector(root, "joint_ids_map", "root",
+                             joint_ids_map, error)) {
             return false;
         }
         if (joint_ids_map.size() != kDof) {
@@ -369,22 +301,14 @@ private:
             slot = 1U;
         }
 
-        const auto& left = config_.joint_mapping.left_ankle_parallel;
-        const auto& right = config_.joint_mapping.right_ankle_parallel;
-        const std::array<int, 4> declared_ankle_motors = {
-            left.upper_motor_index, left.lower_motor_index,
-            right.upper_motor_index, right.lower_motor_index
-        };
-        std::vector<int> map_ankle_motors(joint_ids_map.begin() + kDof - 4,
-                                          joint_ids_map.end());
-        std::sort(map_ankle_motors.begin(), map_ankle_motors.end());
-        std::array<int, 4> sorted_declared = declared_ankle_motors;
-        std::sort(sorted_declared.begin(), sorted_declared.end());
-        if (!std::equal(map_ankle_motors.begin(), map_ankle_motors.end(),
-                        sorted_declared.begin())) {
-            return fail("joint_ids_map last 4 entries must be exactly the "
-                        "default ankle motors", error);
-        }
+        // 模型末四轴依次为左 pitch、右 pitch、左 roll、右 roll；
+        // 对应的物理电机依次为左上、右上、左下、右下，由 YAML 指定。
+        auto& left = config_.joint_mapping.left_ankle_parallel;
+        auto& right = config_.joint_mapping.right_ankle_parallel;
+        left.upper_motor_index = joint_ids_map[left.model_pitch_dof];
+        left.lower_motor_index = joint_ids_map[left.model_roll_dof];
+        right.upper_motor_index = joint_ids_map[right.model_pitch_dof];
+        right.lower_motor_index = joint_ids_map[right.model_roll_dof];
 
         std::copy(joint_ids_map.begin(), joint_ids_map.end(),
                   model_to_motor_index_.begin());
@@ -400,10 +324,10 @@ private:
     {
         std::array<double, kDof> model_kp{};
         std::array<double, kDof> model_kd{};
-        if (!require_double_array(root, "stiffness", model_kp,
-                                  "root", error) ||
-            !require_double_array(root, "damping", model_kd,
-                                  "root", error)) {
+        if (!read_double_array(root, "stiffness", "root",
+                               model_kp, error) ||
+            !read_double_array(root, "damping", "root",
+                               model_kd, error)) {
             return false;
         }
         if (!finite_array(model_kp) || !finite_array(model_kd)) {
@@ -422,24 +346,13 @@ private:
             config_.motor.mit_kd[motor_index] = model_kd[model_index];
         }
 
-        const std::array<int, 4> ankle_motors = {
-            config_.joint_mapping.left_ankle_parallel.upper_motor_index,
-            config_.joint_mapping.left_ankle_parallel.lower_motor_index,
-            config_.joint_mapping.right_ankle_parallel.upper_motor_index,
-            config_.joint_mapping.right_ankle_parallel.lower_motor_index
-        };
-        const double ankle_kp =
-            config_.motor.mit_kp[static_cast<std::size_t>(ankle_motors[0])];
-        const double ankle_kd =
-            config_.motor.mit_kd[static_cast<std::size_t>(ankle_motors[0])];
-        for (int motor_index : ankle_motors) {
-            const auto slot = static_cast<std::size_t>(motor_index);
-            if (std::abs(config_.motor.mit_kp[slot] - ankle_kp) >
-                    kValueTolerance ||
-                std::abs(config_.motor.mit_kd[slot] - ankle_kd) >
-                    kValueTolerance) {
-                return fail("stiffness/damping for ankle motors "
-                            "M4/M5/M10/M11 must be identical", error);
+        const double ankle_kp = model_kp[kDirectDriveDofCount];
+        const double ankle_kd = model_kd[kDirectDriveDofCount];
+        for (std::size_t model_index = kDirectDriveDofCount + 1;
+             model_index < kDof; ++model_index) {
+            if (std::abs(model_kp[model_index] - ankle_kp) > kValueTolerance ||
+                std::abs(model_kd[model_index] - ankle_kd) > kValueTolerance) {
+                return fail("stiffness/damping for ankle motors must be identical", error);
             }
         }
 
@@ -450,8 +363,8 @@ private:
 
     bool load_default_joint_pos(const YAML::Node& root, std::string& error)
     {
-        if (!require_double_array(root, "default_joint_pos",
-                                  root_default_joint_pos_, "root", error)) {
+        if (!read_double_array(root, "default_joint_pos",
+                               "root", root_default_joint_pos_, error)) {
             return false;
         }
         if (!finite_array(root_default_joint_pos_)) {
@@ -464,17 +377,18 @@ private:
     bool load_commands(const YAML::Node& root, std::string& error)
     {
         YAML::Node commands;
-        if (!require_map(root, "commands", commands, "root", error)) {
+        if (!read_map(root, "commands", "root", commands, error)) {
             return false;
         }
+        // commands 节点下只允许有 base_velocity 子节点
         if (!check_known_keys(commands, {"base_velocity"},
                               "commands", error)) {
             return false;
         }
 
         YAML::Node base_velocity;
-        if (!require_map(commands, "base_velocity", base_velocity,
-                         "commands", error)) {
+        if (!read_map(commands, "base_velocity", "commands",
+                      base_velocity, error)) {
             return false;
         }
         if (!check_known_keys(base_velocity, {"ranges"},
@@ -483,8 +397,8 @@ private:
         }
 
         YAML::Node ranges;
-        if (!require_map(base_velocity, "ranges", ranges,
-                         "commands.base_velocity", error)) {
+        if (!read_map(base_velocity, "ranges", "commands.base_velocity",
+                      ranges, error)) {
             return false;
         }
         if (!check_known_keys(ranges, {"lin_vel_x", "lin_vel_y",
@@ -492,21 +406,25 @@ private:
                               "commands.base_velocity.ranges", error)) {
             return false;
         }
-        std::array<double, 2> ignored_range{};
-        return require_double_pair(ranges, "lin_vel_x", ignored_range,
-                                   "commands.base_velocity.ranges", error) &&
-               require_double_pair(ranges, "lin_vel_y", ignored_range,
-                                   "commands.base_velocity.ranges", error) &&
-               require_double_pair(ranges, "ang_vel_z", ignored_range,
-                                   "commands.base_velocity.ranges", error) &&
-               require_null(ranges, "heading",
-                            "commands.base_velocity.ranges", error);
+        const auto read_range = [&](const char* key,
+                                    std::optional<std::array<double, 2>>& output) {
+            std::array<double, 2> range;
+            if (!read_double_pair(ranges, key, "commands.base_velocity.ranges", range, error)) {
+                return false;
+            }
+            output = range;
+            return true;
+        };
+        return read_range("lin_vel_x", config_.command_ranges.lin_vel_x) &&
+               read_range("lin_vel_y", config_.command_ranges.lin_vel_y) &&
+               read_range("ang_vel_z", config_.command_ranges.ang_vel_z) &&
+               check_null(ranges, "heading", "commands.base_velocity.ranges", error);
     }
 
     bool load_action(const YAML::Node& root, std::string& error)
     {
         YAML::Node actions;
-        if (!require_map(root, "actions", actions, "root", error)) {
+        if (!read_map(root, "actions", "root", actions, error)) {
             return false;
         }
         if (!check_known_keys(actions, {"JointPositionAction"},
@@ -515,10 +433,11 @@ private:
         }
 
         YAML::Node action;
-        if (!require_map(actions, "JointPositionAction", action,
-                         "actions", error)) {
+        if (!read_map(actions, "JointPositionAction", "actions",
+                      action, error)) {
             return false;
         }
+        // delay 字段保留为兼容键，不读取或校验其值。
         if (!check_known_keys(action, {"clip", "joint_names", "scale",
                                        "offset", "raw_action_clip",
                                        "min_inference_delay",
@@ -531,11 +450,11 @@ private:
         }
 
         if (!load_action_clip(action, error) ||
-            !require_string_sequence(action, "joint_names",
-                                     "actions.JointPositionAction", error) ||
-            !require_double_array(action, "scale",
-                                  config_.action.action_scale,
-                                  "actions.JointPositionAction", error)) {
+            !check_string_sequence(action, "joint_names",
+                                   "actions.JointPositionAction", error) ||
+            !read_double_array(action, "scale",
+                               "actions.JointPositionAction",
+                               config_.action.action_scale, error)) {
             return false;
         }
         if (!finite_array(config_.action.action_scale)) {
@@ -550,8 +469,8 @@ private:
         }
 
         std::array<double, kDof> action_offset{};
-        if (!require_double_array(action, "offset", action_offset,
-                                  "actions.JointPositionAction", error)) {
+        if (!read_double_array(action, "offset", "actions.JointPositionAction",
+                               action_offset, error)) {
             return false;
         }
         if (!finite_array(action_offset)) {
@@ -573,24 +492,14 @@ private:
             config_.action.raw_action_clip.reset();
         } else {
             double clip = 0.0;
-            if (!require_finite_positive(action, "raw_action_clip", clip,
-                                         "actions.JointPositionAction", error)) {
+            if (!read_value(action, "raw_action_clip", "actions.JointPositionAction",
+                            clip, error)) {
                 return false;
             }
             config_.action.raw_action_clip = clip;
         }
 
-        if (!validate_delay_range(action, "min_inference_delay",
-                                  "max_inference_delay",
-                                  "actions.JointPositionAction", error) ||
-            !validate_delay_range(action, "min_communication_delay",
-                                  "max_communication_delay",
-                                  "actions.JointPositionAction", error) ||
-            !require_null(action, "joint_ids",
-                          "actions.JointPositionAction", error)) {
-            return false;
-        }
-        return true;
+        return check_null(action, "joint_ids", "actions.JointPositionAction", error);
     }
 
     bool load_action_clip(const YAML::Node& action, std::string& error)
@@ -639,7 +548,7 @@ private:
     bool load_observations(const YAML::Node& root, std::string& error)
     {
         YAML::Node observations;
-        if (!require_map(root, "observations", observations, "root", error)) {
+        if (!read_map(root, "observations", "root", observations, error)) {
             return false;
         }
         if (!check_known_keys(observations, {"base_ang_vel",
@@ -653,55 +562,35 @@ private:
             return false;
         }
 
-        std::array<double, 3> projected_gravity_scale{};
-        std::array<double, kDof> last_action_scale{};
         const YAML::Node gait_phase = observations["gait_phase"];
         config_.policy.gait.enabled = gait_phase.IsDefined();
         if (config_.policy.gait.enabled) {
-            std::array<double, policy_observation::kGaitPhaseSize>
-                gait_phase_scale{};
             if (!load_observation_item(observations, "gait_phase",
-                                       gait_phase_scale, ParamsRule::GaitPhase,
-                                       error)) {
+                                       ParamsRule::GaitPhase,
+                                       config_.observation_scales.gait_phase_scale, error)) {
                 return false;
-            }
-            if (!all_near(gait_phase_scale, 1.0)) {
-                return fail("observations.gait_phase scale must be all 1.0 "
-                            "because runtime does not apply a configurable scale",
-                            error);
             }
         }
 
         if (!load_observation_item(observations, "base_ang_vel",
-                                   config_.observation_scales.body_ang_vel_scale,
-                                   ParamsRule::Empty, error) ||
+                                   ParamsRule::Empty,
+                                   config_.observation_scales.body_ang_vel_scale, error) ||
             !load_observation_item(observations, "projected_gravity",
-                                   projected_gravity_scale,
-                                   ParamsRule::Empty, error) ||
+                                   ParamsRule::Empty,
+                                   config_.observation_scales.projected_gravity_scale, error) ||
             !load_observation_item(observations, "velocity_commands",
-                                   config_.observation_scales.command_scale,
-                                   ParamsRule::BaseVelocityCommand, error) ||
+                                   ParamsRule::BaseVelocityCommand,
+                                   config_.observation_scales.command_scale, error) ||
             !load_observation_item(observations, "joint_pos_rel",
-                                   config_.observation_scales.dof_pos_scale,
-                                   ParamsRule::Empty, error) ||
+                                   ParamsRule::Empty,
+                                   config_.observation_scales.dof_pos_scale, error) ||
             !load_observation_item(observations, "joint_vel_rel",
-                                   config_.observation_scales.dof_vel_scale,
-                                   ParamsRule::Empty, error) ||
+                                   ParamsRule::Empty,
+                                   config_.observation_scales.dof_vel_scale, error) ||
             !load_observation_item(observations, "last_action",
-                                   last_action_scale,
-                                   ParamsRule::Empty, error)) {
+                                   ParamsRule::Empty,
+                                   config_.observation_scales.last_action_scale, error)) {
             return false;
-        }
-
-        if (!all_near(projected_gravity_scale, 1.0)) {
-            return fail("observations.projected_gravity scale must be all 1.0 "
-                        "because runtime does not apply a configurable scale",
-                        error);
-        }
-        if (!all_near(last_action_scale, 1.0)) {
-            return fail("observations.last_action scale must be all 1.0 "
-                        "because runtime uses raw last actions directly",
-                        error);
         }
         return true;
     }
@@ -709,37 +598,38 @@ private:
     template <std::size_t N>
     bool load_observation_item(const YAML::Node& observations,
                                const char* name,
-                               std::array<double, N>& scale_out,
                                ParamsRule params_rule,
+                               std::array<double, N>& output,
                                std::string& error)
     {
-        const std::string where = std::string("observations.") + name;
+        const std::string node_path = std::string("observations.") + name;
         YAML::Node item;
-        if (!require_map(observations, name, item, "observations", error)) {
+        if (!read_map(observations, name, "observations", item, error)) {
             return false;
         }
         if (!check_known_keys(item, {"params", "clip", "scale",
                                      "history_length"},
-                              where, error)) {
+                              node_path, error)) {
             return false;
         }
 
         if (!validate_observation_params(item, name, params_rule, error) ||
-            !require_null(item, "clip", where, error) ||
-            !require_double_array(item, "scale", scale_out, where, error)) {
+            !check_null(item, "clip", node_path, error)) {
             return false;
         }
-        if (!finite_array(scale_out)) {
-            return fail(where + " scale values must be finite", error);
+        if (!read_double_array(item, "scale", node_path, output, error)) {
+            return false;
+        }
+        if (!finite_array(output)) {
+            return fail(node_path + " scale values must be finite", error);
         }
 
         int history_length = 0;
-        if (!require_nonnegative_int(item, "history_length", history_length,
-                                     where, error)) {
+        if (!read_value(item, "history_length", node_path, history_length, error)) {
             return false;
         }
         if (history_length != static_cast<int>(policy_observation::kFrameStack)) {
-            return fail(where + " history_length must equal the compiled "
+            return fail(node_path + " history_length must equal the compiled "
                         "frame stack (" +
                         std::to_string(policy_observation::kFrameStack) +
                         "), got " + std::to_string(history_length), error);
@@ -752,39 +642,38 @@ private:
                                      ParamsRule params_rule,
                                      std::string& error)
     {
-        const std::string where = std::string("observations.") + name +
+        const std::string node_path = std::string("observations.") + name +
                                   ".params";
         YAML::Node params;
-        if (!require_map(item, "params",
-                         params, std::string("observations.") + name, error)) {
+        if (!read_map(item, "params",
+                      std::string("observations.") + name, params, error)) {
             return false;
         }
 
         if (params_rule == ParamsRule::Empty) {
-            return check_known_keys(params, {}, where, error);
+            return check_known_keys(params, {}, node_path, error);
         }
 
         if (params_rule == ParamsRule::GaitPhase) {
             if (!check_known_keys(params, {"period", "command_name",
                                             "gate_by_command"},
-                                   where, error)) {
+                                   node_path, error)) {
                 return false;
             }
-            if (!require_finite_positive(params, "period",
-                                         config_.policy.gait.period,
-                                         where, error)) {
+            if (!read_value(params, "period", node_path,
+                            config_.policy.gait.period, error)) {
                 return false;
             }
 
             const YAML::Node command_name_node = params["command_name"];
             if (command_name_node.IsDefined()) {
                 std::string command_name;
-                if (!require_value(params, "command_name", command_name,
-                                    where, error)) {
+                if (!read_value(params, "command_name", node_path,
+                                 command_name, error)) {
                     return false;
                 }
                 if (command_name != "base_velocity") {
-                    return fail(where + " command_name must be base_velocity, got: " +
+                    return fail(node_path + " command_name must be base_velocity, got: " +
                                     command_name,
                                 error);
                 }
@@ -793,12 +682,12 @@ private:
             const YAML::Node gate_by_command_node = params["gate_by_command"];
             if (gate_by_command_node.IsDefined()) {
                 bool gate_by_command = false;
-                if (!require_value(params, "gate_by_command", gate_by_command,
-                                    where, error)) {
+                if (!read_value(params, "gate_by_command", node_path,
+                                 gate_by_command, error)) {
                     return false;
                 }
                 if (!gate_by_command) {
-                    return fail(where + " gate_by_command must be true because "
+                    return fail(node_path + " gate_by_command must be true because "
                                 "runtime always gates gait phase by command",
                                 error);
                 }
@@ -806,16 +695,16 @@ private:
             return true;
         }
 
-        if (!check_known_keys(params, {"command_name"}, where, error)) {
+        if (!check_known_keys(params, {"command_name"}, node_path, error)) {
             return false;
         }
         std::string command_name;
-        if (!require_value(params, "command_name", command_name,
-                           where, error)) {
+        if (!read_value(params, "command_name", node_path,
+                        command_name, error)) {
             return false;
         }
         if (command_name != "base_velocity") {
-            return fail(where + " command_name must be base_velocity, got: " +
+            return fail(node_path + " command_name must be base_velocity, got: " +
                         command_name, error);
         }
         return true;

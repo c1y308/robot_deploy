@@ -5,6 +5,7 @@
 #include "xbox_controller.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -28,6 +29,15 @@ std::atomic<bool> g_stop_requested{false};
 void signal_handler(int)
 {
     g_stop_requested.store(true);
+}
+
+double velocity_from_axis(int raw_axis, const std::array<double, 2>& range)
+{
+    // 沿用手柄的死区和轴归一化规则，按正负方向分别应用 YAML 范围。
+    const double axis = -xbox_control::XboxController::axis_to_speed(raw_axis) /
+                        xbox_control::kMaxSpeedMps;
+    const double velocity = axis >= 0.0 ? axis * range[1] : -axis * range[0];
+    return std::clamp(velocity, range[0], range[1]);
 }
 
 /* 打印配置摘要，便于确认加载结果 */
@@ -164,6 +174,12 @@ int main(int argc, char** argv)
             std::cerr << "[ERROR] " << controller.last_error() << "\n";
             controller.stop_polling();
             return 1;
+        }
+        if (cfg.command_ranges.lin_vel_x) {
+            command.vx = velocity_from_axis(command.raw_abs_y, *cfg.command_ranges.lin_vel_x);
+        }
+        if (cfg.command_ranges.ang_vel_z) {
+            command.yaw_rate = velocity_from_axis(command.raw_abs_rx, *cfg.command_ranges.ang_vel_z);
         }
         // robot.set_target_velocity(0.0, 0.0, 0.0);
         robot.set_target_velocity(command.vx, 0.0, command.yaw_rate);
