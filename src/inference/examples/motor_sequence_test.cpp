@@ -21,10 +21,10 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 using MotorPositions = std::array<double, motor_base::kMaxMotors>;
-using ModelPositions = inference::robot_detail::ActionProcessor::FixedModelTarget;
-using PolicyCommandWorker = inference::robot_detail::PolicyCommandWorker;
+using ModelPositions = inference::ActionProcessor::ModelJointPositions;
+using PolicyCommandWorker = inference::PolicyCommandWorker;
 
-constexpr std::array<const char*, inference::policy_observation::kDof> kJointNames = {
+constexpr std::array<const char*, inference::kModelDof> kJointNames = {
     "left_hip_roll", "right_hip_roll", "left_hip_pitch", "right_hip_pitch",
     "left_hip_yaw", "right_hip_yaw", "left_knee_pitch", "right_knee_pitch",
     "left_ankle_pitch", "right_ankle_pitch", "left_ankle_roll", "right_ankle_roll"
@@ -130,11 +130,10 @@ bool stream_model_motion(inference::RobotMotorSession& motors,
             std::chrono::duration<double>(duration).count(), 0.0, 1.0);
         const double blend = alpha * alpha * (3.0 - 2.0 * alpha);
         auto& frame = worker.acquire_target_write_slot();
-        frame.inference_record = {};
-        frame.inference_record.policy_seq = ++sequence;
-        frame.inference_record.policy_observation_time_ns = state.timestamp_ns;
+        frame = {};
+        frame.policy_seq = ++sequence;
         for (std::size_t dof = 0; dof < to.size(); ++dof) {
-            frame.inference_record.target_q_model_rad[dof] =
+            frame.target_model_rad[dof] =
                 from[dof] + blend * (to[dof] - from[dof]);
         }
         // Inject angles at the same boundary as policy_step's processed model
@@ -151,8 +150,8 @@ bool stream_model_motion(inference::RobotMotorSession& motors,
 }
 
 bool report_model_position(inference::RobotMotorSession& motors,
-                           inference::robot_detail::ObservationBuilder& feedback_builder,
-                           const inference::robot_detail::JointMapping& mapping,
+                           inference::ObservationBuilder& feedback_builder,
+                           const inference::JointMapping& mapping,
                            const inference::RobotInterfaceConfig& config,
                            std::size_t dof,
                            double target)
@@ -177,13 +176,13 @@ bool report_model_position(inference::RobotMotorSession& motors,
     const std::size_t position_offset = kFrameStack *
         (kBaseAngVelSize + kProjectedGravitySize + kVelocityCommandsSize +
          (config.policy.gait.enabled ? kGaitPhaseSize : 0));
-    const double measured = observation[position_offset + (kFrameStack - 1) * kDof + dof];
+    const double measured = observation[position_offset + (kFrameStack - 1) * inference::kModelDof + dof];
     std::cout << "[MOTOR_SEQUENCE] Model DOF " << dof << " " << kJointNames[dof]
               << ": target=" << target << " rad, measured=" << measured
               << " rad, error=" << target - measured << " rad";
-    if (!mapping.is_parallel_model_dof(static_cast<int>(dof))) {
-        const int motor = mapping.direct_motor_for_model_dof(static_cast<int>(dof));
-        std::cout << ", M" << motor << " target=" << mapping.direction_for_motor(motor) * target
+    if (!mapping.is_model_dof(static_cast<int>(dof))) {
+        const int motor = mapping.get_motor_id(static_cast<int>(dof));
+        std::cout << ", M" << motor << " target=" << mapping.get_motor_direction(motor) * target
                   << " rad, measured=" << state.position_rad[motor] << " rad";
     } else {
         const auto& ankle = (static_cast<int>(dof) == mapping.left_ankle().model_pitch_dof ||
@@ -200,8 +199,8 @@ bool report_model_position(inference::RobotMotorSession& motors,
 
 bool run_model_sequence(inference::RobotMotorSession& motors,
                         PolicyCommandWorker& worker,
-                        inference::robot_detail::ObservationBuilder& feedback_builder,
-                        const inference::robot_detail::JointMapping& mapping,
+                        inference::ObservationBuilder& feedback_builder,
+                        const inference::JointMapping& mapping,
                         const inference::RobotInterfaceConfig& config)
 {
     const ModelPositions zero{};
@@ -224,9 +223,9 @@ bool run_model_sequence(inference::RobotMotorSession& motors,
 }
 
 bool run_sequence(inference::RobotMotorSession& motors,
-                  inference::robot_detail::ActionProcessor& action_processor,
-                  inference::robot_detail::ObservationBuilder& feedback_builder,
-                  const inference::robot_detail::JointMapping& mapping,
+                  inference::ActionProcessor& action_processor,
+                  inference::ObservationBuilder& feedback_builder,
+                  const inference::JointMapping& mapping,
                   const inference::RobotInterfaceConfig& config)
 {
     const auto max_age_ns = robot_base::seconds_to_ns(config.sensor_guard.max_motor_sample_age_s);
@@ -244,7 +243,7 @@ bool run_sequence(inference::RobotMotorSession& motors,
     std::cout << std::fixed << std::setprecision(4);
     for (std::size_t id = 0; id < initial.size(); ++id) {
         std::cout << "[MOTOR_SEQUENCE] ID " << id << " start=" << initial[id]
-                  << " rad, direction=" << mapping.direction_for_motor(static_cast<int>(id)) << '\n';
+                  << " rad, direction=" << mapping.get_motor_direction(static_cast<int>(id)) << '\n';
     }
     std::cout << "[MOTOR_SEQUENCE] Move all motors to physical zero (3 s), hold (1 s).\n"
               << std::flush;
@@ -319,18 +318,18 @@ int main(int argc, char** argv)
     config.motor.print_motors_info = false;
     config.recorder.enabled = false;
     std::string mapping_error;
-    auto mapping = inference::robot_detail::JointMapping::create(
-        static_cast<int>(inference::policy_observation::kDof), config.joint_mapping, mapping_error);
+    auto mapping = inference::JointMapping::create(
+        static_cast<int>(inference::kModelDof), config.joint_mapping, mapping_error);
     if (!mapping) {
         std::cerr << "[MOTOR_SEQUENCE] Invalid joint mapping: " << mapping_error << '\n';
         return 1;
     }
-    inference::robot_detail::ActionProcessor action_processor(
-        mapping, config.action, config.ankle_motor_limits,
+    inference::ActionProcessor action_processor(
+        mapping, config.action.default_joint_pos_rad, config.ankle_motor_limits,
         config.motor.mit_kp, config.motor.mit_kd, config.ankle_torque);
     auto feedback_scales = config.observation_scales;
     feedback_scales.dof_pos_scale.fill(1.0);
-    inference::robot_detail::ObservationBuilder feedback_builder(
+    inference::ObservationBuilder feedback_builder(
         mapping, feedback_scales, ModelPositions{}, config.policy);
     inference::RobotMotorSession motors(config.motor, config.safety);
     const bool completed = run_sequence(

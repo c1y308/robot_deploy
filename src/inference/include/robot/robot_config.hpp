@@ -2,9 +2,8 @@
 
 #include "imu_base/imu_base.hpp"
 #include "motor_base/command_types.hpp"
-#include "policy/policy_observation_config.hpp"
 #include "recorder/inference_recorder_config.hpp"
-#include "robot/joint_mapping_config.hpp"
+#include "robot/joint_mapping.hpp"
 #include "thread/thread_runtime.hpp"
 
 #include <array>
@@ -15,6 +14,20 @@
 #include <vector>
 
 namespace inference {
+
+// 策略控制的模型关节维度，按模型关节顺序。
+inline constexpr std::size_t kModelDof = 12;
+
+/* 动作后处理：ActionProcessor / RobotInterface::policy_step 消费。
+   全部按模型 DOF 顺序。 */
+struct ActionConfig {
+    std::array<double, kModelDof> default_joint_pos_rad{};
+    std::array<double, kModelDof> action_scale{};
+    /* raw_action * action_scale 之后的偏移量限位: [lower, upper] */
+    std::array<std::array<double, 2>, kModelDof> action_clip{};
+    /* nullopt 表示不对策略原始输出做额外裁剪。 */
+    std::optional<double> raw_action_clip = 1.0;
+};
 
 /* 电机硬件与会话配置。mit_kp/mit_kd 为物理电机顺序，由配置加载器转换填充。 */
 struct MotorConfig {
@@ -47,35 +60,24 @@ struct ImuConfig {
     bool print_ahrs = false;
 };
 
-/* 动作后处理：ActionProcessor / RobotInterface::policy_step 消费。
-   全部按模型 DOF 顺序。 */
-struct ActionConfig {
-    std::array<double, policy_observation::kDof> default_joint_pos_rad{};
-    std::array<double, policy_observation::kDof> action_scale{};
-    /* raw_action * action_scale 之后的偏移量限位: [lower, upper] */
-    std::array<std::array<double, 2>, policy_observation::kDof> action_clip{};
-    /* nullopt 表示不对策略原始输出做额外裁剪。 */
-    std::optional<double> raw_action_clip = 1.0;
-};
-
 /* 观测缩放：ObservationBuilder 消费。全部按模型 DOF 顺序。 */
 struct ObservationScaleConfig {
-    std::array<double, policy_observation::kDof> dof_pos_scale = {
+    std::array<double, kModelDof> dof_pos_scale = {
         1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
         1.0, 1.0, 1.0, 1.0, 1.0, 1.0
     };
-    std::array<double, policy_observation::kDof> dof_vel_scale = {
+    std::array<double, kModelDof> dof_vel_scale = {
         0.05, 0.05, 0.05, 0.05, 0.05, 0.05,
         0.05, 0.05, 0.05, 0.05, 0.05, 0.05
     };
     std::array<double, 3> command_scale      = {1.0, 1.0, 1.0};
     std::array<double, 3> body_ang_vel_scale = {0.2, 0.2, 0.2};
     std::array<double, 3> projected_gravity_scale = {1.0, 1.0, 1.0};
-    std::array<double, policy_observation::kDof> last_action_scale = {
+    std::array<double, kModelDof> last_action_scale = {
         1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
         1.0, 1.0, 1.0, 1.0, 1.0, 1.0
     };
-    std::array<double, policy_observation::kGaitPhaseSize> gait_phase_scale = {1.0, 1.0};
+    std::array<double, 2> gait_phase_scale = {1.0, 1.0};
 };
 
 /* YAML 中的必填速度范围；加载器确保三项均已配置。 */

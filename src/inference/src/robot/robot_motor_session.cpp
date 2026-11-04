@@ -127,6 +127,19 @@ bool RobotMotorSession::deinitialize()
     return true;
 }
 
+ShutdownResult RobotMotorSession::shutdown(const motor_base::CommandSubmitResult& request)
+{
+    const bool stop_confirmed = !rt_started_ || wait_for_stop(request);
+    if (!stop_confirmed &&
+        !(communication_fault_latched() &&
+          communication_state() != MotorCommunicationState::Healthy)) {
+        return ShutdownResult::RetryRequired;
+    }
+    release_controller();
+    return stop_confirmed ? ShutdownResult::Confirmed
+                          : ShutdownResult::ReleasedAfterCommLoss;
+}
+
 void RobotMotorSession::release_controller()
 {
     if (controller_) controller_->shutdown();

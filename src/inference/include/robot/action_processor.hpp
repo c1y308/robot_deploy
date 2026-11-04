@@ -11,7 +11,7 @@
 #include <memory>
 #include <string>
 
-namespace inference::robot_detail {
+namespace inference {
 
 struct LowPass2Coefficients {
     double b0 = 0.0;
@@ -29,12 +29,15 @@ public:
         std::size_t setpoint_count{0};
     };
 
-    using FixedModelTarget =
-        std::array<double, policy_observation::kDof>;
+    using ModelJointPositions = std::array<double, kModelDof>;
+
+    // 纯计算：原始动作裁剪、缩放、偏移限位，再叠加默认姿态。
+    static ModelJointPositions make_model_target(
+        const PolicyAction& raw_action, const ActionConfig& config) noexcept;
 
     // mapping 由 JointMapping::create() 成功构造，运行期不可变。
     ActionProcessor(std::shared_ptr<const JointMapping> mapping,
-                    ActionConfig action_config,
+                    ModelJointPositions default_joint_pos_rad,
                     AnkleMotorLimitConfig ankle_motor_limits,
                     std::array<double, motor_base::kMaxMotors> motor_kp,
                     std::array<double, motor_base::kMaxMotors> motor_kd,
@@ -42,17 +45,17 @@ public:
 
     void reset_runtime_state();
 
-    bool build_motor_targets(const FixedModelTarget& target_q_model_rad,
+    bool make_motor_target(const ModelJointPositions& target_model_rad,
                              std::array<double, motor_base::kMaxMotors>& target_motor_rad,
                              std::string& error);
 
     bool build_reset_start_model_pose(const std::array<double, motor_base::kMaxMotors>& current_motor_q,
-                                      const FixedModelTarget& target_model_q,
-                                      FixedModelTarget& start_model_q,
+                                      const ModelJointPositions& target_model_q,
+                                      ModelJointPositions& start_model_q,
                                       std::string& error) const;
 
     bool build_policy_impedance_command(
-        const FixedModelTarget& target_q_model_rad,
+        const ModelJointPositions& target_model_rad,
         const std::array<motor_base::MotorStatusSnapshot,
                          motor_base::kMaxMotorCommandSetpoints>& motor_feedback,
         FixedPolicyMotorCommand& command,
@@ -61,8 +64,6 @@ public:
 private:
     struct AnkleIkState {
         ankle_motor_ik::Solver solver;
-        double last_upper_motor = 0.0;
-        double last_lower_motor = 0.0;
         bool solved = false;
 
         void reset();
@@ -85,24 +86,24 @@ private:
         void reset(double roll = 0.0, double pitch = 0.0);
     };
 
-    bool apply_ankle_ik(const FixedModelTarget& target_q_model_rad,
+    bool apply_ankle_ik(const ModelJointPositions& target_model_rad,
                         std::array<double, motor_base::kMaxMotors>& target_motor_rad,
                         const char* ankle_name,
-                        const AnkleParallelMap& ankle_map,
+                        const AnkleMap& ankle_map,
                         AnkleIkState& state,
                         std::string& error);
 
     bool apply_ankle_torque_control(
-        const FixedModelTarget& target_q_model_rad,
+        const ModelJointPositions& target_model_rad,
         const std::array<motor_base::MotorStatusSnapshot,
                          motor_base::kMaxMotorCommandSetpoints>& motor_feedback,
-        const AnkleParallelMap& ankle_map,
+        const AnkleMap& ankle_map,
         AnkleTorqueState& state,
         FixedPolicyMotorCommand& command,
         std::string& error);
 
     std::shared_ptr<const JointMapping> mapping_;
-    ActionConfig action_config_;
+    ModelJointPositions default_joint_pos_rad_;
     AnkleMotorLimitConfig ankle_motor_limits_;
     std::array<double, motor_base::kMaxMotors> motor_kp_;
     std::array<double, motor_base::kMaxMotors> motor_kd_;
@@ -116,4 +117,4 @@ private:
     AnkleTorqueState right_ankle_torque_;
 };
 
-}  // namespace inference::robot_detail
+}  // namespace inference

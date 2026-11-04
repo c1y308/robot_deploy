@@ -28,7 +28,7 @@ RobotInterface::RobotInterface(RobotInterfaceConfig config)
     : config_(std::move(config)),
       motor_session_(config_.motor, config_.safety, config_.runtime),
       imu_session_(config_.imu, config_.runtime),
-      worker_(config_, motor_session_, first_policy_inference_started_ns_)
+      policy_command_worker_(config_, motor_session_, first_policy_inference_started_ns_)
 {
 }
 
@@ -80,7 +80,6 @@ bool RobotInterface::initialize() {
                       << "failed: errno=" << saved_errno << " ("
                       << std::strerror(saved_errno)
                       << "). Check RLIMIT_MEMLOCK and CAP_IPC_LOCK.\n";
-            policy_runtime_.shutdown();
             shutdown();
             return false;
         }
@@ -93,7 +92,6 @@ bool RobotInterface::initialize() {
                       << "mlockall failed: errno=" << prefault_error << " ("
                       << std::strerror(prefault_error)
                       << "); maximum 1 MiB and valid page size required\n";
-            policy_runtime_.shutdown();
             shutdown();
             return false;
         }
@@ -145,7 +143,7 @@ bool RobotInterface::initialize() {
     initialized_ = true;
 
     // 开启策略命令线程
-    if (!worker_.start(*action_processor_, std::move(startup_hold_target_motor_rad))) {
+    if (!policy_command_worker_.start(*action_processor_, std::move(startup_hold_target_motor_rad))) {
         initialized_ = false;
         shutdown();
         return false;
@@ -159,23 +157,12 @@ bool RobotInterface::initialize() {
 ShutdownResult RobotInterface::shutdown() {
     const auto request = motor_session_.request_stop();
     initialized_ = false;
-    worker_.request_stop();
-
-    bool stop_confirmed = true;
-    if (motor_session_.rt_started_) {
-        stop_confirmed = motor_session_.wait_for_stop(request);
-        if (!stop_confirmed) {
-            const bool persistent_communication_loss =
-                motor_session_.communication_fault_latched() &&
-                motor_session_.communication_state() !=
-                    MotorCommunicationState::Healthy;
-            if (!persistent_communication_loss) {
-                return ShutdownResult::RetryRequired;
-            }
-        }
+    // 会话释放控制器前，先结束仍可能访问控制器的命令线程。
+    policy_command_worker_.stop();
+    const auto result = motor_session_.shutdown(request);
+    if (result == ShutdownResult::RetryRequired) {
+        return result;
     }
-
-    worker_.stop();
     record_completed_policy_frame();
     policy_runtime_.shutdown();
     inference_recorder_.stop();
@@ -184,7 +171,7 @@ ShutdownResult RobotInterface::shutdown() {
     policy_step_phase_started_ns_ = 0;
     last_policy_target_published_ns_ = 0;
     first_policy_inference_started_ns_.store(0, std::memory_order_release);
-    worker_.reset_channels();
+    policy_command_worker_.reset_channels();
     if (action_processor_) {
         action_processor_->reset_runtime_state();
     }
@@ -192,15 +179,13 @@ ShutdownResult RobotInterface::shutdown() {
         observation_builder_->reset_runtime_state();
     }
     imu_session_.deinitialize();
-    motor_session_.release_controller();
-    return stop_confirmed ? ShutdownResult::Confirmed
-                          : ShutdownResult::ReleasedAfterCommLoss;
+    return result;
 }
 
 
 bool RobotInterface::initialize_processors() {
     std::string error;
-    auto mapping = robot_detail::JointMapping::create(static_cast<int>(policy_observation::kDof),
+    auto mapping = JointMapping::create(static_cast<int>(kModelDof),
                                                          config_.joint_mapping,
                                                                  error);
     if (!mapping) {
@@ -209,15 +194,15 @@ bool RobotInterface::initialize_processors() {
         return false;
     }
 
-    auto action_processor = std::make_unique<robot_detail::ActionProcessor>(
+    auto action_processor = std::make_unique<ActionProcessor>(
         mapping,
-        config_.action,
+        config_.action.default_joint_pos_rad,
         config_.ankle_motor_limits,
         config_.motor.mit_kp,
         config_.motor.mit_kd,
         config_.ankle_torque);
 
-    auto observation_builder = std::make_unique<robot_detail::ObservationBuilder>(
+    auto observation_builder = std::make_unique<ObservationBuilder>(
         mapping,
         config_.observation_scales,
         config_.action.default_joint_pos_rad,
@@ -260,7 +245,7 @@ bool RobotInterface::reset_joints(
         std::cerr << "[RobotInterface] reset_joints rejected: motor feedback is invalid.\n";
         return false;
     }
-    std::array<double, policy_observation::kDof> start_model_q{};
+    std::array<double, kModelDof> start_model_q{};
     std::string error;
     if (!action_processor_->build_reset_start_model_pose(motor_state.position_rad,
                                                          target_model_q,
@@ -278,14 +263,14 @@ bool RobotInterface::reset_joints(
             config_.safety.control_command_timeout_ms * 500.0)));
     const auto dt = std::chrono::microseconds(reset_period_us);
     std::array<double, motor_base::kMaxMotors> target_rad{};
-    std::array<double, policy_observation::kDof> q_cmd_model{};
+    std::array<double, kModelDof> q_cmd_model{};
 
     for (int k = 1; k <= ramp_steps; ++k) {
         const double alpha = static_cast<double>(k) / static_cast<double>(ramp_steps);
         for (std::size_t i = 0; i < q_cmd_model.size(); ++i) {
             q_cmd_model[i] = start_model_q[i] * (1.0 - alpha) + target_model_q[i] * alpha;
         }
-        if (!action_processor_->build_motor_targets(q_cmd_model, target_rad, error)) {
+        if (!action_processor_->make_motor_target(q_cmd_model, target_rad, error)) {
             std::cerr << "[RobotInterface] reset_joints failed: "
                       << error << "\n";
             return false;
@@ -358,7 +343,7 @@ void RobotInterface::record_completed_policy_frame()
         return;
     }
     InferenceRecord record;
-    if (worker_.try_consume_completed_record(record)) {
+    if (policy_command_worker_.try_consume_completed_record(record)) {
         record_policy_frame(record);
     }
 }
@@ -393,7 +378,7 @@ bool RobotInterface::policy_step() {
 
     std::string worker_error;
 
-    if (!worker_.healthy(worker_error)) {
+    if (!policy_command_worker_.healthy(worker_error)) {
         return handle_policy_step_failure(worker_error);
     }
     if (!policy_runtime_.is_loaded()) {
@@ -450,32 +435,13 @@ bool RobotInterface::policy_step() {
     }
 
     set_policy_step_phase(PolicyStepPhase::PostInference);
-    if (!worker_.healthy(worker_error)) {
+    if (!policy_command_worker_.healthy(worker_error)) {
         return handle_policy_step_failure(worker_error);
     }
 
     // admission 之前只完成控制目标计算，不组装日志记录。
-    std::array<double, PolicyRuntime::kDof> target_q_model_rad;
-    for (std::size_t model_index = 0; model_index < PolicyRuntime::kDof; ++model_index) {
-
-        const double raw_action =
-            static_cast<double>(policy_result.raw_action[model_index]);
-        const double clipped_raw_action = config_.action.raw_action_clip
-            ? std::max(-*config_.action.raw_action_clip,
-                       std::min(*config_.action.raw_action_clip, raw_action))
-            : raw_action;
-        // 进行缩放
-        const double scaled_action = clipped_raw_action * config_.action.action_scale[model_index];
-        // 进行截断
-        const auto& action_clip = config_.action.action_clip[model_index];
-        const double clipped_action_offset =
-            std::max(action_clip[0], std::min(action_clip[1], scaled_action));
-
-        // 叠加模型顺序的站立姿态，得到模型顺序的目标关节角
-        target_q_model_rad[model_index] =
-            config_.action.default_joint_pos_rad[model_index] +
-            clipped_action_offset;
-    }
+    const auto target_model_rad =
+        ActionProcessor::make_model_target(policy_result.raw_action, config_.action);
 
     set_policy_step_phase(PolicyStepPhase::Publish);
     const std::int64_t decision_now_ns = robot_base::monotonic_now_ns();
@@ -501,7 +467,7 @@ bool RobotInterface::policy_step() {
         record.policy_observation_time_ns = observation_time_ns;
         record.policy_observation = policy_observation;
         record.raw_action = policy_result.raw_action;
-        record.target_q_model_rad = target_q_model_rad;
+        record.target_model_rad = target_model_rad;
         record.obs_to_action_age_us = admission.obs_to_action_age_us;
         record.target_hold_age_us = admission.target_hold_age_us;
         record.policy_result_dropped = admission.dropped;
@@ -509,15 +475,15 @@ bool RobotInterface::policy_step() {
 
     // 丢弃的结果不发布，不刷新发布时间。
     if (!admission.dropped) {
-        auto& record = worker_.acquire_target_write_slot().inference_record;
-        record.policy_seq = policy_seq;
-        record.target_q_model_rad = target_q_model_rad;
+        auto& target = policy_command_worker_.acquire_target_write_slot();
+        target.policy_seq = policy_seq;
+        target.target_model_rad = target_model_rad;
         // worker 的目标超时诊断也使用该年龄。
-        record.obs_to_action_age_us = admission.obs_to_action_age_us;
+        target.obs_to_action_age_us = admission.obs_to_action_age_us;
         if (config_.recorder.enabled) {
-            fill_log_record(record);
+            fill_log_record(policy_command_worker_.acquire_target_record_write_slot());
         }
-        last_policy_target_published_ns_ = worker_.publish_target();
+        last_policy_target_published_ns_ = policy_command_worker_.publish_target();
         observation_builder_->commit_policy_action(policy_result.raw_action);
     }
 
@@ -543,7 +509,7 @@ bool RobotInterface::handle_policy_step_failure(const std::string& message) {
 
     initialized_ = false;
 
-    worker_.request_stop();
+    policy_command_worker_.request_stop();
 
     // 这里记录 Interface 处理故障时的阶段，worker 的停止请求已经发出。
     const std::int64_t diagnostic_now_ns = robot_base::monotonic_now_ns();
@@ -555,7 +521,7 @@ bool RobotInterface::handle_policy_step_failure(const std::string& message) {
               << ", phase_elapsed_us="
               << robot_base::ns_to_us(diagnostic_now_ns - policy_step_phase_started_ns_) << "\n";
     
-    worker_.stop();
+    policy_command_worker_.stop();
 
     record_completed_policy_frame();
 

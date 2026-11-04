@@ -22,6 +22,12 @@ class MotorControllerBase;
 
 namespace inference {
 
+enum class ShutdownResult {
+    Confirmed,
+    ReleasedAfterCommLoss,
+    RetryRequired,
+};
+
 enum class MotorCommunicationState {
     Healthy,
     LinkDown,
@@ -56,6 +62,9 @@ public:
     bool restart(int motor_index = -1);
     // False retains the running controller for another confirmation attempt.
     bool deinitialize();
+    // 调用前结束命令生产线程；确认先前的 STOP，按通信状态决定是否释放控制器。
+    ShutdownResult shutdown(const motor_base::CommandSubmitResult& request);
+    void enable_communication_protection() noexcept;
 
     bool is_initialized() const noexcept { return initialized_.load(); }
     bool motion_enabled() const noexcept { return motion_enabled_.load(); }
@@ -79,11 +88,9 @@ public:
     MotorStateSnapshot  get_motor_snapshot() const;
 
 private:
-    friend class RobotInterface;
     friend struct RobotInterfacePolicyTimingTestAccess;
     motor_base::CommandTiming target_command_timing(
         std::int64_t produced_at_ns, std::int64_t absolute_deadline_ns) const noexcept;
-    void enable_communication_protection() noexcept;
     bool wait_for_stop(const motor_base::CommandSubmitResult& request);
     void release_controller();
     bool submit_command(const motor_base::ControlCommand& command,

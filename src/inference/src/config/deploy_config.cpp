@@ -1,4 +1,5 @@
 #include "config/deploy_config.hpp"
+#include "policy/policy_observation_config.hpp"
 
 #include "tool/tool.hpp"
 
@@ -25,7 +26,7 @@ namespace {
 using robot_base::finite_array;
 using robot_base::index_in_range;
 
-constexpr std::size_t kDof = policy_observation::kDof;
+constexpr std::size_t kDof = kModelDof;
 constexpr std::size_t kMotorCount = motor_base::kMaxMotors;
 constexpr std::size_t kDirectDriveDofCount = kDof - 4;
 constexpr double kValueTolerance = 1e-12;
@@ -252,8 +253,8 @@ private:
 
         // 模型末四轴依次为左 pitch、右 pitch、左 roll、右 roll；
         // 对应的物理电机依次为左上、右上、左下、右下，由 YAML 指定。
-        auto& left = config_.joint_mapping.left_ankle_parallel;
-        auto& right = config_.joint_mapping.right_ankle_parallel;
+        auto& left = config_.joint_mapping.left_ankle;
+        auto& right = config_.joint_mapping.right_ankle;
         left.upper_motor_index = joint_ids_map[left.model_pitch_dof];
         left.lower_motor_index = joint_ids_map[left.model_roll_dof];
         right.upper_motor_index = joint_ids_map[right.model_pitch_dof];

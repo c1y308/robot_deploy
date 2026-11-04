@@ -74,15 +74,15 @@ const std::array<int, kNumMotors> kMotorToModelDirection = {
     -1,  1, 1, -1, -1, -1
 };
 
-struct AnkleParallelMap {
+struct AnkleMap {
     int model_pitch_dof = -1;
     int model_roll_dof = -1;
     int upper_motor_index = -1;
     int lower_motor_index = -1;
 };
 
-const AnkleParallelMap kLeftAnkleParallel{8, 10, 4, 5};
-const AnkleParallelMap kRightAnkleParallel{9, 11, 10, 11};
+const AnkleMap kLeftAnkle{8, 10, 4, 5};
+const AnkleMap kRightAnkle{9, 11, 10, 11};
 
 struct Sample {
     Clock::time_point time{};
@@ -191,7 +191,7 @@ int direction_for_motor(int motor_index)
     return kMotorToModelDirection[static_cast<std::size_t>(motor_index)];
 }
 
-bool ankle_map_indices_in_range(const AnkleParallelMap& ankle_map)
+bool ankle_map_indices_in_range(const AnkleMap& ankle_map)
 {
     return ankle_map.model_pitch_dof >= 0 &&
            ankle_map.model_pitch_dof < kNumMotors &&
@@ -203,19 +203,19 @@ bool ankle_map_indices_in_range(const AnkleParallelMap& ankle_map)
            ankle_map.lower_motor_index < kNumMotors;
 }
 
-bool is_parallel_ankle_model_dof(int model_index)
+bool is_ankle_model_dof(int model_index)
 {
-    return model_index == kLeftAnkleParallel.model_pitch_dof ||
-           model_index == kLeftAnkleParallel.model_roll_dof ||
-           model_index == kRightAnkleParallel.model_pitch_dof ||
-           model_index == kRightAnkleParallel.model_roll_dof;
+    return model_index == kLeftAnkle.model_pitch_dof ||
+           model_index == kLeftAnkle.model_roll_dof ||
+           model_index == kRightAnkle.model_pitch_dof ||
+           model_index == kRightAnkle.model_roll_dof;
 }
 
 int direct_model_mapping_slot(int model_index)
 {
     int slot = 0;
     for (int i = 0; i < model_index; ++i) {
-        if (!is_parallel_ankle_model_dof(i)) {
+        if (!is_ankle_model_dof(i)) {
             ++slot;
         }
     }
@@ -231,13 +231,13 @@ double clamp_model_position(int model_index, double q_rad)
 
 class TargetBuilder {
 public:
-    bool build(const std::array<double, kNumMotors>& target_q_model_rad,
+    bool build(const std::array<double, kNumMotors>& target_model_rad,
                std::array<double, kNumMotors>& target_motor_rad)
     {
         target_motor_rad.fill(0.0);
 
         for (int model_index = 0; model_index < kNumMotors; ++model_index) {
-            if (is_parallel_ankle_model_dof(model_index)) {
+            if (is_ankle_model_dof(model_index)) {
                 continue;
             }
 
@@ -253,27 +253,27 @@ public:
             }
 
             const double q = clamp_model_position(model_index,
-                                                  target_q_model_rad[static_cast<std::size_t>(model_index)]);
+                                                  target_model_rad[static_cast<std::size_t>(model_index)]);
             target_motor_rad[static_cast<std::size_t>(motor_index)] =
                 static_cast<double>(direction_for_motor(motor_index)) * q;
         }
 
-        return apply_ankle_ik(target_q_model_rad, target_motor_rad,
-                              kLeftAnkleParallel, left_ankle_solver_,
+        return apply_ankle_ik(target_model_rad, target_motor_rad,
+                              kLeftAnkle, left_ankle_solver_,
                               left_ankle_last_upper_motor_,
                               left_ankle_last_lower_motor_,
                               left_ankle_solved_) &&
-               apply_ankle_ik(target_q_model_rad, target_motor_rad,
-                              kRightAnkleParallel, right_ankle_solver_,
+               apply_ankle_ik(target_model_rad, target_motor_rad,
+                              kRightAnkle, right_ankle_solver_,
                               right_ankle_last_upper_motor_,
                               right_ankle_last_lower_motor_,
                               right_ankle_solved_);
     }
 
 private:
-    bool apply_ankle_ik(const std::array<double, kNumMotors>& target_q_model_rad,
+    bool apply_ankle_ik(const std::array<double, kNumMotors>& target_model_rad,
                         std::array<double, kNumMotors>& target_motor_rad,
-                        const AnkleParallelMap& ankle_map,
+                        const AnkleMap& ankle_map,
                         ankle_motor_ik::Solver& solver,
                         double& last_upper_motor,
                         double& last_lower_motor,
@@ -285,10 +285,10 @@ private:
 
         const double pitch = clamp_model_position(
             ankle_map.model_pitch_dof,
-            target_q_model_rad[static_cast<std::size_t>(ankle_map.model_pitch_dof)]);
+            target_model_rad[static_cast<std::size_t>(ankle_map.model_pitch_dof)]);
         const double roll = clamp_model_position(
             ankle_map.model_roll_dof,
-            target_q_model_rad[static_cast<std::size_t>(ankle_map.model_roll_dof)]);
+            target_model_rad[static_cast<std::size_t>(ankle_map.model_roll_dof)]);
 
         ankle_motor_ik::Solver candidate_solver = solver;
         const ankle_motor_ik::MotorAngles result =

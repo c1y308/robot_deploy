@@ -10,7 +10,7 @@
 #include <string>
 #include <utility>
 
-namespace inference::robot_detail {
+namespace inference {
 
 namespace {
 
@@ -54,13 +54,13 @@ std::string ankle_ik_unreachable_error(const char* ankle_name,
 }  // namespace
 
 ActionProcessor::ActionProcessor(std::shared_ptr<const JointMapping> mapping,
-                                 ActionConfig action_config,
+                                 ModelJointPositions default_joint_pos_rad,
                                  AnkleMotorLimitConfig ankle_motor_limits,
                                  std::array<double, motor_base::kMaxMotors> motor_kp,
                                  std::array<double, motor_base::kMaxMotors> motor_kd,
                                  AnkleTorqueControlConfig torque_config)
     : mapping_(std::move(mapping)),
-      action_config_(std::move(action_config)),
+      default_joint_pos_rad_(std::move(default_joint_pos_rad)),
       ankle_motor_limits_(ankle_motor_limits),
       motor_kp_(std::move(motor_kp)),
       motor_kd_(std::move(motor_kd)),
@@ -70,34 +70,29 @@ ActionProcessor::ActionProcessor(std::shared_ptr<const JointMapping> mapping,
     reset_runtime_state();
 }
 
-void ActionProcessor::AnkleIkState::reset()
+ActionProcessor::ModelJointPositions ActionProcessor::make_model_target(
+    const PolicyAction& raw_action, const ActionConfig& config) noexcept
 {
-    solver.reset();
-    last_upper_motor = 0.0;
-    last_lower_motor = 0.0;
-    solved = false;
+    ModelJointPositions target;
+    for (std::size_t i = 0; i < target.size(); ++i) {
+        const double action = static_cast<double>(raw_action[i]);
+        /* 进行 raw_action_clip [-1，1]裁剪 */ 
+        const double clipped_raw_action = config.raw_action_clip
+            ? std::max(-*config.raw_action_clip, std::min(*config.raw_action_clip, action))
+            : action;
+        /* 先进行 action_scale 缩放 */
+        const double scaled_action = clipped_raw_action * config.action_scale[i];
+        /* 再进行 action_clip 裁剪 */ 
+        const auto& clip = config.action_clip[i];
+        target[i] = config.default_joint_pos_rad[i] +
+            std::max(clip[0], std::min(clip[1], scaled_action));
+    }
+    return target;
 }
 
-void ActionProcessor::reset_runtime_state()
-{
-    left_ankle_ik_.reset();
-    right_ankle_ik_.reset();
-
-    auto reset_torque_state = [this](const AnkleParallelMap& ankle_map,
-                                     AnkleTorqueState& state) {
-        const double pitch = action_config_.default_joint_pos_rad[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
-        const double roll = action_config_.default_joint_pos_rad[static_cast<std::size_t>(ankle_map.model_roll_dof)];
-        state.reset(roll, pitch);
-    };
-
-    reset_torque_state(mapping_->left_ankle(), left_ankle_torque_);
-    reset_torque_state(mapping_->right_ankle(), right_ankle_torque_);
-}
-
-
-bool ActionProcessor::build_motor_targets(
-    const FixedModelTarget& target_q_model_rad,  // 模型计算出的关节目标角
-    std::array<double, motor_base::kMaxMotors>& target_motor_rad,    // 电机目标角(引用传递)
+bool ActionProcessor::make_motor_target(
+    const ModelJointPositions&                  target_model_rad,  // 模型计算出的关节目标角
+    std::array<double, motor_base::kMaxMotors>& target_motor_rad,  // 电机目标角(引用传递)
     std::string& error)
 {
     const int count = mapping_->dof_count();
@@ -105,18 +100,18 @@ bool ActionProcessor::build_motor_targets(
 
     for (int model_index = 0; model_index < count; ++model_index) {
         
-        if (mapping_->is_parallel_model_dof(model_index)) {
+        if (mapping_->is_model_dof(model_index)) {
             continue;
         }
 
-        const int motor_index = mapping_->direct_motor_for_model_dof(model_index);
-        double q = target_q_model_rad[static_cast<std::size_t>(model_index)];
+        const int motor_index = mapping_->get_motor_id(model_index);
+        double q = target_model_rad[static_cast<std::size_t>(model_index)];
 
         target_motor_rad[static_cast<std::size_t>(motor_index)] =
-            mapping_->direction_for_motor(motor_index) * q;
+            mapping_->get_motor_direction(motor_index) * q;
     }
 
-    if (!apply_ankle_ik(target_q_model_rad,
+    if (!apply_ankle_ik(target_model_rad,
                         target_motor_rad,
                         "left",
                         mapping_->left_ankle(),
@@ -124,7 +119,7 @@ bool ActionProcessor::build_motor_targets(
                         error)) {
         return false;
     }
-    if (!apply_ankle_ik(target_q_model_rad,
+    if (!apply_ankle_ik(target_model_rad,
                         target_motor_rad,
                         "right",
                         mapping_->right_ankle(),
@@ -158,15 +153,15 @@ bool ActionProcessor::build_motor_targets(
 }
 
 bool ActionProcessor::apply_ankle_ik(
-    const FixedModelTarget& target_q_model_rad,  // 模型计算出的关节目标角
+    const ModelJointPositions& target_model_rad,  // 模型计算出的关节目标角
     std::array<double, motor_base::kMaxMotors>& target_motor_rad,    // 电机目标角(引用)
     const char*                ankle_name,
-    const AnkleParallelMap&    ankle_map,           // 脚踝关节的映射关系
+    const AnkleMap&    ankle_map,           // 脚踝关节的映射关系
     AnkleIkState&              state,               // 脚踝IK求解器的状态
     std::string& error)
 {
-    const double pitch = target_q_model_rad[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
-    const double roll  = target_q_model_rad[static_cast<std::size_t>(ankle_map.model_roll_dof)];
+    const double pitch = target_model_rad[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
+    const double roll  = target_model_rad[static_cast<std::size_t>(ankle_map.model_roll_dof)];
 
     ankle_motor_ik::Solver candidate_solver = state.solver;
     const ankle_motor_ik::MotorAngles result =
@@ -178,21 +173,19 @@ bool ActionProcessor::apply_ankle_ik(
         upper_motor = result.motor1;
         lower_motor = result.motor2;
         state.solver = candidate_solver;
-        state.last_upper_motor = upper_motor;
-        state.last_lower_motor = lower_motor;
         state.solved = true;
     } else if (state.solved) {
-        upper_motor = state.last_upper_motor;
-        lower_motor = state.last_lower_motor;
+        upper_motor = state.solver.previous_motor1();
+        lower_motor = state.solver.previous_motor2();
     } else {
         error = ankle_ik_unreachable_error(ankle_name, roll, pitch, result);
         return false;
     }
 
     const int upper_motor_direction =
-        mapping_->direction_for_motor(ankle_map.upper_motor_index);
+        mapping_->get_motor_direction(ankle_map.upper_motor_index);
     const int lower_motor_direction =
-        mapping_->direction_for_motor(ankle_map.lower_motor_index);
+        mapping_->get_motor_direction(ankle_map.lower_motor_index);
     const double upper_motor_target = upper_motor_direction * upper_motor;
     const double lower_motor_target = lower_motor_direction * lower_motor;
 
@@ -203,6 +196,29 @@ bool ActionProcessor::apply_ankle_ik(
     error.clear();
     return true;
 }
+
+void ActionProcessor::AnkleIkState::reset()
+{
+    solver.reset();
+    solved = false;
+}
+
+void ActionProcessor::reset_runtime_state()
+{
+    left_ankle_ik_.reset();
+    right_ankle_ik_.reset();
+
+    auto reset_torque_state = [this](const AnkleMap& ankle_map,
+                                     AnkleTorqueState& state) {
+        const double pitch = default_joint_pos_rad_[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
+        const double roll  = default_joint_pos_rad_[static_cast<std::size_t>(ankle_map.model_roll_dof)];
+        state.reset(roll, pitch);
+    };
+
+    reset_torque_state(mapping_->left_ankle(), left_ankle_torque_);
+    reset_torque_state(mapping_->right_ankle(), right_ankle_torque_);
+}
+
 
 void ActionProcessor::LowPass2State::reset()
 {
@@ -220,7 +236,7 @@ void ActionProcessor::AnkleTorqueState::reset(double roll, double pitch)
 }
 
 bool ActionProcessor::build_policy_impedance_command(
-    const FixedModelTarget& target_q_model_rad,
+    const ModelJointPositions& target_model_rad,
     const std::array<motor_base::MotorStatusSnapshot,
                      motor_base::kMaxMotorCommandSetpoints>& motor_feedback,
     FixedPolicyMotorCommand& command,
@@ -268,16 +284,16 @@ bool ActionProcessor::build_policy_impedance_command(
     command.setpoint_count = static_cast<std::size_t>(count);
 
     for (int model_index = 0; model_index < count; ++model_index) {
-        if (mapping_->is_parallel_model_dof(model_index)) {
+        if (mapping_->is_model_dof(model_index)) {
             continue;
         }
 
-        const int motor_index = mapping_->direct_motor_for_model_dof(model_index);
-        const double q = target_q_model_rad[static_cast<std::size_t>(model_index)];
+        const int motor_index = mapping_->get_motor_id(model_index);
+        const double q = target_model_rad[static_cast<std::size_t>(model_index)];
 
         const auto motor_slot = static_cast<std::size_t>(motor_index);
         const double motor_target =
-            mapping_->direction_for_motor(motor_index) * q;
+            mapping_->get_motor_direction(motor_index) * q;
         command.setpoints[motor_slot] =
             motor_base::ImpedanceSetpoint(motor_target,
                                           0.0,
@@ -286,7 +302,7 @@ bool ActionProcessor::build_policy_impedance_command(
                                           motor_kd_[motor_slot]);
     }
 
-    if (!apply_ankle_torque_control(target_q_model_rad,
+    if (!apply_ankle_torque_control(target_model_rad,
                                     motor_feedback,
                                     mapping_->left_ankle(),
                                     left_ankle_torque_,
@@ -294,7 +310,7 @@ bool ActionProcessor::build_policy_impedance_command(
                                     error)) {
         return false;
     }
-    if (!apply_ankle_torque_control(target_q_model_rad,
+    if (!apply_ankle_torque_control(target_model_rad,
                                     motor_feedback,
                                     mapping_->right_ankle(),
                                     right_ankle_torque_,
@@ -308,10 +324,10 @@ bool ActionProcessor::build_policy_impedance_command(
 }
 
 bool ActionProcessor::apply_ankle_torque_control(
-    const FixedModelTarget& target_q_model_rad,
+    const ModelJointPositions& target_model_rad,
     const std::array<motor_base::MotorStatusSnapshot,
                      motor_base::kMaxMotorCommandSetpoints>& motor_feedback,
-    const AnkleParallelMap& ankle_map,
+    const AnkleMap& ankle_map,
     AnkleTorqueState& state,
     FixedPolicyMotorCommand& command,
     std::string& error)
@@ -321,11 +337,11 @@ bool ActionProcessor::apply_ankle_torque_control(
     const auto upper_index = static_cast<std::size_t>(ankle_map.upper_motor_index);
     const auto lower_index = static_cast<std::size_t>(ankle_map.lower_motor_index);
 
-    const double desired_pitch = target_q_model_rad[pitch_index];
-    const double desired_roll = target_q_model_rad[roll_index];
+    const double desired_pitch = target_model_rad[pitch_index];
+    const double desired_roll = target_model_rad[roll_index];
 
-    const int upper_direction = mapping_->direction_for_motor(ankle_map.upper_motor_index);
-    const int lower_direction = mapping_->direction_for_motor(ankle_map.lower_motor_index);
+    const int upper_direction = mapping_->get_motor_direction(ankle_map.upper_motor_index);
+    const int lower_direction = mapping_->get_motor_direction(ankle_map.lower_motor_index);
     const double upper_position_rad = motor_feedback[upper_index].position_rad;
     const double lower_position_rad = motor_feedback[lower_index].position_rad;
     const double upper_motor = upper_direction * upper_position_rad;
@@ -424,8 +440,8 @@ bool ActionProcessor::apply_ankle_torque_control(
 
 bool ActionProcessor::build_reset_start_model_pose(
     const std::array<double, motor_base::kMaxMotors>& current_motor_q, // 当前电机真实角度(rad)
-    const FixedModelTarget& target_model_q,  // 期望的模型关节角(作为fk初始值)
-    FixedModelTarget& start_model_q,   // 输出: 当前的模型关节角(rad)
+    const ModelJointPositions& target_model_q,  // 期望的模型关节角(作为fk初始值)
+    ModelJointPositions& start_model_q,   // 输出: 当前的模型关节角(rad)
     std::string& error) const
 {
     const int count = mapping_->dof_count();
@@ -434,24 +450,24 @@ bool ActionProcessor::build_reset_start_model_pose(
     // 按照模型顺序遍历，将电机角度转换为模型关节角度
     for (int model_index = 0; model_index < count; ++model_index) {
         // 跳过脚踝关节的模型 DOF，它们的角度由 FK 求解器计算得出
-        if (mapping_->is_parallel_model_dof(model_index)) {
+        if (mapping_->is_model_dof(model_index)) {
             continue;
         }
 
         // 得到电机索引
-        const int motor_index = mapping_->direct_motor_for_model_dof(model_index);
+        const int motor_index = mapping_->get_motor_id(model_index);
         // 从电机角度转换为模型关节角度，考虑电机方向
         start_model_q[static_cast<std::size_t>(model_index)] =
-            mapping_->direction_for_motor(motor_index) * current_motor_q[static_cast<std::size_t>(motor_index)];
+            mapping_->get_motor_direction(motor_index) * current_motor_q[static_cast<std::size_t>(motor_index)];
     }
 
     auto fill_ankle_start_model_q = [&](const char* ankle_name,
-                                       const AnkleParallelMap& ankle_map) {
+                                       const AnkleMap& ankle_map) {
         const double upper_motor =
-            mapping_->direction_for_motor(ankle_map.upper_motor_index) *
+            mapping_->get_motor_direction(ankle_map.upper_motor_index) *
             current_motor_q[static_cast<std::size_t>(ankle_map.upper_motor_index)];
         const double lower_motor =
-            mapping_->direction_for_motor(ankle_map.lower_motor_index) *
+            mapping_->get_motor_direction(ankle_map.lower_motor_index) *
             current_motor_q[static_cast<std::size_t>(ankle_map.lower_motor_index)];
 
         const auto pitch_index = static_cast<std::size_t>(ankle_map.model_pitch_dof);
@@ -486,4 +502,4 @@ bool ActionProcessor::build_reset_start_model_pose(
     return true;
 }
 
-}  // namespace inference::robot_detail
+}  // namespace inference

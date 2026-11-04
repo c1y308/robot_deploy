@@ -116,7 +116,7 @@ initialize
  │   ├─ get_motor_snapshot
  │   ├─ ActionProcessor::build_reset_start_model_pose：直驱映射 + 脚踝 FK
  │   ├─ 100 步模型关节角插值到默认姿态
- │   ├─ ActionProcessor::build_motor_targets：直驱映射 + 脚踝 IK/限位
+ │   ├─ ActionProcessor::make_motor_target：直驱映射 + 脚踝 IK/限位
  │   └─ apply_targets_rad：逐步提交电机目标，默认步间 sleep 5 ms
  └─ PolicyCommandWorker::start
      ├─ 再提交一次最终复位姿态
@@ -202,7 +202,7 @@ main 的 20 ms 循环
      ├─ 首次推理时间标记；policy_seq = frame_index + 1
      ├─ PolicyRuntime::infer → Session::Run
      ├─ 再次 worker.healthy
-     ├─ policy_step 内部逐关节裁剪/缩放/偏移 → target_q_model_rad
+     ├─ policy_step 内部逐关节裁剪/缩放/偏移 → target_model_rad
      ├─ admit_policy_result：最老观测到此时年龄大于 40 ms 则丢弃
      ├─ 准入：填 target 写槽 → publish_target → commit_policy_action
      ├─ advance_frame：包括丢弃结果的帧
@@ -254,7 +254,7 @@ PolicyObservation（float[705]，前 675 有效）
  → PolicyRuntimeStepResult.raw_action（float[12]）和推理起止 monotonic 时间戳
  → 检查输出有限性
  → RobotInterface::policy_step 中转 double、裁剪、缩放
- → target_q_model_rad（double[12]，模型关节顺序，单位 rad）
+ → target_model_rad（double[12]，模型关节顺序，单位 rad）
 ```
 
 对每个模型 DOF，当前计算为：
@@ -265,12 +265,12 @@ offset_i  = clamp(a_i × action_scale_i, action_clip_i.lower, action_clip_i.uppe
 q_target_i = default_joint_pos_i + offset_i
 ```
 
-这是 `policy_step` 内的直接计算，代码中没有另一个“策略输出后处理函数”。raw
-action 的历史裁剪与这里的目标生成是两条用途不同的数据处理路径。
+这段计算由静态纯函数 `ActionProcessor::make_model_target` 完成，`policy_step` 调用它生成
+模型目标。raw action 的历史裁剪与这里的目标生成是两条用途不同的数据处理路径。
 
-`publish_target` 将模型目标、policy_seq、相关记录发布到 `target_channel_`。
-`PolicyTargetFrame` 包含发布时间和 `InferenceRecord`；即使禁用日志，控制字段也
-借用 record 中的 policy_seq、target_q_model_rad 和 policy_valid_until_ns。
+`PolicyTargetFrame` 独立保存模型目标、policy_seq、发布时间、截止期和观测年龄。
+禁用日志时，`publish_target` 只向 `target_channel_` 发布该控制结构；启用日志时，
+通过 `logged_target_channel_` 同槽发布控制目标和独立的 `InferenceRecord`，保证配对。
 本次发布时设置 `policy_valid_until_ns = published_at_ns + 60 ms`。
 
 **7. 策略目标到电机模块：模型顺序转为物理顺序**
@@ -278,7 +278,7 @@ action 的历史裁剪与这里的目标生成是两条用途不同的数据处�
 见 [PolicyCommandWorker::loop](../src/inference/src/robot/policy_command_worker.cpp:164)。
 
 ```text
-target_channel_.try_consume_latest → 保留最新的 PolicyTargetFrame
+try_consume_target → 按日志配置消费对应通道，保留最新的 PolicyTargetFrame
  → 检查策略目标是否到期
  → RobotMotorSession::try_consume_latest_status_command → 独立电机反馈缓存
  → 检查最老反馈时间
@@ -370,7 +370,7 @@ RESTART 走离散命令机制；STOP 使用专门请求机制绕过普通队列�
 ```text
 policy_main：准入判断后
   → fill_log_record：该次策略的传感器快照、观测、raw action、模型关节目标、时间/年龄
-  → 随 PolicyTargetFrame 发布
+  → 与 PolicyTargetFrame 同槽发布到 logged_target_channel_
 
 policy_cmd：某 policy_seq 首次成功提交连续命令后
   → 复制该记录，追加 command_timestamp_ns / command_valid_until_ns
@@ -393,7 +393,7 @@ infer_log
 CSV 文件 I/O 在后台进行。`command_applied=true` 对应向电机模块提交成功，不能
 用它证明 PDO 已发送或驱动器已执行。`rx_pos_rad` 等记录的是策略输入的反馈快照；
 worker 算脚踝力矩时可能已经使用了更新的反馈。日志中的脚踝 target_pos_rad 是
-物理反馈位置，虚拟关节目标要看 target_q_model_rad。
+物理反馈位置，虚拟关节目标要看 target_model_rad。
 
 对丢弃的策略结果，策略线程直接入日志队列，不发布目标；command_applied 保持
 false。目标与完成记录通道都是 latest-value，未读取旧帧可被覆盖；同一目标也只
@@ -414,9 +414,10 @@ false。目标与完成记录通道都是 latest-value，未读取旧帧可被�
 | 长时间无新目标/命令 | worker/RT 的独立期限保护触发，不能靠重复下发无限保持 |
 
 正常 Ctrl+C/SIGTERM：`signal_handler` 置位退出标志，`main` 跳出循环后
-`safe_shutdown → RobotInterface::shutdown`。先请求电机 STOP、请求 worker 退出，
-等待 STOP 确认；随后 join worker、收取最后完成记录、释放 ORT、停止并排空 recorder、
-重置状态、停止 IMU、释放电机控制器，最后停止 Xbox polling。
+`safe_shutdown → RobotInterface::shutdown`。先请求电机 STOP、停止并 join worker，
+再由 `RobotMotorSession::shutdown` 等待 STOP 确认、判断是否允许释放并释放控制器。
+随后收取最后完成记录、释放 ORT、停止并排空 recorder、重置状态、停止 IMU，
+最后停止 Xbox polling。
 
 策略错误走 `handle_policy_step_failure`，worker 错误走 `fail`，二者均先请求电机
 停止再处理诊断。STOP 未确认且不满足持续通信丢失释放条件时返回 RetryRequired，
@@ -432,7 +433,7 @@ false。目标与完成记录通道都是 latest-value，未读取旧帧可被�
 | 反馈汇总 → 观测 | MotorStateSnapshot | 物理电机 double[12]，最老有效主机时间 | policy_main 内部 |
 | 观测 → ORT | PolicyObservation | float[705] 容量，当前使用 675；字段历史展平 | policy_main 内部 |
 | ORT → 后处理 | PolicyRuntimeStepResult | 模型顺序 float[12] 动作 + 推理起止 ns | policy_main 内部 |
-| 策略 → 命令计算 | PolicyTargetFrame | 模型顺序 double[12] 目标 + seq/期限/记录 | policy_main → policy_cmd |
+| 策略 → 命令计算 | PolicyTargetFrame | 模型顺序 double[12] 目标 + seq/期限/观测年龄；日志按需同槽附带 | policy_main → policy_cmd |
 | 命令计算 → 电机模块 | FixedPolicyMotorCommand → ControlCommand | 物理顺序 12 个阻抗 setpoint + CommandTiming | policy_cmd → ecat_rt |
 | 电机模块 → 总线 | TxPDO | 位置/速度/扭矩/增益的协议整数 | ecat_rt → EtherCAT 从站 |
 | 命令计算 → 记录汇合 | InferenceRecord | 输入观测与输出、物理目标、时间和年龄 | policy_cmd → policy_main |

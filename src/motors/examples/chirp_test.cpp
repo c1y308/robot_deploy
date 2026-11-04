@@ -194,8 +194,8 @@ struct ChirpContext {
     std::atomic<int> abort_reason{0};
 
     ChirpMotorController* controller{nullptr};
-    inference::robot_detail::ActionProcessor* action_processor{nullptr};
-    std::shared_ptr<const inference::robot_detail::JointMapping> mapping;
+    inference::ActionProcessor* action_processor{nullptr};
+    std::shared_ptr<const inference::JointMapping> mapping;
 
     std::array<myactua::RxPDO, kDof> latest_rx{};
     std::array<myactua::TxPDO, kDof> current_tx{};
@@ -318,22 +318,22 @@ struct ChirpContext {
         }
 
         for (int model_index = 0; model_index < static_cast<int>(kDof); ++model_index) {
-            if (mapping->is_parallel_model_dof(model_index)) continue;
-            const int motor = mapping->direct_motor_for_model_dof(model_index);
+            if (mapping->is_model_dof(model_index)) continue;
+            const int motor = mapping->get_motor_id(model_index);
             q_model[static_cast<std::size_t>(model_index)] =
-                static_cast<double>(mapping->direction_for_motor(motor)) * feedback[static_cast<std::size_t>(motor)].position_rad;
+                static_cast<double>(mapping->get_motor_direction(motor)) * feedback[static_cast<std::size_t>(motor)].position_rad;
             dq_model[static_cast<std::size_t>(model_index)] =
-                static_cast<double>(mapping->direction_for_motor(motor)) * feedback[static_cast<std::size_t>(motor)].velocity_rad_s;
+                static_cast<double>(mapping->get_motor_direction(motor)) * feedback[static_cast<std::size_t>(motor)].velocity_rad_s;
         }
 
-        const auto solve_ankle = [&](const inference::AnkleParallelMap& ankle,
+        const auto solve_ankle = [&](const inference::AnkleMap& ankle,
                                      ankle_motor_fk::Solver& solver) {
             const int upper = ankle.upper_motor_index;
             const int lower = ankle.lower_motor_index;
-            const double upper_q = mapping->direction_for_motor(upper) * feedback[static_cast<std::size_t>(upper)].position_rad;
-            const double lower_q = mapping->direction_for_motor(lower) * feedback[static_cast<std::size_t>(lower)].position_rad;
-            const double upper_dq = mapping->direction_for_motor(upper) * feedback[static_cast<std::size_t>(upper)].velocity_rad_s;
-            const double lower_dq = mapping->direction_for_motor(lower) * feedback[static_cast<std::size_t>(lower)].velocity_rad_s;
+            const double upper_q = mapping->get_motor_direction(upper) * feedback[static_cast<std::size_t>(upper)].position_rad;
+            const double lower_q = mapping->get_motor_direction(lower) * feedback[static_cast<std::size_t>(lower)].position_rad;
+            const double upper_dq = mapping->get_motor_direction(upper) * feedback[static_cast<std::size_t>(upper)].velocity_rad_s;
+            const double lower_dq = mapping->get_motor_direction(lower) * feedback[static_cast<std::size_t>(lower)].velocity_rad_s;
             const ankle_motor_fk::FootAngles foot = solver.solve(upper_q, lower_q);
             if (!foot.reachable || !std::isfinite(foot.pitch) || !std::isfinite(foot.roll)) return false;
             ankle_motor_jacobian::Result jacobian;
@@ -406,7 +406,7 @@ struct ChirpContext {
             }
         }
 
-        inference::robot_detail::ActionProcessor::FixedPolicyMotorCommand motor_command;
+        inference::ActionProcessor::FixedPolicyMotorCommand motor_command;
         action_error.clear();
         if (!action_processor->build_policy_impedance_command(q_target, feedback, motor_command, action_error) ||
             motor_command.setpoint_count != kDof) {
@@ -926,10 +926,10 @@ bool self_test_config_rejection()
     return true;
 }
 
-// 映射拒绝条件：非法 dof、方向非 ±1、电机重复、直驱尺寸不符、踝映射越界。
+// 映射拒绝条件：非法 dof、直驱尺寸不符、踝映射越界。
 bool self_test_mapping_rejection()
 {
-    using inference::robot_detail::JointMapping;
+    using inference::JointMapping;
     const auto count = static_cast<int>(kDof);
     std::string error;
     const inference::JointMappingConfig valid_config;
@@ -937,20 +937,12 @@ bool self_test_mapping_rejection()
 
     if (JointMapping::create(0, valid_config, error)) return false;
 
-    inference::JointMappingConfig bad_direction = valid_config;
-    bad_direction.motor_to_model_direction[0] = 0;
-    if (JointMapping::create(count, bad_direction, error)) return false;
-
-    inference::JointMappingConfig duplicate = valid_config;
-    duplicate.model_to_motor_index[0] = duplicate.model_to_motor_index[1];
-    if (JointMapping::create(count, duplicate, error)) return false;
-
     inference::JointMappingConfig wrong_size = valid_config;
     wrong_size.model_to_motor_index.pop_back();
     if (JointMapping::create(count, wrong_size, error)) return false;
 
     inference::JointMappingConfig bad_ankle = valid_config;
-    bad_ankle.left_ankle_parallel.upper_motor_index = -1;
+    bad_ankle.left_ankle.upper_motor_index = -1;
     if (JointMapping::create(count, bad_ankle, error)) return false;
     return true;
 }
@@ -963,18 +955,16 @@ bool self_test_rt_compute_audit()
     context->jacobian_error.reserve(256);
     context->action_error.reserve(256);
     std::string mapping_error;
-    context->mapping = inference::robot_detail::JointMapping::create(
+    context->mapping = inference::JointMapping::create(
         static_cast<int>(kDof), inference::JointMappingConfig{}, mapping_error);
     if (!context->mapping) return false;
 
-    inference::ActionConfig action_config;
-    action_config.default_joint_pos_rad = kNominalModelRad;
     inference::AnkleMotorLimitConfig ankle_limits;
     inference::AnkleTorqueControlConfig torque_config;
     torque_config.virtual_kp = {180.0, 180.0};
     torque_config.virtual_kd = {10.0, 10.0};
-    inference::robot_detail::ActionProcessor processor(
-        context->mapping, action_config, ankle_limits, kMotorKp, kMotorKd, torque_config);
+    inference::ActionProcessor processor(
+        context->mapping, kNominalModelRad, ankle_limits, kMotorKp, kMotorKd, torque_config);
     context->action_processor = &processor;
     fill_enabled_neutral_rx(*context);
 
@@ -998,7 +988,7 @@ bool self_test_rt_compute_audit()
     std::array<double, kDof> amplitude{};
     amplitude.fill(0.1);
     std::array<double, kDof> target{};
-    inference::robot_detail::ActionProcessor::FixedPolicyMotorCommand command;
+    inference::ActionProcessor::FixedPolicyMotorCommand command;
     ChirpContext::compute_target(4.5, kNominalModelRad, amplitude, target);
     if (!context->action_processor->build_policy_impedance_command(
             target, feedback, command, context->action_error)) return false;
@@ -1215,22 +1205,20 @@ int main(int argc, char** argv)
 
     inference::JointMappingConfig mapping_config;
     mapping_config.model_to_motor_index.assign(kJointIdsMap.begin(), kJointIdsMap.begin() + 8);
-    mapping_config.motor_to_model_direction = kMotorDirection;
+    mapping_config.motor_direction = kMotorDirection;
     std::string mapping_error;
-    context.mapping = inference::robot_detail::JointMapping::create(static_cast<int>(kDof), mapping_config, mapping_error);
+    context.mapping = inference::JointMapping::create(static_cast<int>(kDof), mapping_config, mapping_error);
     if (!context.mapping) {
         std::cerr << "[chirp] joint mapping invalid: " << mapping_error << '\n';
         return 2;
     }
-    inference::ActionConfig action_config;
-    action_config.default_joint_pos_rad = kNominalModelRad;
     inference::AnkleMotorLimitConfig ankle_limits;
     ankle_limits.min_rad = {kMotorSafeMinRad[4], kMotorSafeMinRad[5], kMotorSafeMinRad[10], kMotorSafeMinRad[11]};
     ankle_limits.max_rad = {kMotorSafeMaxRad[4], kMotorSafeMaxRad[5], kMotorSafeMaxRad[10], kMotorSafeMaxRad[11]};
     inference::AnkleTorqueControlConfig torque_config;
     torque_config.virtual_kp = {180.0, 180.0};
     torque_config.virtual_kd = {10.0, 10.0};
-    inference::robot_detail::ActionProcessor action_processor(context.mapping, action_config, ankle_limits,
+    inference::ActionProcessor action_processor(context.mapping, kNominalModelRad, ankle_limits,
                                                                kMotorKp, kMotorKd, torque_config);
     context.action_processor = &action_processor;
 

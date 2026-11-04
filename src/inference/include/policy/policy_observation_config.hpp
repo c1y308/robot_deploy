@@ -1,20 +1,21 @@
 #pragma once
 
+#include "robot/robot_config.hpp"
+
 #include <array>
 #include <cstddef>
 
 namespace inference::policy_observation {
 
-inline constexpr std::size_t kDof = 12;
 inline constexpr std::size_t kFrameStack = 15;
 
 inline constexpr std::size_t kBaseAngVelSize = 3;
 inline constexpr std::size_t kProjectedGravitySize = 3;
 inline constexpr std::size_t kVelocityCommandsSize = 3;
 inline constexpr std::size_t kGaitPhaseSize = 2;
-inline constexpr std::size_t kJointPosRelSize = kDof;
-inline constexpr std::size_t kJointVelRelSize = kDof;
-inline constexpr std::size_t kLastActionSize = kDof;
+inline constexpr std::size_t kJointPosRelSize = kModelDof;
+inline constexpr std::size_t kJointVelRelSize = kModelDof;
+inline constexpr std::size_t kLastActionSize = kModelDof;
 
 inline constexpr std::size_t kSingleObservationSizeWithoutGaitPhase =
     kBaseAngVelSize +
@@ -50,8 +51,7 @@ static_assert(kObservationSizeWithoutGaitPhase == 675 &&
 namespace inference {
 
 /* 固定容量缓冲；实际有效长度由 PolicyRuntimeConfig::GaitPhase::enabled 决定。 */
-using PolicyObservation =
-    std::array<float, policy_observation::kMaxObservationSize>;
-using PolicyAction = std::array<float, policy_observation::kDof>;
+using PolicyObservation = std::array<float, policy_observation::kMaxObservationSize>;
+using PolicyAction      = std::array<float, kModelDof>;
 
 }  // namespace inference

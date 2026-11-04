@@ -21,7 +21,7 @@ struct PolicyRuntimeStepResult {
 // 策略推理运行时
 class PolicyRuntime {
 public:
-    static constexpr std::size_t kDof = policy_observation::kDof;
+    static constexpr std::size_t kDof = kModelDof;
 
     PolicyRuntime();
     ~PolicyRuntime();

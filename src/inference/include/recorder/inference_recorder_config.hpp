@@ -1,7 +1,5 @@
 #pragma once
 
-#include "policy/policy_observation_config.hpp"
-
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -17,8 +15,8 @@ struct InferenceRecorderConfig {
     std::string file_prefix{};
     std::chrono::milliseconds flush_interval{1000};
     std::size_t max_queue_depth{kDefaultInferenceRecorderQueueDepth};
-    std::size_t policy_observation_size{
-        policy_observation::kObservationSizeWithoutGaitPhase};
+    // 默认使用 675 维观测；RobotInterface 初始化时按所选观测布局设置。
+    std::size_t policy_observation_size{675};
 };
 
 }  // namespace inference

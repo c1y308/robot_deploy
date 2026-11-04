@@ -18,13 +18,14 @@ namespace inference {
 class RobotMotorSession;
 struct RobotInterfacePolicyTimingTestAccess;
 
-namespace robot_detail {
-
 class ActionProcessor;
 
 struct PolicyTargetFrame {
-    std::int64_t    published_at_ns{0};
-    InferenceRecord inference_record{};
+    std::uint64_t policy_seq{0};
+    std::int64_t published_at_ns{0};
+    std::int64_t policy_valid_until_ns{0};
+    std::int64_t obs_to_action_age_us{0};
+    std::array<double, kModelDof> target_model_rad{};
 };
 
 /* policy_command_worker：消费目标通道中的模型关节角目标，
@@ -56,13 +57,21 @@ public:
     // 仅策略生产者调用：直接填写写槽，再采样时间发布。
     // publish_target() 后写槽引用失效，返回实际发布时间。
     PolicyTargetFrame& acquire_target_write_slot() noexcept;
+    // 仅启用 recorder 时调用；与目标在同一次 publish_target 中发布。
+    InferenceRecord& acquire_target_record_write_slot() noexcept;
     std::int64_t publish_target() noexcept;
     bool try_consume_completed_record(InferenceRecord& record) noexcept;
 
 private:
     friend struct ::inference::RobotInterfacePolicyTimingTestAccess;
 
+    struct LoggedPolicyTargetFrame {
+        PolicyTargetFrame target{};
+        InferenceRecord record{};
+    };
+
     void loop();
+    bool try_consume_target(LoggedPolicyTargetFrame& frame) noexcept;
 
     std::int64_t startup_policy_deadline_ns() const noexcept;
     static bool policy_deadline_expired(std::int64_t deadline_ns,
@@ -85,7 +94,9 @@ private:
     RobotMotorSession& motor_session_;
     ActionProcessor*   action_processor_{nullptr};
 
+    // 按 recorder 配置二选一；日志开启时同槽发布，保持目标和记录配对。
     robot_base::SpscLatestChannel<PolicyTargetFrame> target_channel_;
+    robot_base::SpscLatestChannel<LoggedPolicyTargetFrame> logged_target_channel_;
     robot_base::SpscLatestChannel<InferenceRecord>   completed_record_channel_;
 
     const std::atomic<std::int64_t>&    first_policy_inference_started_ns_;
@@ -95,5 +106,4 @@ private:
     std::thread worker_thread_;
 };
 
-}  // namespace robot_detail
 }  // namespace inference

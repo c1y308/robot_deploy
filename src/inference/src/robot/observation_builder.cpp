@@ -7,7 +7,7 @@
 #include <cmath>
 #include <utility>
 
-namespace inference::robot_detail {
+namespace inference {
 
 using robot_base::finite_array;
 
@@ -76,7 +76,7 @@ void update_term_history(PolicyObservation& history,
 
 ObservationBuilder::ObservationBuilder(std::shared_ptr<const JointMapping> mapping,
                                        ObservationScaleConfig scales,
-                                       std::array<double, policy_observation::kDof> default_joint_pos_rad,
+                                       std::array<double, kModelDof> default_joint_pos_rad,
                                        PolicyRuntimeConfig policy_config)
     : mapping_(std::move(mapping)),
       scales_(std::move(scales)),
@@ -110,7 +110,7 @@ void ObservationBuilder::advance_frame() noexcept
 }
 
 // 从default_joint_pos_rad_中获取roll和pitch值，调用ankle_fk的reset函数，重置ankle_fk
-void ObservationBuilder::reset_ankle_state(const AnkleParallelMap& ankle_map,
+void ObservationBuilder::reset_ankle_state(const AnkleMap& ankle_map,
                                                  ankle_motor_fk::Solver& state)
 {
     const double pitch = default_joint_pos_rad_[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
@@ -239,14 +239,14 @@ bool ObservationBuilder::fill_joint_terms(
     // 按照模型顺序遍历关节
     for (int model_index = 0; model_index < kDof; ++model_index) {
         // 如果是脚踝模型的关节，则跳过
-        if (mapping_->is_parallel_model_dof(model_index)) {
+        if (mapping_->is_model_dof(model_index)) {
             continue;
         }
 
         // 得到对应电机索引
-        const int motor_index = mapping_->direct_motor_for_model_dof(model_index);
+        const int motor_index = mapping_->get_motor_id(model_index);
         // 根据方向进行转换
-        const double direction = static_cast<double>(mapping_->direction_for_motor(motor_index));
+        const double direction = static_cast<double>(mapping_->get_motor_direction(motor_index));
         const double q_model   = direction * q_motor_rad[motor_index];
         const double dq_model  = direction * dq_motor_rad_s[motor_index];
 
@@ -285,7 +285,7 @@ bool ObservationBuilder::fill_joint_terms(
 bool ObservationBuilder::fill_ankle_fk_joint_terms(
     const MotorStateArray& q_motor_rad,
     const MotorStateArray& dq_motor_rad_s,
-    const AnkleParallelMap& ankle_map,
+    const AnkleMap& ankle_map,
     ankle_motor_fk::Solver& state,
     JointTermArray& joint_pos_rel,
     JointTermArray& joint_vel_rel,
@@ -297,9 +297,9 @@ bool ObservationBuilder::fill_ankle_fk_joint_terms(
 
     // 和运动学解算器中电机的旋转方向对齐
     const int upper_motor_direction =
-        mapping_->direction_for_motor(ankle_map.upper_motor_index);
+        mapping_->get_motor_direction(ankle_map.upper_motor_index);
     const int lower_motor_direction =
-        mapping_->direction_for_motor(ankle_map.lower_motor_index);
+        mapping_->get_motor_direction(ankle_map.lower_motor_index);
 
     
     const double upper_motor = upper_motor_direction *
@@ -366,4 +366,4 @@ bool ObservationBuilder::fill_ankle_fk_joint_terms(
     return true;
 }
 
-}  // namespace inference::robot_detail
+}  // namespace inference

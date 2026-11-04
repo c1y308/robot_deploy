@@ -103,11 +103,11 @@ Motor2 (下层 z=140)
 
 | 项目 | 左腿 | 右腿 | 来源 |
 |------|------|------|------|
-| Motor1 (上层) | Motor 4 | Motor 11 | left/right_ankle_parallel.upper_motor_index |
-| Motor2 (下层) | Motor 5 | Motor 10 | left/right_ankle_parallel.lower_motor_index |
+| Motor1 (上层) | Motor 4 | Motor 11 | left/right_ankle.upper_motor_index |
+| Motor2 (下层) | Motor 5 | Motor 10 | left/right_ankle.lower_motor_index |
 | Pitch DOF | DOF 8 | DOF 9 | 模型输出 |
 | Roll DOF | DOF 10 | DOF 11 | 模型输出 |
 
 **IK 调用**: `solver.solve(roll, pitch)` → 输出 motor1, motor2  
-**方向映射**: IK 输出仍需乘以 `motor_to_model_direction` 方向符号  
+**方向映射**: IK 输出仍需乘以 `motor_direction` 方向符号  
 **右腿处理**: 与左腿相同输入 `(roll, pitch)`，不取反

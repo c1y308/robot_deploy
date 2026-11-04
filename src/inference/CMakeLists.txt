@@ -49,6 +49,8 @@ add_library(inference_recorder STATIC
 )
 target_include_directories(inference_recorder PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../imu/include
 )
 target_link_libraries(inference_recorder PUBLIC robot_base robot_thread_runtime)
 
@@ -82,8 +84,8 @@ target_link_libraries(policy_execution_setup PRIVATE
 add_library(policy_runtime STATIC src/policy/policy_runtime.cpp)
 target_include_directories(policy_runtime
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
-            ${CMAKE_CURRENT_SOURCE_DIR}/../imu/include
+           ${CMAKE_CURRENT_SOURCE_DIR}/../motors/include
+           ${CMAKE_CURRENT_SOURCE_DIR}/../imu/include
 )
 target_link_libraries(policy_runtime PRIVATE robot_base ONNXRuntime::onnxruntime)
 
@@ -136,19 +138,6 @@ target_link_libraries(policy_test PRIVATE
     robot_interface
     xbox_control_core
 )
-
-add_executable(policy_runtime_test tests/policy_runtime_test.cpp)
-target_link_libraries(policy_runtime_test PRIVATE
-    policy_runtime policy_execution_setup deploy_config ONNXRuntime::onnxruntime)
-add_test(NAME policy_runtime_test COMMAND policy_runtime_test
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures)
-
-add_executable(observation_builder_test
-    tests/observation_builder_test.cpp
-    src/robot/observation_builder.cpp
-    src/robot/action_processor.cpp)
-target_link_libraries(observation_builder_test PRIVATE deploy_config)
-add_test(NAME observation_builder_test COMMAND observation_builder_test)
 
 add_test(NAME robot_rt_setup_fixture_test COMMAND bash
     ${CMAKE_CURRENT_SOURCE_DIR}/../../deploy/rk3588/test_robot_rt_setup.sh

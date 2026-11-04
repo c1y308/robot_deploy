@@ -14,18 +14,18 @@
 #include <memory>
 #include <string>
 
-namespace inference::robot_detail {
+namespace inference {
 
 class ObservationBuilder {
 public:
-    static constexpr std::size_t kDof = policy_observation::kDof;
+    static constexpr std::size_t kDof = kModelDof;
     using MotorStateArray = std::array<double, kDof>;
     using JointTermArray  = std::array<float,  kDof>;
 
     // mapping 由 JointMapping::create() 成功构造，运行期不可变。
     ObservationBuilder(std::shared_ptr<const JointMapping> mapping,
                        ObservationScaleConfig scales,
-                       std::array<double, policy_observation::kDof> default_joint_pos_rad,
+                       std::array<double, kModelDof> default_joint_pos_rad,
                        PolicyRuntimeConfig policy_config);
 
                        
@@ -46,7 +46,7 @@ private:
     ankle_motor_fk::Solver right_ankle_fk_;
 
 
-    void reset_ankle_state(const AnkleParallelMap& ankle_map,
+    void reset_ankle_state(const AnkleMap& ankle_map,
                                  ankle_motor_fk::Solver& state);
                         
     bool fill_joint_terms(const MotorStateArray& q_motor_rad,
@@ -58,7 +58,7 @@ private:
                                  
     bool fill_ankle_fk_joint_terms(const MotorStateArray& q_motor_rad,
                                    const MotorStateArray& dq_motor_rad_s,
-                                   const AnkleParallelMap& ankle_map,
+                                   const AnkleMap& ankle_map,
                                    ankle_motor_fk::Solver& state,
                                    JointTermArray& joint_pos_rel,
                                    JointTermArray& joint_vel_rel,
@@ -66,7 +66,7 @@ private:
 
     std::shared_ptr<const JointMapping> mapping_;
     ObservationScaleConfig scales_;
-    std::array<double, policy_observation::kDof> default_joint_pos_rad_;
+    std::array<double, kModelDof> default_joint_pos_rad_;
     PolicyRuntimeConfig policy_config_;
     PolicyAction last_action_{};  // 裁剪到 [-1, 1] 的无量纲历史动作。
     PolicyObservation observation_history_{};
@@ -74,4 +74,4 @@ private:
     std::uint64_t frame_index_{0};
 };
 
-}  // namespace inference::robot_detail
+}  // namespace inference

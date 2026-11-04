@@ -1,5 +1,6 @@
 #pragma once
 
+#include "motor_base/command_types.hpp"
 #include "policy/policy_observation_config.hpp"
 #include "recorder/inference_recorder_config.hpp"
 
@@ -9,8 +10,8 @@
 
 namespace inference {
 
-inline constexpr std::size_t kInferenceDof = policy_observation::kDof;
-inline constexpr std::size_t kInferenceMotorCount = policy_observation::kDof;
+inline constexpr std::size_t kInferenceDof = kModelDof;
+inline constexpr std::size_t kInferenceMotorCount = motor_base::kMaxMotors;
 
 /* 日志数据一帧定义 */
 struct InferenceRecord {
@@ -36,7 +37,7 @@ struct InferenceRecord {
 
     PolicyObservation policy_observation{};                     // 真正送入 ONNX Runtime 的 flatten policy 输入
     std::array<float,  kInferenceDof> raw_action{};             // 模型输出的原始动作向量
-    std::array<double, kInferenceDof> target_q_model_rad{};     // 处理之后的目标关节角度（弧度、模型顺序）
+    std::array<double, kInferenceDof> target_model_rad{};     // 处理之后的目标关节角度（弧度、模型顺序）
 
     std::array<double, kInferenceMotorCount> target_pos_rad{};  // 电机接收的目标位置（弧度、电机顺序）
     std::array<double, kInferenceMotorCount> target_effort_permille{};  // 电机目标力矩（额定力矩千分之一）
