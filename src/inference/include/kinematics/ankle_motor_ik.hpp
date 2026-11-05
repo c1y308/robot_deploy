@@ -7,6 +7,8 @@
 
 namespace ankle_motor_ik {
 
+enum class AnkleSide { Left, Right };
+
 constexpr double kPi = 3.141592653589793238462643383279502884;
 
 struct Vec3 {
@@ -164,10 +166,14 @@ inline double nearest_solution(const CandidateSet& candidates, double previous) 
 
 class Solver {
 public:
-    Solver() = default;
+    explicit Solver(AnkleSide side,
+                    double previous_motor1 = 0.0,
+                    double previous_motor2 = 0.0)
+        : side_(side),
+          previous_motor1_(previous_motor1),
+          previous_motor2_(previous_motor2) {}
 
-    Solver(double previous_motor1, double previous_motor2)
-        : previous_motor1_(previous_motor1), previous_motor2_(previous_motor2) {}
+    AnkleSide side() const noexcept { return side_; }
 
     MotorAngles solve(double roll, double pitch) {
         const Vec3 c1 = foot_rotate_point(Geometry::kC1Zero, roll, pitch);
@@ -188,8 +194,15 @@ public:
         if (result.motor2_reachable) {
             previous_motor2_ = result.motor2;
         }
+        if (result.reachable()) {
+            has_solution_ = true;
+        }
 
         return result;
+    }
+
+    bool has_solution() const {
+        return has_solution_;
     }
 
     double previous_motor1() const {
@@ -203,15 +216,20 @@ public:
     void reset(double motor1 = 0.0, double motor2 = 0.0) {
         previous_motor1_ = motor1;
         previous_motor2_ = motor2;
+        has_solution_ = false;
     }
 
 private:
+    // 侧别由构造时指定，reset 不改变侧别。
+    AnkleSide side_;
     double previous_motor1_ = 0.0;
     double previous_motor2_ = 0.0;
+    bool has_solution_ = false;
 };
 
-inline MotorAngles solve(double roll, double pitch, double previous_motor1 = 0.0, double previous_motor2 = 0.0) {
-    Solver solver(previous_motor1, previous_motor2);
+inline MotorAngles solve(AnkleSide side, double roll, double pitch,
+                         double previous_motor1 = 0.0, double previous_motor2 = 0.0) {
+    Solver solver(side, previous_motor1, previous_motor2);
     return solver.solve(roll, pitch);
 }
 

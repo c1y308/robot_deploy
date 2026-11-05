@@ -268,7 +268,6 @@ bool run_sequence(inference::RobotMotorSession& motors,
 
     std::atomic<std::int64_t> first_policy_started_ns{0};
     PolicyCommandWorker worker(config, motors, first_policy_started_ns);
-    action_processor.reset_runtime_state();
     if (!worker.start(action_processor, zero)) {
         return false;
     }

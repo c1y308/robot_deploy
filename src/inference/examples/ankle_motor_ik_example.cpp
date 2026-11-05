@@ -4,7 +4,7 @@
 #include <iostream>
 
 int main() {
-    ankle_motor_ik::Solver solver;
+    ankle_motor_ik::Solver solver{ankle_motor_ik::AnkleSide::Left};
 
     const double tests[][2] = {
         {0.0, 0.0},

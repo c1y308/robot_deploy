@@ -172,12 +172,6 @@ ShutdownResult RobotInterface::shutdown() {
     last_policy_target_published_ns_ = 0;
     first_policy_inference_started_ns_.store(0, std::memory_order_release);
     policy_command_worker_.reset_channels();
-    if (action_processor_) {
-        action_processor_->reset_runtime_state();
-    }
-    if (observation_builder_) {
-        observation_builder_->reset_runtime_state();
-    }
     imu_session_.deinitialize();
     return result;
 }

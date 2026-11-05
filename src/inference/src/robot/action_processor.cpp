@@ -60,14 +60,18 @@ ActionProcessor::ActionProcessor(std::shared_ptr<const JointMapping> mapping,
                                  std::array<double, motor_base::kMaxMotors> motor_kd,
                                  AnkleTorqueControlConfig torque_config)
     : mapping_(std::move(mapping)),
-      default_joint_pos_rad_(std::move(default_joint_pos_rad)),
       ankle_motor_limits_(ankle_motor_limits),
       motor_kp_(std::move(motor_kp)),
       motor_kd_(std::move(motor_kd)),
       torque_config_(torque_config),
-      low_pass_coeffs_(compute_low_pass_coefficients(torque_config_))
+      low_pass_coeffs_(compute_low_pass_coefficients(torque_config_)),
+      left_ankle_torque_(
+          default_joint_pos_rad[static_cast<std::size_t>(mapping_->left_ankle().model_roll_dof)],
+          default_joint_pos_rad[static_cast<std::size_t>(mapping_->left_ankle().model_pitch_dof)]),
+      right_ankle_torque_(
+          default_joint_pos_rad[static_cast<std::size_t>(mapping_->right_ankle().model_roll_dof)],
+          default_joint_pos_rad[static_cast<std::size_t>(mapping_->right_ankle().model_pitch_dof)])
 {
-    reset_runtime_state();
 }
 
 ActionProcessor::ModelJointPositions ActionProcessor::make_model_target(
@@ -91,7 +95,7 @@ ActionProcessor::ModelJointPositions ActionProcessor::make_model_target(
 }
 
 bool ActionProcessor::make_motor_target(
-    const ModelJointPositions&                  target_model_rad,  // 模型计算出的关节目标角
+    const ModelJointPositions&                  target_model_rad,  // 模型顺序的关节目标角
     std::array<double, motor_base::kMaxMotors>& target_motor_rad,  // 电机目标角(引用传递)
     std::string& error)
 {
@@ -100,29 +104,28 @@ bool ActionProcessor::make_motor_target(
 
     for (int model_index = 0; model_index < count; ++model_index) {
         
+        /* 先判断 model index 是否合法 */
         if (mapping_->is_model_dof(model_index)) {
             continue;
         }
-
+        /* 获取 model index 对应的 motor index */
         const int motor_index = mapping_->get_motor_id(model_index);
+        /* 获取 model index 对应的关节角度 */
         double q = target_model_rad[static_cast<std::size_t>(model_index)];
 
+        /* 写入到 motor index 的目标关节角度 数组中 */
         target_motor_rad[static_cast<std::size_t>(motor_index)] =
             mapping_->get_motor_direction(motor_index) * q;
     }
 
     if (!apply_ankle_ik(target_model_rad,
                         target_motor_rad,
-                        "left",
-                        mapping_->left_ankle(),
                         left_ankle_ik_,
                         error)) {
         return false;
     }
     if (!apply_ankle_ik(target_model_rad,
                         target_motor_rad,
-                        "right",
-                        mapping_->right_ankle(),
                         right_ankle_ik_,
                         error)) {
         return false;
@@ -153,35 +156,37 @@ bool ActionProcessor::make_motor_target(
 }
 
 bool ActionProcessor::apply_ankle_ik(
-    const ModelJointPositions& target_model_rad,  // 模型计算出的关节目标角
-    std::array<double, motor_base::kMaxMotors>& target_motor_rad,    // 电机目标角(引用)
-    const char*                ankle_name,
-    const AnkleMap&    ankle_map,           // 脚踝关节的映射关系
-    AnkleIkState&              state,               // 脚踝IK求解器的状态
+    const ModelJointPositions&                  target_model_rad,   // 模型计算出的关节目标角
+    std::array<double, motor_base::kMaxMotors>& target_motor_rad,   // 电机目标角(引用)
+    ankle_motor_ik::Solver&                     solver,             // 脚踝IK求解器及其历史状态
     std::string& error)
 {
+    const bool      is_left    = solver.side() == ankle_motor_ik::AnkleSide::Left;
+    const AnkleMap& ankle_map  = is_left ? mapping_->left_ankle() : mapping_->right_ankle();
+    const char*     ankle_name = is_left ? "left" : "right";
+    /* 依据 ankle_map 中的 pitch/roll 的模型索引 获取 target_model_rad 中存储的目标关节角 */
     const double pitch = target_model_rad[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
     const double roll  = target_model_rad[static_cast<std::size_t>(ankle_map.model_roll_dof)];
 
-    ankle_motor_ik::Solver candidate_solver = state.solver;
-    const ankle_motor_ik::MotorAngles result =
-        candidate_solver.solve(roll, pitch);
+    // 创建 candidate_solver 是为了先尝试求解，两个电机都可达后，再更新原求解器的历史状态
+    ankle_motor_ik::Solver candidate_solver = solver;
+    const ankle_motor_ik::MotorAngles result = candidate_solver.solve(roll, pitch);
 
     double upper_motor = 0.0;
     double lower_motor = 0.0;
     if (result.reachable()) {
         upper_motor = result.motor1;
         lower_motor = result.motor2;
-        state.solver = candidate_solver;
-        state.solved = true;
-    } else if (state.solved) {
-        upper_motor = state.solver.previous_motor1();
-        lower_motor = state.solver.previous_motor2();
+        solver = candidate_solver;
+    } else if (solver.has_solution()) {
+        upper_motor = solver.previous_motor1();
+        lower_motor = solver.previous_motor2();
     } else {
         error = ankle_ik_unreachable_error(ankle_name, roll, pitch, result);
         return false;
     }
 
+    /* 依据电机索引判断电机角度是否需要反向，然后将电机目标角度写入 target_motor_rad */
     const int upper_motor_direction =
         mapping_->get_motor_direction(ankle_map.upper_motor_index);
     const int lower_motor_direction =
@@ -195,44 +200,6 @@ bool ActionProcessor::apply_ankle_ik(
         lower_motor_target;
     error.clear();
     return true;
-}
-
-void ActionProcessor::AnkleIkState::reset()
-{
-    solver.reset();
-    solved = false;
-}
-
-void ActionProcessor::reset_runtime_state()
-{
-    left_ankle_ik_.reset();
-    right_ankle_ik_.reset();
-
-    auto reset_torque_state = [this](const AnkleMap& ankle_map,
-                                     AnkleTorqueState& state) {
-        const double pitch = default_joint_pos_rad_[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
-        const double roll  = default_joint_pos_rad_[static_cast<std::size_t>(ankle_map.model_roll_dof)];
-        state.reset(roll, pitch);
-    };
-
-    reset_torque_state(mapping_->left_ankle(), left_ankle_torque_);
-    reset_torque_state(mapping_->right_ankle(), right_ankle_torque_);
-}
-
-
-void ActionProcessor::LowPass2State::reset()
-{
-    x1 = 0.0;
-    x2 = 0.0;
-    y1 = 0.0;
-    y2 = 0.0;
-}
-
-void ActionProcessor::AnkleTorqueState::reset(double roll, double pitch)
-{
-    fk_solver.reset(roll, pitch);
-    pitch_filter.reset();
-    roll_filter.reset();
 }
 
 bool ActionProcessor::build_policy_impedance_command(

@@ -318,8 +318,8 @@ private:
         return true;
     }
 
-    ankle_motor_ik::Solver left_ankle_solver_;
-    ankle_motor_ik::Solver right_ankle_solver_;
+    ankle_motor_ik::Solver left_ankle_solver_{ankle_motor_ik::AnkleSide::Left};
+    ankle_motor_ik::Solver right_ankle_solver_{ankle_motor_ik::AnkleSide::Right};
     double left_ankle_last_upper_motor_ = 0.0;
     double left_ankle_last_lower_motor_ = 0.0;
     double right_ankle_last_upper_motor_ = 0.0;

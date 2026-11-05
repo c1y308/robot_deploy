@@ -43,8 +43,6 @@ public:
                     std::array<double, motor_base::kMaxMotors> motor_kd,
                     AnkleTorqueControlConfig torque_config);
 
-    void reset_runtime_state();
-
     bool make_motor_target(const ModelJointPositions& target_model_rad,
                              std::array<double, motor_base::kMaxMotors>& target_motor_rad,
                              std::string& error);
@@ -62,20 +60,12 @@ public:
         std::string& error);
 
 private:
-    struct AnkleIkState {
-        ankle_motor_ik::Solver solver;
-        bool solved = false;
-
-        void reset();
-    };
-
     struct LowPass2State {
         double x1 = 0.0;
         double x2 = 0.0;
         double y1 = 0.0;
         double y2 = 0.0;
 
-        void reset();
     };
 
     struct AnkleTorqueState {
@@ -83,14 +73,12 @@ private:
         LowPass2State pitch_filter;
         LowPass2State roll_filter;
 
-        void reset(double roll = 0.0, double pitch = 0.0);
+        AnkleTorqueState(double roll, double pitch) : fk_solver(roll, pitch) {}
     };
 
     bool apply_ankle_ik(const ModelJointPositions& target_model_rad,
                         std::array<double, motor_base::kMaxMotors>& target_motor_rad,
-                        const char* ankle_name,
-                        const AnkleMap& ankle_map,
-                        AnkleIkState& state,
+                        ankle_motor_ik::Solver& solver,
                         std::string& error);
 
     bool apply_ankle_torque_control(
@@ -103,15 +91,14 @@ private:
         std::string& error);
 
     std::shared_ptr<const JointMapping> mapping_;
-    ModelJointPositions default_joint_pos_rad_;
     AnkleMotorLimitConfig ankle_motor_limits_;
     std::array<double, motor_base::kMaxMotors> motor_kp_;
     std::array<double, motor_base::kMaxMotors> motor_kd_;
     AnkleTorqueControlConfig torque_config_;
     LowPass2Coefficients low_pass_coeffs_;
 
-    AnkleIkState left_ankle_ik_;
-    AnkleIkState right_ankle_ik_;
+    ankle_motor_ik::Solver left_ankle_ik_{ankle_motor_ik::AnkleSide::Left};
+    ankle_motor_ik::Solver right_ankle_ik_{ankle_motor_ik::AnkleSide::Right};
 
     AnkleTorqueState left_ankle_torque_;
     AnkleTorqueState right_ankle_torque_;

@@ -81,20 +81,14 @@ ObservationBuilder::ObservationBuilder(std::shared_ptr<const JointMapping> mappi
     : mapping_(std::move(mapping)),
       scales_(std::move(scales)),
       default_joint_pos_rad_(default_joint_pos_rad),
-      policy_config_(std::move(policy_config))
+      policy_config_(std::move(policy_config)),
+      left_ankle_fk_(
+          default_joint_pos_rad_[static_cast<std::size_t>(mapping_->left_ankle().model_roll_dof)],
+          default_joint_pos_rad_[static_cast<std::size_t>(mapping_->left_ankle().model_pitch_dof)]),
+      right_ankle_fk_(
+          default_joint_pos_rad_[static_cast<std::size_t>(mapping_->right_ankle().model_roll_dof)],
+          default_joint_pos_rad_[static_cast<std::size_t>(mapping_->right_ankle().model_pitch_dof)])
 {
-    reset_runtime_state();
-}
-
-
-void ObservationBuilder::reset_runtime_state()
-{
-    reset_ankle_state(mapping_->left_ankle(),  left_ankle_fk_);
-    reset_ankle_state(mapping_->right_ankle(), right_ankle_fk_);
-    last_action_.fill(0.0F);
-    observation_history_.fill(0.0F);
-    observation_history_ready_ = false;
-    frame_index_ = 0;
 }
 
 void ObservationBuilder::commit_policy_action(const PolicyAction& raw_action) noexcept
@@ -108,16 +102,6 @@ void ObservationBuilder::advance_frame() noexcept
 {
     ++frame_index_;
 }
-
-// 从default_joint_pos_rad_中获取roll和pitch值，调用ankle_fk的reset函数，重置ankle_fk
-void ObservationBuilder::reset_ankle_state(const AnkleMap& ankle_map,
-                                                 ankle_motor_fk::Solver& state)
-{
-    const double pitch = default_joint_pos_rad_[static_cast<std::size_t>(ankle_map.model_pitch_dof)];
-    const double roll  = default_joint_pos_rad_[static_cast<std::size_t>(ankle_map.model_roll_dof)];
-    state.reset(roll, pitch);
-}
-
 
 bool ObservationBuilder::build(
     const MotorStateSnapshot&    motor_state,       // 电机快照

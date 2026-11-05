@@ -23,13 +23,12 @@ public:
     using JointTermArray  = std::array<float,  kDof>;
 
     // mapping 由 JointMapping::create() 成功构造，运行期不可变。
-    ObservationBuilder(std::shared_ptr<const JointMapping> mapping,
-                       ObservationScaleConfig scales,
-                       std::array<double, kModelDof> default_joint_pos_rad,
-                       PolicyRuntimeConfig policy_config);
+    ObservationBuilder(std::shared_ptr<const JointMapping> mapping,         // 指向 JointMapping 的共享指针
+                       ObservationScaleConfig scales,                       // 观测缩放配置
+                       std::array<double, kModelDof> default_joint_pos_rad,  // 默认关节角度
+                       PolicyRuntimeConfig policy_config);                   // 策略运行时配置
 
                        
-    void reset_runtime_state();
     void commit_policy_action(const PolicyAction& raw_action) noexcept;
     void advance_frame() noexcept;
     std::uint64_t frame_index() const noexcept { return frame_index_; }
@@ -42,13 +41,6 @@ public:
                std::string& error);
 
 private:
-    ankle_motor_fk::Solver left_ankle_fk_;
-    ankle_motor_fk::Solver right_ankle_fk_;
-
-
-    void reset_ankle_state(const AnkleMap& ankle_map,
-                                 ankle_motor_fk::Solver& state);
-                        
     bool fill_joint_terms(const MotorStateArray& q_motor_rad,
                           const MotorStateArray& dq_motor_rad_s,
                           JointTermArray& joint_pos_rel,
@@ -68,6 +60,8 @@ private:
     ObservationScaleConfig scales_;
     std::array<double, kModelDof> default_joint_pos_rad_;
     PolicyRuntimeConfig policy_config_;
+    ankle_motor_fk::Solver left_ankle_fk_;
+    ankle_motor_fk::Solver right_ankle_fk_;
     PolicyAction last_action_{};  // 裁剪到 [-1, 1] 的无量纲历史动作。
     PolicyObservation observation_history_{};
     bool observation_history_ready_{false};
