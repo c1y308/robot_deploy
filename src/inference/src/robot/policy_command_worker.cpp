@@ -36,7 +36,7 @@ PolicyCommandWorker::~PolicyCommandWorker() {
 
 bool PolicyCommandWorker::start(
     ActionProcessor&    action_processor,
-    std::array<double, motor_base::kMaxMotors> startup_hold_target_motor_rad)
+    std::array<double, motor_base::kMotorNum> startup_hold_target_motor_rad)
 {
     action_processor_ = &action_processor;
     startup_hold_target_motor_rad_ = std::move(startup_hold_target_motor_rad);
@@ -188,7 +188,7 @@ void PolicyCommandWorker::loop()
     const auto period = std::chrono::nanoseconds(
         std::max<std::int64_t>(
             1,
-            static_cast<std::int64_t>(std::llround(config_.ankle_torque.filter_dt_s * 1'000'000'000.0))
+            static_cast<std::int64_t>(std::llround(config_.ankle.filter_dt_s * 1'000'000'000.0))
          ));
 
     auto next_wake = std::chrono::steady_clock::now();
@@ -198,9 +198,9 @@ void PolicyCommandWorker::loop()
     bool has_current_target = false;
 
     std::array<motor_base::MotorStatusSnapshot,
-               motor_base::kMaxMotorCommandSetpoints> motor_feedback;
+               motor_base::kMotorNum> motor_feedback;
     bool has_motor_feedback = false;
-    ActionProcessor::FixedPolicyMotorCommand command;
+    PolicyMotorCommand command;
     std::string error;
     std::uint64_t last_logged_policy_seq = 0;
 
@@ -274,7 +274,7 @@ void PolicyCommandWorker::loop()
                 }
 
                 error.clear();
-                if (!action_processor_->build_policy_impedance_command(
+                if (!action_processor_->build_policy_motor_command(
                         current_target.target_model_rad,
                         motor_feedback,
                         command,
@@ -314,7 +314,7 @@ void PolicyCommandWorker::loop()
                     completed_record.command_timestamp_ns   = produced_at_ns;
                     completed_record.command_valid_until_ns = timing.valid_until_ns;
                     completed_record.command_applied = true;
-                    for (std::size_t i = 0; i < motor_base::kMaxMotors; ++i) {
+                    for (std::size_t i = 0; i < motor_base::kMotorNum; ++i) {
                         completed_record.target_pos_rad[i] =
                             command.setpoints[i].position_rad;
                         completed_record.target_effort_permille[i] =

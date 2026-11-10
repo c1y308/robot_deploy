@@ -70,7 +70,7 @@ double vel_rad_s_to_raw_for_motor(int motor_index)
 std::size_t checked_motor_count(int num_motors)
 {
     if (num_motors < 0 ||
-        static_cast<std::size_t>(num_motors) > mb::kMaxMotorCommandSetpoints) {
+        static_cast<std::size_t>(num_motors) > mb::kMotorNum) {
         throw std::invalid_argument("MYACTUA num_motors exceeds fixed realtime capacity");
     }
     return static_cast<std::size_t>(num_motors);
@@ -981,7 +981,7 @@ void MyActMotorController::update_realtime_feedback()
         return;
     }
 
-    std::array<mb::MotorStatusSnapshot, mb::kMaxMotorCommandSetpoints> feedback{};
+    std::array<mb::MotorStatusSnapshot, mb::kMotorNum> feedback{};
 
     /* 把 MotorState 中的数据填充给对外发布的实时反馈快照 */
     const bool terminal_fault = terminal_fault_latched();

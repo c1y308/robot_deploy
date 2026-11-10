@@ -299,7 +299,7 @@ motor_base::CommandTiming RobotMotorSession::target_command_timing(
 }
 
 bool RobotMotorSession::apply_targets_rad(
-    const std::array<double, motor_base::kMaxMotors>& target_motor_rad,
+    const std::array<double, motor_base::kMotorNum>& target_motor_rad,
     std::int64_t absolute_deadline_ns)
 {
     if (!initialized_.load() || !controller_) {
@@ -313,7 +313,7 @@ bool RobotMotorSession::apply_targets_rad(
     motor_base::ControlCommand command;
     if (config_.control_mode == motor_base::MotorControlMode::IMPEDANCE) {
         std::array<motor_base::ImpedanceSetpoint,
-                   motor_base::kMaxMotorCommandSetpoints> impedance_setpoints{};
+                   motor_base::kMotorNum> impedance_setpoints{};
         for (std::size_t i = 0; i < target_motor_rad.size(); ++i) {
             impedance_setpoints[i] = motor_base::ImpedanceSetpoint(target_motor_rad[i],
                                                                    0.0,
@@ -348,7 +348,7 @@ bool RobotMotorSession::apply_targets_rad(
 
 bool RobotMotorSession::apply_impedance_setpoints_realtime(
     const std::array<motor_base::ImpedanceSetpoint,
-                     motor_base::kMaxMotorCommandSetpoints>& setpoints,
+                     motor_base::kMotorNum>& setpoints,
     std::size_t count,
     const motor_base::CommandTiming& timing)
 {
@@ -370,7 +370,7 @@ bool RobotMotorSession::apply_impedance_setpoints_realtime(
 
 bool RobotMotorSession::try_consume_latest_status_command(
     std::array<motor_base::MotorStatusSnapshot,
-               motor_base::kMaxMotorCommandSetpoints>& feedback)
+               motor_base::kMotorNum>& feedback)
 {
     if (!initialized_.load() || !controller_) {
         return false;
@@ -406,7 +406,7 @@ MotorStateSnapshot RobotMotorSession::get_motor_snapshot() const
 
     // 优先读 policy 线程专属的 RT feedback 通道；无新帧时沿用缓存帧。
     std::array<motor_base::MotorStatusSnapshot,
-               motor_base::kMaxMotorCommandSetpoints> latest_feedback;
+               motor_base::kMotorNum> latest_feedback;
     if (controller_->try_consume_latest_status_policy(latest_feedback)) {
         latest_feedback_ = latest_feedback;
         has_policy_feedback_ = true;

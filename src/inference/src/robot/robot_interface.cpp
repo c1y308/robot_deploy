@@ -1,4 +1,5 @@
 #include "robot/robot_interface.hpp"
+#include "kinematics/ankle_motor_fk.hpp"
 #include "tool/tool.hpp"
 #include "robot/action_processor.hpp"
 #include "robot/joint_mapping.hpp"
@@ -15,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -99,9 +101,10 @@ bool RobotInterface::initialize() {
 
     // 日志生命周期：按已校验的观测维度启动独立记录器。
     if (config_.recorder.enabled) {
-        config_.recorder.policy_observation_size =
+        const auto observation_size =
             policy_observation::observation_size(config_.policy.gait.enabled);
-        if (!inference_recorder_.start(config_.recorder, config_.runtime.background)) {
+        if (!inference_recorder_.start(config_.recorder, observation_size,
+                                       config_.runtime.background)) {
             std::cerr << "[RobotInterface] failed to open inference log: "
                       << inference_recorder_.last_error() << "\n";
             inference_recorder_failed_ = true;
@@ -133,7 +136,7 @@ bool RobotInterface::initialize() {
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
     // 恢复到初始位置
-    std::array<double, motor_base::kMaxMotors> startup_hold_target_motor_rad{};
+    std::array<double, motor_base::kMotorNum> startup_hold_target_motor_rad{};
     if (!reset_joints(startup_hold_target_motor_rad)) {
         shutdown();
         return false;
@@ -178,32 +181,23 @@ ShutdownResult RobotInterface::shutdown() {
 
 
 bool RobotInterface::initialize_processors() {
-    std::string error;
-    auto mapping = JointMapping::create(static_cast<int>(kModelDof),
-                                                         config_.joint_mapping,
-                                                                 error);
-    if (!mapping) {
+    std::unique_ptr<const JointMapping> mapping;
+    try {
+        mapping = std::make_unique<const JointMapping>(
+            static_cast<int>(kDof), config_.joint_mapping);
+    } catch (const std::invalid_argument& error) {
         std::cerr << "[RobotInterface] initialize_processors failed: "
-                  << error << "\n";
+                  << error.what() << "\n";
         return false;
     }
 
-    auto action_processor = std::make_unique<ActionProcessor>(
-        mapping,
-        config_.action.default_joint_pos_rad,
-        config_.ankle_motor_limits,
-        config_.motor.mit_kp,
-        config_.motor.mit_kd,
-        config_.ankle_torque);
+    auto action_processor = std::make_unique<ActionProcessor>(config_, *mapping);
+    auto observation_builder = std::make_unique<ObservationBuilder>(config_, *mapping);
 
-    auto observation_builder = std::make_unique<ObservationBuilder>(
-        mapping,
-        config_.observation_scales,
-        config_.action.default_joint_pos_rad,
-        config_.policy);
-
+    // 先替换旧处理器，再释放它们引用的旧映射。
     action_processor_    = std::move(action_processor);
     observation_builder_ = std::move(observation_builder);
+    joint_mapping_       = std::move(mapping);
 
     return true;
 }
@@ -225,26 +219,86 @@ void RobotInterface::set_target_velocity(double vx, double vy, double yaw_rate) 
     target_velocity_ = {vx, vy, yaw_rate};
 }
 
+bool RobotInterface::get_start_model_pose(
+    const std::array<double, motor_base::kMotorNum>& current_motor_q, // 当前电机真实角度(rad)
+    std::array<double, kDof>& start_model_q,   // 输出: 当前的模型关节角(rad)
+    std::string& error) const
+{
+    const int count = joint_mapping_->dof_count();
+    start_model_q.fill(0.0);
+
+    // 按照模型顺序遍历，将电机角度转换为模型关节角度
+    for (int model_index = 0; model_index < count; ++model_index) {
+        // 跳过脚踝关节的模型 DOF，它们的角度由 FK 求解器计算得出
+        if (joint_mapping_->is_model_dof(model_index)) {
+            continue;
+        }
+
+        // 得到电机索引
+        const int motor_index = joint_mapping_->get_motor_id(model_index);
+        // 从电机角度转换为模型关节角度，考虑电机方向
+        start_model_q[static_cast<std::size_t>(model_index)] =
+            joint_mapping_->get_motor_direction(motor_index) * current_motor_q[static_cast<std::size_t>(motor_index)];
+    }
+
+    auto fill_ankle_start_model_q = [&](const char* ankle_name,
+                                       const AnkleMap& ankle_map) {
+        const double upper_motor =
+            joint_mapping_->get_motor_direction(ankle_map.upper_motor_index) *
+            current_motor_q[static_cast<std::size_t>(ankle_map.upper_motor_index)];
+        const double lower_motor =
+            joint_mapping_->get_motor_direction(ankle_map.lower_motor_index) *
+            current_motor_q[static_cast<std::size_t>(ankle_map.lower_motor_index)];
+
+        const auto pitch_index = static_cast<std::size_t>(ankle_map.model_pitch_dof);
+        const auto roll_index  = static_cast<std::size_t>(ankle_map.model_roll_dof);
+        const double initial_pitch = config_.default_joint_pos_rad[pitch_index];
+        const double initial_roll  = config_.default_joint_pos_rad[roll_index];
+        const ankle_motor_fk::FootAngles foot =
+            ankle_motor_fk::solve(upper_motor, lower_motor, initial_roll, initial_pitch);
+
+        if (!foot.reachable ||
+            !std::isfinite(foot.pitch) || !std::isfinite(foot.roll)) {
+            // 电机角已转换到求解器方向；失败时不能用目标姿态替代真实起点。
+            error = std::string(ankle_name) +
+                    " ankle FK failed while building reset start pose: upper_motor=" +
+                    std::to_string(upper_motor) + " rad, lower_motor=" +
+                    std::to_string(lower_motor) + " rad, reachable=" +
+                    (foot.reachable ? "true" : "false") +
+                    ", pitch=" + std::to_string(foot.pitch) +
+                    " rad, roll=" + std::to_string(foot.roll) + " rad";
+            return false;
+        }
+        start_model_q[pitch_index] = foot.pitch;
+        start_model_q[roll_index] = foot.roll;
+        return true;
+    };
+
+    if (!fill_ankle_start_model_q("left", joint_mapping_->left_ankle()) ||
+        !fill_ankle_start_model_q("right", joint_mapping_->right_ankle())) {
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 /* 按平滑插值将关节恢复到 default_joint_pos_rad 初始姿态。 */
 bool RobotInterface::reset_joints(
-    std::array<double, motor_base::kMaxMotors>& final_target_motor_rad) {
+    std::array<double, motor_base::kMotorNum>& final_target_motor_rad) {
     if (!motor_session_.motion_enabled()) {
         std::cerr << "[RobotInterface] reset_joints rejected: motors are stopped.\n";
         return false;
     }
     
-    const auto& target_model_q = config_.action.default_joint_pos_rad;
+    const auto& target_model_q = config_.default_joint_pos_rad;
     const MotorStateSnapshot motor_state = motor_session_.get_motor_snapshot();
     if (motor_state.timestamp_ns <= 0 || !robot_base::finite_array(motor_state.position_rad)) {
         std::cerr << "[RobotInterface] reset_joints rejected: motor feedback is invalid.\n";
         return false;
     }
-    std::array<double, kModelDof> start_model_q{};
+    std::array<double, kDof> start_model_q{};
     std::string error;
-    if (!action_processor_->build_reset_start_model_pose(motor_state.position_rad,
-                                                         target_model_q,
-                                                         start_model_q,
-                                                         error)) {
+    if (!get_start_model_pose(motor_state.position_rad, start_model_q, error)) {
         std::cerr << "[RobotInterface] reset_joints rejected: "
                   << error << "\n";
         return false;
@@ -256,15 +310,15 @@ bool RobotInterface::reset_joints(
         static_cast<std::int64_t>(std::llround(
             config_.safety.control_command_timeout_ms * 500.0)));
     const auto dt = std::chrono::microseconds(reset_period_us);
-    std::array<double, motor_base::kMaxMotors> target_rad{};
-    std::array<double, kModelDof> q_cmd_model{};
+    std::array<double, motor_base::kMotorNum> target_rad{};
+    std::array<double, kDof> q_cmd_model{};
 
     for (int k = 1; k <= ramp_steps; ++k) {
         const double alpha = static_cast<double>(k) / static_cast<double>(ramp_steps);
         for (std::size_t i = 0; i < q_cmd_model.size(); ++i) {
             q_cmd_model[i] = start_model_q[i] * (1.0 - alpha) + target_model_q[i] * alpha;
         }
-        if (!action_processor_->make_motor_target(q_cmd_model, target_rad, error)) {
+        if (!action_processor_->build_motor_position_targets(q_cmd_model, target_rad, error)) {
             std::cerr << "[RobotInterface] reset_joints failed: "
                       << error << "\n";
             return false;
@@ -435,7 +489,7 @@ bool RobotInterface::policy_step() {
 
     // admission 之前只完成控制目标计算，不组装日志记录。
     const auto target_model_rad =
-        ActionProcessor::make_model_target(policy_result.raw_action, config_.action);
+        action_processor_->make_model_target(policy_result.raw_action);
 
     set_policy_step_phase(PolicyStepPhase::Publish);
     const std::int64_t decision_now_ns = robot_base::monotonic_now_ns();
@@ -478,7 +532,7 @@ bool RobotInterface::policy_step() {
             fill_log_record(policy_command_worker_.acquire_target_record_write_slot());
         }
         last_policy_target_published_ns_ = policy_command_worker_.publish_target();
-        observation_builder_->commit_policy_action(policy_result.raw_action);
+        observation_builder_->set_last_action(policy_result.raw_action);
     }
 
     // 推进观测帧计数；丢弃结果也会推进。

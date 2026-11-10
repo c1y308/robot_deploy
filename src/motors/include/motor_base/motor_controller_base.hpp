@@ -116,12 +116,12 @@ public:
     /// @brief 读取 command worker 专属的 RT feedback latest-value 快照；
     ///        无新快照时返回 false。仅限 policy_command_worker 线程消费（SPSC 单消费者）。
     bool try_consume_latest_status_command(
-        std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback);
+        std::array<MotorStatusSnapshot, kMotorNum>& feedback);
 
     /// @brief 读取 policy/inference 线程专属的 RT feedback latest-value 快照；
     ///        无新快照时返回 false。仅限 policy/inference 线程消费（SPSC 单消费者）。
     bool try_consume_latest_status_policy(
-        std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback);
+        std::array<MotorStatusSnapshot, kMotorNum>& feedback);
 
     /// @brief 获取全部电机位置，单位 rad（按电机顺序）
     std::vector<double> get_positions_rad();
@@ -151,7 +151,7 @@ protected:
     uint64_t    discrete_command_tick() const noexcept { return discrete_cmd_tick_; }
 
     void publish_feedback(
-        const std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback);
+        const std::array<MotorStatusSnapshot, kMotorNum>& feedback);
 
     void push_event(const RtEvent& event);
     void set_event_fallback_printer(RtEventDispatcher::EventPrinter printer);
@@ -252,9 +252,9 @@ private:
     DiscreteCommandResultTracker discrete_command_results_;
     
     // STOP 请求的电机序号
-    std::array<StopRequest, kMaxMotors + 1> stop_requests_{};
+    std::array<StopRequest, kMotorNum + 1> stop_requests_{};
     // STOP 请求的电机状态机
-    std::array<StopAxisState, kMaxMotors> stop_axes_{}; // RT thread only
+    std::array<StopAxisState, kMotorNum> stop_axes_{}; // RT thread only
 
 
     // 每个电机的普通离散命令队列（restart / set_mode）
@@ -266,10 +266,10 @@ private:
     // RT feedback 双通道 fan-out（同一帧数据，两条独立 SPSC 边）：
     // command_feedback_channel_，电机驱动层生产，仅 policy_command_worker 线程脚踝力矩解算消费；
     robot_base::SpscLatestChannel<
-        std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>> command_feedback_channel_;
+        std::array<MotorStatusSnapshot, kMotorNum>> command_feedback_channel_;
     // policy_feedback_channel_，电机驱动层生产，仅 policy 线程构建观测帧消费；
     robot_base::SpscLatestChannel<
-        std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>> policy_feedback_channel_;
+        std::array<MotorStatusSnapshot, kMotorNum>> policy_feedback_channel_;
     
     // policy SETPOINT 专通道（仅 policy_command_worker 生产，电机驱动层线程消费）
     robot_base::SpscLatestChannel<ControlCommand> setpoint_channel_policy_;

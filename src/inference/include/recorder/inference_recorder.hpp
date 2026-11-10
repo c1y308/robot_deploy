@@ -23,6 +23,7 @@ public:
     InferenceRecorder& operator=(const InferenceRecorder&) = delete;
 
     bool start(InferenceRecorderConfig config,
+               std::size_t policy_observation_size,
                robot_base::ThreadRuntimeOptions thread_options = {});
     bool try_record(const InferenceRecord& record) noexcept;
     void stop() noexcept;
@@ -42,6 +43,7 @@ private:
     std::thread worker_;
     std::ofstream file_;
     InferenceRecorderConfig config_;
+    std::size_t policy_observation_size_{0};
     std::filesystem::path log_path_;
     std::string last_error_;
     std::uint64_t dropped_records_{0};

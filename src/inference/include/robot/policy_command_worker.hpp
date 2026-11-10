@@ -25,7 +25,7 @@ struct PolicyTargetFrame {
     std::int64_t published_at_ns{0};
     std::int64_t policy_valid_until_ns{0};
     std::int64_t obs_to_action_age_us{0};
-    std::array<double, kModelDof> target_model_rad{};
+    std::array<double, kDof> target_model_rad{};
 };
 
 /* policy_command_worker：消费目标通道中的模型关节角目标，
@@ -45,7 +45,7 @@ public:
     // 由控制线程串行调用；启动前共享状态已重置，电机已运行。
     // action_processor 必须存活到 stop() 返回。
     bool start(ActionProcessor&    action_processor,
-               std::array<double, motor_base::kMaxMotors> startup_hold_target_motor_rad);
+               std::array<double, motor_base::kMotorNum> startup_hold_target_motor_rad);
     void request_stop() noexcept;
     void stop();
     
@@ -101,7 +101,7 @@ private:
 
     const std::atomic<std::int64_t>&    first_policy_inference_started_ns_;
     // reset_joints 最后成功提交的目标，供首个策略帧前保持姿态。
-    std::array<double, motor_base::kMaxMotors> startup_hold_target_motor_rad_{};
+    std::array<double, motor_base::kMotorNum> startup_hold_target_motor_rad_{};
 
     std::thread worker_thread_;
 };

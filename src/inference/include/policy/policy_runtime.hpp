@@ -13,7 +13,7 @@ struct PolicyRuntimeConfig;
 class PolicySessionOptions;
 
 struct PolicyRuntimeStepResult {
-    PolicyAction raw_action{};
+    std::array<float, kDof> raw_action{};
     std::int64_t inference_start_ns{0};
     std::int64_t inference_end_ns{0};
 };
@@ -21,8 +21,6 @@ struct PolicyRuntimeStepResult {
 // 策略推理运行时
 class PolicyRuntime {
 public:
-    static constexpr std::size_t kDof = kModelDof;
-
     PolicyRuntime();
     ~PolicyRuntime();
 

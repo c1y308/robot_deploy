@@ -19,7 +19,7 @@
 #include "driver/myact/myact_motor_controller.hpp"
 #include "driver/myact/motor_units.hpp"
 #include "kinematics/ankle_motor_fk.hpp"
-#include "kinematics/ankle_motor_jacobian.hpp"
+#include "kinematics/ankle_jacobian.hpp"
 #include "protocol/ethercat/ethercat_adapter_igh.hpp"
 #include "robot/action_processor.hpp"
 #include "robot/joint_mapping.hpp"
@@ -42,6 +42,7 @@
 #include <limits>
 #include <malloc.h>
 #include <memory>
+#include <stdexcept>
 #include <sstream>
 #include <string>
 #include <sys/types.h>
@@ -52,7 +53,8 @@
 
 namespace {
 
-constexpr std::size_t kDof = motor_base::kMaxMotors;
+using inference::kDof;
+static_assert(kDof == motor_base::kMotorNum, "chirp requires one motor per model DOF");
 constexpr std::size_t kSampleCapacity = 28'000;
 constexpr std::int64_t kCommandValidityNs = 10'000'000;
 constexpr int kMotorReadyTimeoutMs = 50'000;
@@ -336,9 +338,9 @@ struct ChirpContext {
             const double lower_dq = mapping->get_motor_direction(lower) * feedback[static_cast<std::size_t>(lower)].velocity_rad_s;
             const ankle_motor_fk::FootAngles foot = solver.solve(upper_q, lower_q);
             if (!foot.reachable || !std::isfinite(foot.pitch) || !std::isfinite(foot.roll)) return false;
-            ankle_motor_jacobian::Result jacobian;
+            ankle_jacobian::Result jacobian;
             jacobian_error.clear();
-            if (!ankle_motor_jacobian::solve(foot.pitch, foot.roll, upper_q, lower_q,
+            if (!ankle_jacobian::solve(foot.pitch, foot.roll, upper_q, lower_q,
                                              jacobian, jacobian_error)) return false;
             q_model[static_cast<std::size_t>(ankle.model_pitch_dof)] = foot.pitch;
             q_model[static_cast<std::size_t>(ankle.model_roll_dof)] = foot.roll;
@@ -406,9 +408,9 @@ struct ChirpContext {
             }
         }
 
-        inference::ActionProcessor::FixedPolicyMotorCommand motor_command;
+        inference::PolicyMotorCommand motor_command;
         action_error.clear();
-        if (!action_processor->build_policy_impedance_command(q_target, feedback, motor_command, action_error) ||
+        if (!action_processor->build_policy_motor_command(q_target, feedback, motor_command, action_error) ||
             motor_command.setpoint_count != kDof) {
             abort_rt(5);
             return;
@@ -931,19 +933,25 @@ bool self_test_mapping_rejection()
 {
     using inference::JointMapping;
     const auto count = static_cast<int>(kDof);
-    std::string error;
     const inference::JointMappingConfig valid_config;
-    if (!JointMapping::create(count, valid_config, error)) return false;
-
-    if (JointMapping::create(0, valid_config, error)) return false;
+    const JointMapping valid(count, valid_config);
+    const auto rejects = [](int dof, const inference::JointMappingConfig& config) {
+        try {
+            const JointMapping mapping(dof, config);
+            return false;
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+    };
+    if (!rejects(0, valid_config)) return false;
 
     inference::JointMappingConfig wrong_size = valid_config;
     wrong_size.model_to_motor_index.pop_back();
-    if (JointMapping::create(count, wrong_size, error)) return false;
+    if (!rejects(count, wrong_size)) return false;
 
     inference::JointMappingConfig bad_ankle = valid_config;
     bad_ankle.left_ankle.upper_motor_index = -1;
-    if (JointMapping::create(count, bad_ankle, error)) return false;
+    if (!rejects(count, bad_ankle)) return false;
     return true;
 }
 
@@ -954,17 +962,16 @@ bool self_test_rt_compute_audit()
     auto context = std::make_unique<ChirpContext>();
     context->jacobian_error.reserve(256);
     context->action_error.reserve(256);
-    std::string mapping_error;
-    context->mapping = inference::JointMapping::create(
-        static_cast<int>(kDof), inference::JointMappingConfig{}, mapping_error);
-    if (!context->mapping) return false;
+    context->mapping = std::make_shared<const inference::JointMapping>(
+        static_cast<int>(kDof), inference::JointMappingConfig{});
 
-    inference::AnkleMotorLimitConfig ankle_limits;
-    inference::AnkleTorqueControlConfig torque_config;
-    torque_config.virtual_kp = {180.0, 180.0};
-    torque_config.virtual_kd = {10.0, 10.0};
-    inference::ActionProcessor processor(
-        context->mapping, kNominalModelRad, ankle_limits, kMotorKp, kMotorKd, torque_config);
+    inference::RobotInterfaceConfig processor_config;
+    processor_config.default_joint_pos_rad = kNominalModelRad;
+    processor_config.motor.mit_kp = kMotorKp;
+    processor_config.motor.mit_kd = kMotorKd;
+    processor_config.ankle.virtual_kp = {180.0, 180.0};
+    processor_config.ankle.virtual_kd = {10.0, 10.0};
+    inference::ActionProcessor processor(processor_config, *context->mapping);
     context->action_processor = &processor;
     fill_enabled_neutral_rx(*context);
 
@@ -988,16 +995,16 @@ bool self_test_rt_compute_audit()
     std::array<double, kDof> amplitude{};
     amplitude.fill(0.1);
     std::array<double, kDof> target{};
-    inference::ActionProcessor::FixedPolicyMotorCommand command;
+    inference::PolicyMotorCommand command;
     ChirpContext::compute_target(4.5, kNominalModelRad, amplitude, target);
-    if (!context->action_processor->build_policy_impedance_command(
+    if (!context->action_processor->build_policy_motor_command(
             target, feedback, command, context->action_error)) return false;
 
     const struct mallinfo2 before = mallinfo2();
     for (int cycle = 0; cycle < 100; ++cycle) {
         if (!context->decode_model_state(feedback, q, dq)) return false;
         ChirpContext::compute_target(kNominalStartS + 0.001 * cycle, kNominalModelRad, amplitude, target);
-        if (!context->action_processor->build_policy_impedance_command(
+        if (!context->action_processor->build_policy_motor_command(
                 target, feedback, command, context->action_error)) return false;
         for (const auto& setpoint : command.setpoints) {
             if (!std::isfinite(setpoint.position_rad) || !std::isfinite(setpoint.velocity_rad_s) ||
@@ -1206,20 +1213,25 @@ int main(int argc, char** argv)
     inference::JointMappingConfig mapping_config;
     mapping_config.model_to_motor_index.assign(kJointIdsMap.begin(), kJointIdsMap.begin() + 8);
     mapping_config.motor_direction = kMotorDirection;
-    std::string mapping_error;
-    context.mapping = inference::JointMapping::create(static_cast<int>(kDof), mapping_config, mapping_error);
-    if (!context.mapping) {
-        std::cerr << "[chirp] joint mapping invalid: " << mapping_error << '\n';
+    try {
+        context.mapping = std::make_shared<const inference::JointMapping>(
+            static_cast<int>(kDof), mapping_config);
+    } catch (const std::invalid_argument& error) {
+        std::cerr << "[chirp] joint mapping invalid: " << error.what() << '\n';
         return 2;
     }
-    inference::AnkleMotorLimitConfig ankle_limits;
-    ankle_limits.min_rad = {kMotorSafeMinRad[4], kMotorSafeMinRad[5], kMotorSafeMinRad[10], kMotorSafeMinRad[11]};
-    ankle_limits.max_rad = {kMotorSafeMaxRad[4], kMotorSafeMaxRad[5], kMotorSafeMaxRad[10], kMotorSafeMaxRad[11]};
-    inference::AnkleTorqueControlConfig torque_config;
-    torque_config.virtual_kp = {180.0, 180.0};
-    torque_config.virtual_kd = {10.0, 10.0};
-    inference::ActionProcessor action_processor(context.mapping, kNominalModelRad, ankle_limits,
-                                                               kMotorKp, kMotorKd, torque_config);
+    inference::RobotInterfaceConfig processor_config;
+    processor_config.joint_mapping = mapping_config;
+    processor_config.default_joint_pos_rad = kNominalModelRad;
+    processor_config.motor.mit_kp = kMotorKp;
+    processor_config.motor.mit_kd = kMotorKd;
+    processor_config.ankle.motor_pos_min_rad =
+        {kMotorSafeMinRad[4], kMotorSafeMinRad[5], kMotorSafeMinRad[10], kMotorSafeMinRad[11]};
+    processor_config.ankle.motor_pos_max_rad =
+        {kMotorSafeMaxRad[4], kMotorSafeMaxRad[5], kMotorSafeMaxRad[10], kMotorSafeMaxRad[11]};
+    processor_config.ankle.virtual_kp = {180.0, 180.0};
+    processor_config.ankle.virtual_kd = {10.0, 10.0};
+    inference::ActionProcessor action_processor(processor_config, *context.mapping);
     context.action_processor = &action_processor;
 
     std::cout << "[chirp] duration=" << kChirpDurationS << " s frequency="

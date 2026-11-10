@@ -58,15 +58,15 @@ void write_header(std::ostream& stream, std::size_t observation_size)
             << "policy_valid_until_ns,"
            << "command_valid_until_ns";
     append_indexed_columns(stream, "policy_obs", observation_size);
-    append_indexed_columns(stream, "raw_action", kInferenceDof);
-    append_indexed_columns(stream, "target_model_rad", kInferenceDof);
-    append_motor_columns(stream, "target_pos_rad", kInferenceMotorCount);
-    append_motor_columns(stream, "target_effort_permille", kInferenceMotorCount);
-    append_motor_columns(stream, "rx_pos_rad", kInferenceMotorCount);
-    append_motor_columns(stream, "rx_vel_rad_s", kInferenceMotorCount);
-    append_motor_columns(stream, "torque_pct", kInferenceMotorCount);
-    append_motor_columns(stream, "comm_ok", kInferenceMotorCount);
-    append_motor_columns(stream, "enabled", kInferenceMotorCount);
+    append_indexed_columns(stream, "raw_action", kDof);
+    append_indexed_columns(stream, "target_model_rad", kDof);
+    append_motor_columns(stream, "target_pos_rad", motor_base::kMotorNum);
+    append_motor_columns(stream, "target_effort_permille", motor_base::kMotorNum);
+    append_motor_columns(stream, "rx_pos_rad", motor_base::kMotorNum);
+    append_motor_columns(stream, "rx_vel_rad_s", motor_base::kMotorNum);
+    append_motor_columns(stream, "torque_pct", motor_base::kMotorNum);
+    append_motor_columns(stream, "comm_ok", motor_base::kMotorNum);
+    append_motor_columns(stream, "enabled", motor_base::kMotorNum);
     stream << ",imu_receive_timestamp_ns"
            << ",imu_sample_timestamp_ns"
            << ",motor_age_us"
@@ -150,6 +150,7 @@ InferenceRecorder::~InferenceRecorder()
 
 bool InferenceRecorder::start(
     InferenceRecorderConfig config,
+    std::size_t policy_observation_size,
     robot_base::ThreadRuntimeOptions thread_options)
 {
     stop();
@@ -165,9 +166,9 @@ bool InferenceRecorder::start(
         return true;
     }
 
-    if (config.policy_observation_size !=
+    if (policy_observation_size !=
             policy_observation::kObservationSizeWithoutGaitPhase &&
-        config.policy_observation_size !=
+        policy_observation_size !=
             policy_observation::kObservationSizeWithGaitPhase) {
         std::lock_guard<std::mutex> lock(mutex_);
         last_error_ = "policy observation size must be 675 or 705";
@@ -199,7 +200,7 @@ bool InferenceRecorder::start(
         return false;
     }
 
-    write_header(file, config.policy_observation_size);
+    write_header(file, policy_observation_size);
     if (!file) {
         std::lock_guard<std::mutex> lock(mutex_);
         last_error_ = "failed to write inference log header: " + path.string();
@@ -209,6 +210,7 @@ bool InferenceRecorder::start(
     {
         std::lock_guard<std::mutex> lock(mutex_);
         config_ = std::move(config);
+        policy_observation_size_ = policy_observation_size;
         log_path_ = path;
         file_ = std::move(file);
         queue_.clear();
@@ -338,7 +340,7 @@ void InferenceRecorder::worker_loop() noexcept
     }();
     const std::size_t observation_size = [this] {
         std::lock_guard<std::mutex> lock(mutex_);
-        return config_.policy_observation_size;
+        return policy_observation_size_;
     }();
 
     auto next_flush = std::chrono::steady_clock::now() + flush_interval;

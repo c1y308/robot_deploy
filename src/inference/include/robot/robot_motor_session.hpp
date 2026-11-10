@@ -38,12 +38,12 @@ enum class MotorCommunicationState {
 struct MotorStateSnapshot {
     std::int64_t timestamp_ns{0};
 
-    std::array<double, motor_base::kMaxMotors> position_rad{};
-    std::array<double, motor_base::kMaxMotors> velocity_rad_s{};
-    std::array<double, motor_base::kMaxMotors> torque_percent{};
+    std::array<double, motor_base::kMotorNum> position_rad{};
+    std::array<double, motor_base::kMotorNum> velocity_rad_s{};
+    std::array<double, motor_base::kMotorNum> torque_percent{};
 
-    std::array<std::uint8_t, motor_base::kMaxMotors> comm_ok{};
-    std::array<std::uint8_t, motor_base::kMaxMotors> enabled{};
+    std::array<std::uint8_t, motor_base::kMotorNum> comm_ok{};
+    std::array<std::uint8_t, motor_base::kMotorNum> enabled{};
 };
 
 class RobotMotorSession {
@@ -73,17 +73,17 @@ public:
 
     // 依据当前电机模式下发位置指令
     // absolute_deadline_ns=0 保持原有独立命令有效期；正值额外封顶截止期。
-    bool apply_targets_rad(const std::array<double, motor_base::kMaxMotors>& target_motor_rad,
+    bool apply_targets_rad(const std::array<double, motor_base::kMotorNum>& target_motor_rad,
                            std::int64_t absolute_deadline_ns = 0);
     bool apply_impedance_setpoints_realtime(
         const std::array<motor_base::ImpedanceSetpoint,
-                         motor_base::kMaxMotorCommandSetpoints>& setpoints,
+                         motor_base::kMotorNum>& setpoints,
         std::size_t count,
         const motor_base::CommandTiming& timing);
 
     bool try_consume_latest_status_command(
         std::array<motor_base::MotorStatusSnapshot,
-                   motor_base::kMaxMotorCommandSetpoints>& feedback);
+                   motor_base::kMotorNum>& feedback);
 
     MotorStateSnapshot  get_motor_snapshot() const;
 
@@ -110,7 +110,7 @@ private:
     // policy/inference 线程专属 RT feedback 通道的缓存帧：
     // 仅 get_motor_snapshot()（policy 线程）读写，无新帧时保留上一帧有效反馈
     mutable std::array<motor_base::MotorStatusSnapshot,
-                       motor_base::kMaxMotorCommandSetpoints> latest_feedback_{};
+                       motor_base::kMotorNum> latest_feedback_{};
     mutable bool has_policy_feedback_{false};
 };
 

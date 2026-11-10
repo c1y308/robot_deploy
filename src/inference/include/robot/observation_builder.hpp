@@ -1,70 +1,85 @@
 #pragma once
 
 #include "kinematics/ankle_motor_fk.hpp"
-#include "kinematics/ankle_motor_jacobian.hpp"
 #include "policy/policy_observation_config.hpp"
 #include "robot/joint_mapping.hpp"
-#include "robot/robot_imu_session.hpp"
-#include "robot/robot_motor_session.hpp"
 #include "robot/robot_config.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <string>
 
 namespace inference {
 
+struct MotorStateSnapshot;
+struct AhrsStateSnapshot;
+
+struct ObservationTerms {
+    std::array<float, policy_observation::kBaseAngVelSize> base_ang_vel{};
+    std::array<float, policy_observation::kProjectedGravitySize> projected_gravity{};
+    std::array<float, policy_observation::kVelocityCommandsSize> velocity_commands{};
+    std::array<float, policy_observation::kJointPosRelSize> joint_pos_rel{};
+    std::array<float, policy_observation::kJointVelRelSize> joint_vel_rel{};
+    std::array<float, kDof> last_action{};
+};
+
 class ObservationBuilder {
 public:
-    static constexpr std::size_t kDof = kModelDof;
-    using MotorStateArray = std::array<double, kDof>;
-    using JointTermArray  = std::array<float,  kDof>;
+    // config 和已构造的 mapping 在运行期不可变，且必须比本对象存活更久。
+    ObservationBuilder(const RobotInterfaceConfig& config,
+                       const JointMapping& mapping);
 
-    // mapping 由 JointMapping::create() 成功构造，运行期不可变。
-    ObservationBuilder(std::shared_ptr<const JointMapping> mapping,         // 指向 JointMapping 的共享指针
-                       ObservationScaleConfig scales,                       // 观测缩放配置
-                       std::array<double, kModelDof> default_joint_pos_rad,  // 默认关节角度
-                       PolicyRuntimeConfig policy_config);                   // 策略运行时配置
+    // 保存上一动作，并将各分量裁剪到 [-1, 1]。
+    void set_last_action(const std::array<float, kDof>& raw_action) noexcept;
 
-                       
-    void commit_policy_action(const PolicyAction& raw_action) noexcept;
-    void advance_frame() noexcept;
+    bool build(const MotorStateSnapshot&    motor_state,
+            const    AhrsStateSnapshot&     ahrs_state,
+            const    std::array<double, 3>& target_velocity,
+            PolicyObservation&              observation,
+            std::string& error);
+
+    void          advance_frame() noexcept;
     std::uint64_t frame_index() const noexcept { return frame_index_; }
 
 
-    bool build(const MotorStateSnapshot& motor_state,
-               const AhrsStateSnapshot& ahrs_state,
-               const std::array<double, 3>& target_velocity,
-               PolicyObservation& observation,
-               std::string& error);
-
 private:
-    bool fill_joint_terms(const MotorStateArray& q_motor_rad,
-                          const MotorStateArray& dq_motor_rad_s,
+    using MotorStateArray = std::array<double, motor_base::kMotorNum>;
+    using JointTermArray  = std::array<float, kDof>;
+
+    std::array<float, policy_observation::kGaitPhaseSize>
+    build_gait_phase(
+        const std::array<float, policy_observation::kVelocityCommandsSize>& velocity_commands) const;
+
+    template <std::size_t TermSize>
+    void update_stacked_term(std::size_t& offset,
+                             const std::array<float, TermSize>& current_term);
+
+    bool build_joint_terms(const MotorStateArray& q_motor_rad,      // 位置
+                          const MotorStateArray& dq_motor_rad_s,    // 速度
                           JointTermArray& joint_pos_rel,
                           JointTermArray& joint_vel_rel,
                           std::string& error);
 
-                                 
-    bool fill_ankle_fk_joint_terms(const MotorStateArray& q_motor_rad,
-                                   const MotorStateArray& dq_motor_rad_s,
-                                   const AnkleMap& ankle_map,
-                                   ankle_motor_fk::Solver& state,
-                                   JointTermArray& joint_pos_rel,
-                                   JointTermArray& joint_vel_rel,
-                                   std::string& error) const;
+    bool build_ankle_joint_terms(const MotorStateArray& q_motor_rad,
+                                  const MotorStateArray&  dq_motor_rad_s,
+                                  const AnkleMap& ankle_map,
+                                  ankle_motor_fk::Solver& state,
+                                  JointTermArray& joint_pos_rel,
+                                  JointTermArray& joint_vel_rel,
+                                  std::string& error) const;
+    
+    // 保存关节映射
+    const RobotInterfaceConfig& config_;
+    const JointMapping&         mapping_;
 
-    std::shared_ptr<const JointMapping> mapping_;
-    ObservationScaleConfig scales_;
-    std::array<double, kModelDof> default_joint_pos_rad_;
-    PolicyRuntimeConfig policy_config_;
+    // 运动学正解求解器
     ankle_motor_fk::Solver left_ankle_fk_;
     ankle_motor_fk::Solver right_ankle_fk_;
-    PolicyAction last_action_{};  // 裁剪到 [-1, 1] 的无量纲历史动作。
-    PolicyObservation observation_history_{};
-    bool observation_history_ready_{false};
+
+    std::array<float, kDof> last_action_{};                // 需要裁剪到 [-1, 1] 的无量纲历史动作。
+    PolicyObservation stacked_observation_{};   // 拼接完成的帧
+    bool observation_history_ready_{false};     // 是否是首帧
     std::uint64_t frame_index_{0};
 };
 

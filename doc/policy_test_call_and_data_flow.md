@@ -116,7 +116,7 @@ initialize
  │   ├─ get_motor_snapshot
  │   ├─ ActionProcessor::build_reset_start_model_pose：直驱映射 + 脚踝 FK
  │   ├─ 100 步模型关节角插值到默认姿态
- │   ├─ ActionProcessor::make_motor_target：直驱映射 + 脚踝 IK/限位
+ │   ├─ ActionProcessor::build_motor_position_targets：直驱映射 + 脚踝 IK/限位
  │   └─ apply_targets_rad：逐步提交电机目标，默认步间 sleep 5 ms
  └─ PolicyCommandWorker::start
      ├─ 再提交一次最终复位姿态
@@ -282,10 +282,10 @@ try_consume_target → 按日志配置消费对应通道，保留最新的 Polic
  → 检查策略目标是否到期
  → RobotMotorSession::try_consume_latest_status_command → 独立电机反馈缓存
  → 检查最老反馈时间
- → ActionProcessor::build_policy_impedance_command
+ → ActionProcessor::build_policy_motor_command
     ├─ 检查 12 电机反馈有效性、control_ready 和脚踝实际位置限位
     ├─ 8 个直驱 DOF：模型目标 → 电机索引/方向 → ImpedanceSetpoint
-    └─ 左右脚踝分别 apply_ankle_torque_control
+    └─ 左右脚踝分别 build_ankle_torque_command
        ├─ FK：上下电机角 → 当前虚拟 pitch/roll
        ├─ Jacobian：上下电机速度 → 虚拟 pitch/roll 速度
        ├─ 虚拟关节 PD → 二阶低通
@@ -313,7 +313,7 @@ IK 用于初始化复位；正式 worker 中使用上述反馈 FK/Jacobian 力�
 | effort_ff | 0 | 计算出的电机力矩千分比，当前限制 ±2000 |
 | kp / kd | YAML 映射后的电机增益 | 0 / 0，虚拟关节 PD 已在上层计算 |
 
-`FixedPolicyMotorCommand` 为固定容量的 12 个 setpoint，顺序已变成物理电机顺序。
+`PolicyMotorCommand` 为固定容量的 12 个 setpoint，顺序已变成物理电机顺序。
 一个策略目标可被 worker 使用多次；期间反馈更新，脚踝力矩和滤波状态也持续更新。
 
 命令时序元数据为：
@@ -434,7 +434,7 @@ false。目标与完成记录通道都是 latest-value，未读取旧帧可被�
 | 观测 → ORT | PolicyObservation | float[705] 容量，当前使用 675；字段历史展平 | policy_main 内部 |
 | ORT → 后处理 | PolicyRuntimeStepResult | 模型顺序 float[12] 动作 + 推理起止 ns | policy_main 内部 |
 | 策略 → 命令计算 | PolicyTargetFrame | 模型顺序 double[12] 目标 + seq/期限/观测年龄；日志按需同槽附带 | policy_main → policy_cmd |
-| 命令计算 → 电机模块 | FixedPolicyMotorCommand → ControlCommand | 物理顺序 12 个阻抗 setpoint + CommandTiming | policy_cmd → ecat_rt |
+| 命令计算 → 电机模块 | PolicyMotorCommand → ControlCommand | 物理顺序 12 个阻抗 setpoint + CommandTiming | policy_cmd → ecat_rt |
 | 电机模块 → 总线 | TxPDO | 位置/速度/扭矩/增益的协议整数 | ecat_rt → EtherCAT 从站 |
 | 命令计算 → 记录汇合 | InferenceRecord | 输入观测与输出、物理目标、时间和年龄 | policy_cmd → policy_main |
 | 记录汇合 → 文件 | InferenceRecord deque → CSV | ns 主时间戳；duration/age 列为 us | policy_main → infer_log |

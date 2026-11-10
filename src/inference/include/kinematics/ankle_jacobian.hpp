@@ -8,7 +8,7 @@
 #include <limits>
 #include <string>
 
-namespace ankle_motor_jacobian {
+namespace ankle_jacobian {
 
 struct Result {
     std::array<double, 2> motor_angles{};
@@ -193,4 +193,4 @@ inline bool solve(double pitch,
     return solve(pitch, roll, motor1, motor2, result, error, singular_tolerance);
 }
 
-}  // namespace ankle_motor_jacobian
+}  // namespace ankle_jacobian

@@ -90,7 +90,7 @@ public:
 private:
     struct StatusFrame {
         std::size_t count{0};
-        std::array<Snapshot, kMaxMotorCommandSetpoints> values{};
+        std::array<Snapshot, kMotorNum> values{};
     };
 
     bool copy_latest_status(std::vector<Snapshot>& out);
@@ -143,7 +143,7 @@ void LatestStatusChannel<Snapshot>::configure(
     std::string thread_name,
     robot_base::ThreadRuntimeOptions thread_options)
 {
-    if (motor_count > kMaxMotorCommandSetpoints) {
+    if (motor_count > kMotorNum) {
         throw std::invalid_argument(
             "LatestStatusChannel motor_count exceeds fixed capacity");
     }

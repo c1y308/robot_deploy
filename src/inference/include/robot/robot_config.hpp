@@ -16,22 +16,41 @@
 namespace inference {
 
 // 策略控制的模型关节维度，按模型关节顺序。
-inline constexpr std::size_t kModelDof = 12;
+inline constexpr std::size_t kDof = 12;
+static_assert(kDof == motor_base::kMotorNum,
+              "the current robot mapping requires one motor per model DOF");
 
 /* 动作后处理：ActionProcessor / RobotInterface::policy_step 消费。
    全部按模型 DOF 顺序。 */
 struct ActionConfig {
-    std::array<double, kModelDof> default_joint_pos_rad{};
-    std::array<double, kModelDof> action_scale{};
+    std::array<double, kDof> action_scale{};
     /* raw_action * action_scale 之后的偏移量限位: [lower, upper] */
-    std::array<std::array<double, 2>, kModelDof> action_clip{};
+    std::array<std::array<double, 2>, kDof> action_clip{};
     /* nullopt 表示不对策略原始输出做额外裁剪。 */
     std::optional<double> raw_action_clip = 1.0;
 };
 
+struct AnkleControlConfig {
+    // 物理电机位置限位：[左上、左下、右上、右下]。
+    std::array<double, 4> motor_pos_min_rad = {-1.1, -1.1, -1.1, -1.1};
+    std::array<double, 4> motor_pos_max_rad = { 1.1,  1.1,  1.1,  1.1};
+
+    // 虚拟关节增益：[pitch, roll]，左右脚共用。
+    std::array<double, 2> virtual_kp = {187.0, 187.0};
+    std::array<double, 2> virtual_kd = {9.07, 9.07};
+
+    // 扭矩低通滤波；filter_dt_s 同时作为命令线程循环周期。
+    double filter_cutoff_rad_s   = 100.0;
+    double filter_dt_s           = 0.001;
+
+    // 电机额定扭矩与输出扭矩限幅。
+    double motor_rated_torque_nm = 10.5;
+    double target_torque_limit_permille = 2000.0;    // 目标扭矩限制，单位为千分比，最大值为 32767
+};
+
 /* 电机硬件与会话配置。mit_kp/mit_kd 为物理电机顺序，由配置加载器转换填充。 */
 struct MotorConfig {
-    int num_motors = static_cast<int>(motor_base::kMaxMotors);
+    int num_motors = static_cast<int>(motor_base::kMotorNum);
 
     int wait_all_motors_timeout_ms = 40000;
     int wait_all_motors_poll_ms    = 100;
@@ -45,8 +64,8 @@ struct MotorConfig {
     motor_base::MotorControlMode control_mode =
         motor_base::MotorControlMode::IMPEDANCE;
 
-    std::array<double, motor_base::kMaxMotors> mit_kp{};   // 物理电机顺序
-    std::array<double, motor_base::kMaxMotors> mit_kd{};   // 物理电机顺序
+    std::array<double, motor_base::kMotorNum> mit_kp{};   // 物理电机顺序
+    std::array<double, motor_base::kMotorNum> mit_kd{};   // 物理电机顺序
 };
 
 struct ImuConfig {
@@ -62,18 +81,18 @@ struct ImuConfig {
 
 /* 观测缩放：ObservationBuilder 消费。全部按模型 DOF 顺序。 */
 struct ObservationScaleConfig {
-    std::array<double, kModelDof> dof_pos_scale = {
+    std::array<double, kDof> dof_pos_scale = {
         1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
         1.0, 1.0, 1.0, 1.0, 1.0, 1.0
     };
-    std::array<double, kModelDof> dof_vel_scale = {
+    std::array<double, kDof> dof_vel_scale = {
         0.05, 0.05, 0.05, 0.05, 0.05, 0.05,
         0.05, 0.05, 0.05, 0.05, 0.05, 0.05
     };
     std::array<double, 3> command_scale      = {1.0, 1.0, 1.0};
     std::array<double, 3> body_ang_vel_scale = {0.2, 0.2, 0.2};
     std::array<double, 3> projected_gravity_scale = {1.0, 1.0, 1.0};
-    std::array<double, kModelDof> last_action_scale = {
+    std::array<double, kDof> last_action_scale = {
         1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
         1.0, 1.0, 1.0, 1.0, 1.0, 1.0
     };
@@ -93,7 +112,7 @@ struct PolicyRuntimeConfig {
     double step_dt = 0.02;
 
     /* 由 YAML 中 observations.gait_phase 是否存在决定；注释掉或缺失时使用 675 维。 */
-    struct GaitPhase {
+    struct GaitConfig {
         bool enabled           = false;
         double period          = 0.74;
         double stand_threshold = 0.05;
@@ -111,23 +130,6 @@ struct SensorGuardConfig {
 struct SafetyConfig {
     double policy_target_timeout_ms   = 60.0;  // 有效 target 发布后的最大 hold 时间；首帧前从首次推理起计
     double control_command_timeout_ms = 10.0;  // 控制命令的独立新鲜度预算，超过该值视为过期
-};
-
-/* 脚踝物理电机的行程限位。
-   顺序: left upper, left lower, right upper, right lower。 */
-struct AnkleMotorLimitConfig {
-    std::array<double, 4> min_rad = {-1.1, -1.1, -1.1, -1.1};
-    std::array<double, 4> max_rad = { 1.1,  1.1,  1.1,  1.1};
-};
-
-struct AnkleTorqueControlConfig {
-    std::array<double, 2> virtual_kp = {187.0, 187.0};    // [pitch, roll]
-    std::array<double, 2> virtual_kd = {9.07, 9.07};      // [pitch, roll]
-
-    double filter_cutoff_rad_s   = 100.0;
-    double filter_dt_s           = 0.001;
-    double motor_rated_torque_nm = 10.5;
-    double target_torque_limit_permille = 2000.0;    // 目标扭矩限制，单位为千分比，最大值为 32767
 };
 
 struct RuntimeThreadingConfig {
@@ -183,6 +185,9 @@ inline RuntimeThreadingConfig make_rk3588_runtime_profile()
 }
 
 struct RobotInterfaceConfig {
+    // 机器人默认姿态，按模型关节顺序；用于动作基准、观测参考和启动复位。
+    std::array<double, kDof> default_joint_pos_rad{};
+
     // 电机 运行配置
     MotorConfig motor;
 
@@ -198,14 +203,11 @@ struct RobotInterfaceConfig {
     // 关节映射配置（物理电机顺序 -> 模型 DOF 顺序）
     JointMappingConfig joint_mapping;
 
-    // 动作后处理配置（包含默认关节位置、动作缩放、动作限位）
+    // 动作后处理配置（包含动作缩放、动作限位）
     ActionConfig action;
 
-    // 脚踝电机限位配置（包含行程限位、扭矩控制参数）
-    AnkleMotorLimitConfig ankle_motor_limits;
-
-    // 脚踝扭矩控制配置（包含虚拟阻尼、滤波器参数、目标扭矩限制）
-    AnkleTorqueControlConfig ankle_torque;
+    // 脚踝控制：电机位置限位、虚拟关节增益、扭矩滤波与限幅。
+    AnkleControlConfig ankle;
 
     // 各观测项的缩放配置
     ObservationScaleConfig observation_scales;

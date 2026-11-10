@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <stdexcept>
 
 namespace inference {
 
@@ -23,35 +24,27 @@ bool ankle_map_index_in_range(const inference::AnkleMap& ankle_map,
 
 }  // namespace
 
-std::shared_ptr<const JointMapping> JointMapping::create(
-    int dof_count,
-    const inference::JointMappingConfig& config,
-    std::string& error)
+JointMapping::JointMapping(int dof_count, const JointMappingConfig& config)
 {
-    std::shared_ptr<JointMapping> mapping(new JointMapping());
-    mapping->config_ = config;
     if (dof_count <= 0) {
-        error = "dof_count must be positive";
-        return {};
+        throw std::invalid_argument("dof_count must be positive");
     }
 
-    if (static_cast<int>(mapping->config_.motor_direction.size()) != dof_count) {
-        error = "motor_direction must have one value per motor";
-        return {};
+    if (static_cast<int>(config.motor_direction.size()) != dof_count) {
+        throw std::invalid_argument("motor_direction must have one value per motor");
     }
 
     // 检查 左右脚踝 的索引是否在范围内
-    if (!ankle_map_index_in_range(mapping->config_.left_ankle,
+    if (!ankle_map_index_in_range(config.left_ankle,
                                   dof_count) ||
-        !ankle_map_index_in_range(mapping->config_.right_ankle,
+        !ankle_map_index_in_range(config.right_ankle,
                                   dof_count)) {
-        error = "ankle parallel maps contain an out-of-range index";
-        return {};
+        throw std::invalid_argument("ankle parallel maps contain an out-of-range index");
     }
 
     std::vector<unsigned char> is_ankle_dof(dof_count, 0U);
-    const auto& left  = mapping->config_.left_ankle;
-    const auto& right = mapping->config_.right_ankle;
+    const auto& left  = config.left_ankle;
+    const auto& right = config.right_ankle;
     is_ankle_dof[left.model_pitch_dof]  = 1U;
     is_ankle_dof[left.model_roll_dof]   = 1U;
     is_ankle_dof[right.model_pitch_dof] = 1U;
@@ -61,13 +54,12 @@ std::shared_ptr<const JointMapping> JointMapping::create(
         std::count(is_ankle_dof.begin(),
                    is_ankle_dof.end(),
                    0U));
-    if (static_cast<int>(mapping->config_.model_to_motor_index.size()) !=
+    if (static_cast<int>(config.model_to_motor_index.size()) !=
         direct_model_dof_count) {
-        error = "model_to_motor_index must have one value per direct model DOF";
-        return {};
+        throw std::invalid_argument("model_to_motor_index must have one value per direct model DOF");
     }
 
-    mapping->motor_id_map.assign(static_cast<std::size_t>(dof_count), -1);
+    motor_id_map_.assign(static_cast<std::size_t>(dof_count), -1);
     int mapping_slot = 0;
     for (int model_index = 0; model_index < dof_count; ++model_index) {
         if (is_ankle_dof[static_cast<std::size_t>(model_index)] != 0U) {
@@ -75,35 +67,35 @@ std::shared_ptr<const JointMapping> JointMapping::create(
         }
 
         const int motor_index =
-            mapping->config_.model_to_motor_index[static_cast<std::size_t>(mapping_slot)];
+            config.model_to_motor_index[static_cast<std::size_t>(mapping_slot)];
         ++mapping_slot;
 
         if (!index_in_range(motor_index, dof_count)) {
-            error = "model_to_motor_index contains an out-of-range motor index";
-            return {};
+            throw std::invalid_argument("model_to_motor_index contains an out-of-range motor index");
         }
-        mapping->motor_id_map[static_cast<std::size_t>(model_index)] =
+        motor_id_map_[static_cast<std::size_t>(model_index)] =
             motor_index;
     }
 
-    mapping->dof_count_ = dof_count;
-    error.clear();
-    return mapping;
+    motor_direction_ = config.motor_direction;
+    left_ankle_ = config.left_ankle;
+    right_ankle_ = config.right_ankle;
+    dof_count_ = dof_count;
 }
 
 bool JointMapping::is_model_dof(int model_index) const
 {
-    return motor_id_map[static_cast<std::size_t>(model_index)] < 0;
+    return motor_id_map_[static_cast<std::size_t>(model_index)] < 0;
 }
 
 int JointMapping::get_motor_id(int model_index) const
 {
-    return motor_id_map[static_cast<std::size_t>(model_index)];
+    return motor_id_map_[static_cast<std::size_t>(model_index)];
 }
 
 int JointMapping::get_motor_direction(int motor_index) const
 {
-    return config_.motor_direction[static_cast<std::size_t>(motor_index)];
+    return motor_direction_[static_cast<std::size_t>(motor_index)];
 }
 
 }  // namespace inference

@@ -26,8 +26,6 @@ namespace {
 using robot_base::finite_array;
 using robot_base::index_in_range;
 
-constexpr std::size_t kDof = kModelDof;
-constexpr std::size_t kMotorCount = motor_base::kMaxMotors;
 constexpr std::size_t kDirectDriveDofCount = kDof - 4;
 constexpr double kValueTolerance = 1e-12;
 
@@ -234,13 +232,13 @@ private:
                         error);
         }
 
-        std::vector<unsigned char> seen(kMotorCount, 0U);
+        std::vector<unsigned char> seen(motor_base::kMotorNum, 0U);
         for (std::size_t i = 0; i < joint_ids_map.size(); ++i) {
             const int motor_index = joint_ids_map[i];
-            if (!index_in_range(motor_index, static_cast<int>(kMotorCount))) {
+            if (!index_in_range(motor_index, static_cast<int>(motor_base::kMotorNum))) {
                 return fail("joint_ids_map element " + std::to_string(i) +
                             " is out of motor range [0, " +
-                            std::to_string(kMotorCount) + "): " +
+                            std::to_string(motor_base::kMotorNum) + "): " +
                             std::to_string(motor_index), error);
             }
             auto& slot = seen[static_cast<std::size_t>(motor_index)];
@@ -306,18 +304,18 @@ private:
             }
         }
 
-        config_.ankle_torque.virtual_kp = {ankle_kp, ankle_kp};
-        config_.ankle_torque.virtual_kd = {ankle_kd, ankle_kd};
+        config_.ankle.virtual_kp = {ankle_kp, ankle_kp};
+        config_.ankle.virtual_kd = {ankle_kd, ankle_kd};
         return true;
     }
 
     bool load_default_joint_pos(const YAML::Node& root, std::string& error)
     {
         if (!read_double_array(root, "default_joint_pos",
-                               "root", config_.action.default_joint_pos_rad, error)) {
+                               "root", config_.default_joint_pos_rad, error)) {
             return false;
         }
-        if (!finite_array(config_.action.default_joint_pos_rad)) {
+        if (!finite_array(config_.default_joint_pos_rad)) {
             return fail("default_joint_pos values must be finite", error);
         }
         return true;

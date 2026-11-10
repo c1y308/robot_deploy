@@ -139,6 +139,14 @@ target_link_libraries(policy_test PRIVATE
     xbox_control_core
 )
 
+add_executable(joint_mapping_test tests/joint_mapping_test.cpp)
+target_link_libraries(joint_mapping_test PRIVATE deploy_config)
+add_test(NAME joint_mapping_test COMMAND joint_mapping_test)
+
+add_executable(inference_recorder_test tests/inference_recorder_test.cpp)
+target_link_libraries(inference_recorder_test PRIVATE inference_recorder)
+add_test(NAME inference_recorder_test COMMAND inference_recorder_test)
+
 add_test(NAME robot_rt_setup_fixture_test COMMAND bash
     ${CMAKE_CURRENT_SOURCE_DIR}/../../deploy/rk3588/test_robot_rt_setup.sh
 )

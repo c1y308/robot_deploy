@@ -47,7 +47,7 @@ MotorControllerBase::MotorControllerBase(
       status_channel_(),
       rt_event_dispatcher_(rt_options_.rt_event_queue_capacity)
 {
-    if (motor_count_ > kMaxMotors) {
+    if (motor_count_ > kMotorNum) {
         throw std::invalid_argument("motor_count exceeds fixed realtime capacity");
     }
     if (rt_options_.max_commands_per_cycle == 0) {
@@ -325,7 +325,7 @@ CommandSubmitResult MotorControllerBase::send_discrete_command(
 // 提交 stop 命令给对应的 STOP 的命令槽
 CommandSubmitResult MotorControllerBase::submit_stop(int motor_index)
 {
-    auto& request = stop_requests_[motor_index < 0 ? kMaxMotors : motor_index];
+    auto& request = stop_requests_[motor_index < 0 ? kMotorNum : motor_index];
     
     // 查询这个轴之前是否已经有 stop 请求
     CommandId previous = request.requested.load(std::memory_order_acquire);
@@ -435,7 +435,7 @@ bool MotorControllerBase::stop_pending(std::size_t motor_index) const
 {
     // An all-axis request gates every target until the entire request is
     // confirmed; an early ACK from one axis must not permit partial RESTART.
-    for (const auto target : {motor_index, kMaxMotors}) {
+    for (const auto target : {motor_index, kMotorNum}) {
         const auto& request = stop_requests_[target];
         const auto id = request.requested.load(std::memory_order_acquire);
         if (request.confirmed.load(std::memory_order_acquire) < id) return true;
@@ -514,7 +514,7 @@ void MotorControllerBase::service_stop_requests(bool verify)
         // 遍历电机
         for (std::size_t i = 0; i < motor_count_; ++i) {
 
-            if ((target == kMaxMotors || target == i) &&
+            if ((target == kMotorNum || target == i) &&
                 (stop_axes_[i].confirmed < id))  // STOP 命令还没有被确认
             {
                 confirmed = false;
@@ -531,18 +531,18 @@ void MotorControllerBase::service_stop_requests(bool verify)
 CommandId MotorControllerBase::latest_stop_id(std::size_t motor_index) const
 {
     return std::max(stop_requests_[motor_index].requested.load(std::memory_order_acquire),
-                    stop_requests_[kMaxMotors].requested.load(std::memory_order_acquire));
+                    stop_requests_[kMotorNum].requested.load(std::memory_order_acquire));
 }
 
 
 bool MotorControllerBase::try_consume_latest_status_command(
-    std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback)
+    std::array<MotorStatusSnapshot, kMotorNum>& feedback)
 {
     return command_feedback_channel_.try_consume_latest(feedback);
 }
 
 bool MotorControllerBase::try_consume_latest_status_policy(
-    std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback)
+    std::array<MotorStatusSnapshot, kMotorNum>& feedback)
 {
     return policy_feedback_channel_.try_consume_latest(feedback);
 }
@@ -561,7 +561,7 @@ void MotorControllerBase::set_event_callback(RtEventCallback cb)
 
 
 void MotorControllerBase::publish_feedback(
-    const std::array<MotorStatusSnapshot, kMaxMotorCommandSetpoints>& feedback)
+    const std::array<MotorStatusSnapshot, kMotorNum>& feedback)
 {
     // 同一份打包结果发布给公共状态缓存和两个独立 SPSC 消费者。
     std::copy_n(feedback.data(), motor_count_, status_channel_.acquire_write_slot());

@@ -95,7 +95,7 @@ public:
         if (!status_printer_ || print_motor_ids_.empty()) {
             return;
         }
-        std::array<Snapshot, kMaxMotors> latest;
+        std::array<Snapshot, kMotorNum> latest;
         if (latest_frame_.try_consume_latest(latest)) {
             std::copy_n(latest.begin(), latest_status_.size(), latest_status_.begin());
         }
@@ -127,7 +127,7 @@ private:
         }
     }
 
-    robot_base::SpscLatestChannel<std::array<Snapshot, kMaxMotors>> latest_frame_;
+    robot_base::SpscLatestChannel<std::array<Snapshot, kMotorNum>> latest_frame_;
     std::vector<Snapshot> latest_status_; // monitor 线程独占，无锁缓存用于重复打印 latest 值。
 
     StatusPrinter status_printer_;

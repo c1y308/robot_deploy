@@ -2,6 +2,7 @@
 #include "robot/action_processor.hpp"
 #include "robot/observation_builder.hpp"
 #include "robot/policy_command_worker.hpp"
+#include "robot/robot_imu_session.hpp"
 #include "robot/robot_motor_session.hpp"
 #include "tool/tool.hpp"
 
@@ -14,17 +15,18 @@
 #include <cstring>
 #include <iomanip>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 
 namespace {
 
 using Clock = std::chrono::steady_clock;
-using MotorPositions = std::array<double, motor_base::kMaxMotors>;
+using MotorPositions = std::array<double, motor_base::kMotorNum>;
 using ModelPositions = inference::ActionProcessor::ModelJointPositions;
 using PolicyCommandWorker = inference::PolicyCommandWorker;
 
-constexpr std::array<const char*, inference::kModelDof> kJointNames = {
+constexpr std::array<const char*, inference::kDof> kJointNames = {
     "left_hip_roll", "right_hip_roll", "left_hip_pitch", "right_hip_pitch",
     "left_hip_yaw", "right_hip_yaw", "left_knee_pitch", "right_knee_pitch",
     "left_ankle_pitch", "right_ankle_pitch", "left_ankle_roll", "right_ankle_roll"
@@ -176,7 +178,7 @@ bool report_model_position(inference::RobotMotorSession& motors,
     const std::size_t position_offset = kFrameStack *
         (kBaseAngVelSize + kProjectedGravitySize + kVelocityCommandsSize +
          (config.policy.gait.enabled ? kGaitPhaseSize : 0));
-    const double measured = observation[position_offset + (kFrameStack - 1) * inference::kModelDof + dof];
+    const double measured = observation[position_offset + (kFrameStack - 1) * inference::kDof + dof];
     std::cout << "[MOTOR_SEQUENCE] Model DOF " << dof << " " << kJointNames[dof]
               << ": target=" << target << " rad, measured=" << measured
               << " rad, error=" << target - measured << " rad";
@@ -316,20 +318,20 @@ int main(int argc, char** argv)
     }
     config.motor.print_motors_info = false;
     config.recorder.enabled = false;
-    std::string mapping_error;
-    auto mapping = inference::JointMapping::create(
-        static_cast<int>(inference::kModelDof), config.joint_mapping, mapping_error);
-    if (!mapping) {
-        std::cerr << "[MOTOR_SEQUENCE] Invalid joint mapping: " << mapping_error << '\n';
+    std::unique_ptr<const inference::JointMapping> mapping;
+    try {
+        mapping = std::make_unique<const inference::JointMapping>(
+            static_cast<int>(inference::kDof), config.joint_mapping);
+    } catch (const std::invalid_argument& error) {
+        std::cerr << "[MOTOR_SEQUENCE] Invalid joint mapping: " << error.what() << '\n';
         return 1;
     }
-    inference::ActionProcessor action_processor(
-        mapping, config.action.default_joint_pos_rad, config.ankle_motor_limits,
-        config.motor.mit_kp, config.motor.mit_kd, config.ankle_torque);
-    auto feedback_scales = config.observation_scales;
-    feedback_scales.dof_pos_scale.fill(1.0);
-    inference::ObservationBuilder feedback_builder(
-        mapping, feedback_scales, ModelPositions{}, config.policy);
+    inference::ActionProcessor action_processor(config, *mapping);
+    // 独立配置只用于反馈测量：零参考姿态、单位位置缩放得到绝对关节角。
+    auto feedback_config = config;
+    feedback_config.default_joint_pos_rad.fill(0.0);
+    feedback_config.observation_scales.dof_pos_scale.fill(1.0);
+    inference::ObservationBuilder feedback_builder(feedback_config, *mapping);
     inference::RobotMotorSession motors(config.motor, config.safety);
     const bool completed = run_sequence(
         motors, action_processor, feedback_builder, *mapping, config);

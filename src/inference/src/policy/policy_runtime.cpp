@@ -62,7 +62,7 @@ struct PolicyRuntime::Impl {
     const char* output_names[1]{nullptr};
     std::size_t input_size{0};
     PolicyObservation input_buffer{};
-    PolicyAction output_buffer{};
+    std::array<float, kDof> output_buffer{};
     Ort::Value input_tensor{nullptr};
     Ort::Value output_tensor{nullptr};
 };

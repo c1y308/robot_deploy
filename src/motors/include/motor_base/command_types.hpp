@@ -9,10 +9,8 @@
 
 namespace motor_base {
 
-/* 机器人最大电机数（单一事实来源），命令/快照数组容量随之派生 */
-constexpr std::size_t kMaxMotors = 12;
-constexpr std::size_t kMaxMotorCommandSetpoints = kMaxMotors;
-
+/* 电机命令和快照的固定最大容量；实际电机数可更少。 */
+constexpr std::size_t kMotorNum = 12;
 
 /* 单轴阻抗式目标值，位置/速度使用公共物理单位。effort_ff 由具体控制器解释。 */
 struct ImpedanceSetpoint {
@@ -110,8 +108,8 @@ struct ControlCommand {
 
     int motor_index;                     // 电机索引，kAllMotors 表示全部电机
 
-    std::array<double, kMaxMotorCommandSetpoints> setpoints;
-    std::array<ImpedanceSetpoint, kMaxMotorCommandSetpoints> impedance_setpoints;
+    std::array<double, kMotorNum> setpoints;
+    std::array<ImpedanceSetpoint, kMotorNum> impedance_setpoints;
     std::size_t payload_size;
 
     MotorControlMode mode; // 目标电机模式，仅 SET_MODE 使用
@@ -179,7 +177,7 @@ struct ControlCommand {
         cmd.setpoint_type = SetpointCommandType::POSITION_TARGETS;
         cmd.motor_index   = kAllMotors;
 
-        if (count > kMaxMotorCommandSetpoints || (!values && count != 0)) {
+        if (count > kMotorNum || (!values && count != 0)) {
             cmd.payload_valid = false;
             return cmd;
         }
@@ -205,7 +203,7 @@ struct ControlCommand {
         cmd.setpoint_type = SetpointCommandType::VELOCITY_TARGETS;
         cmd.motor_index   = kAllMotors;
 
-        if (count > kMaxMotorCommandSetpoints || (!values && count != 0)) {
+        if (count > kMotorNum || (!values && count != 0)) {
             cmd.payload_valid = false;
             return cmd;
         }
@@ -233,7 +231,7 @@ struct ControlCommand {
         cmd.setpoint_type = SetpointCommandType::IMPEDANCE_TARGETS;
         cmd.motor_index   = kAllMotors;
 
-        if (count > kMaxMotorCommandSetpoints || (!values && count != 0)) {
+        if (count > kMotorNum || (!values && count != 0)) {
             cmd.payload_valid = false;
             return cmd;
         }

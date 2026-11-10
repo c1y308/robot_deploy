@@ -67,14 +67,15 @@ private:
     // B1 初始测试门限：只用于发布准入，不随策略周期动态调整。
     static constexpr std::int64_t kMaxObsToActionAgeNs = 40'000'000;
 
-    /* 机器人接口配置 */
-    RobotInterfaceConfig config_;
+    /* 机器人接口配置；子模块只读引用，必须先于子模块构造、晚于子模块析构。 */
+    const RobotInterfaceConfig config_;
 
     /* 值成员 */
     RobotMotorSession    motor_session_;
     RobotImuSession      imu_session_;
 
     /* 运行期对象 */
+    std::unique_ptr<const JointMapping> joint_mapping_;
     std::unique_ptr<ActionProcessor>    action_processor_;
     std::unique_ptr<ObservationBuilder> observation_builder_;
 
@@ -95,8 +96,13 @@ private:
 
     bool initialize_processors();
 
+    // 从电机反馈获取复位起始姿态，脚踝 FK 使用配置中的默认姿态作为初始猜测。
+    bool get_start_model_pose(const std::array<double, motor_base::kMotorNum>& current_motor_q,
+                              std::array<double, kDof>& start_model_q,
+                              std::string& error) const;
+
     // 平滑复位到 default_joint_pos_rad，输出最后成功提交的电机目标。
-    bool reset_joints(std::array<double, motor_base::kMaxMotors>& final_target_motor_rad);
+    bool reset_joints(std::array<double, motor_base::kMotorNum>& final_target_motor_rad);
 
     bool validate_policy_sensor_timing(std::int64_t motor_timestamp_ns,
                                        std::int64_t imu_timestamp_ns,

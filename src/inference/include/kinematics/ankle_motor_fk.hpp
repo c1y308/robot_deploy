@@ -9,7 +9,7 @@
 namespace ankle_motor_fk {
 
 struct FootAngles {
-    double roll = std::numeric_limits<double>::quiet_NaN();
+    double roll  = std::numeric_limits<double>::quiet_NaN();
     double pitch = std::numeric_limits<double>::quiet_NaN();
     bool reachable = false;
 };

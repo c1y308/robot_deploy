@@ -31,7 +31,7 @@ inline constexpr std::array<uint16_t, MYACTUA_NO_FORWARDERS_MOTORS_NUM> kSlavePo
 };
 
 #else
-inline constexpr std::array<uint16_t, motor_base::kMaxMotors> kSlavePositions = {
+inline constexpr std::array<uint16_t, motor_base::kMotorNum> kSlavePositions = {
     1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13
 };
 #endif
