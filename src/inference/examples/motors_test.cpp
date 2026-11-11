@@ -48,7 +48,8 @@ int main(int argc, char** argv) {
     }
     inference::MotorConfig cfg = robot_cfg.motor;
 
-    inference::RobotMotorSession motors(cfg, robot_cfg.safety);
+    inference::RobotMotorSession motors(
+        cfg, robot_cfg.safety, robot_cfg.runtime, robot_cfg.sensor_guard);
 
     std::cout << "[MOTORS_TEST] 1/4 initialize()" << std::endl;
     if (!motors.initialize()) {

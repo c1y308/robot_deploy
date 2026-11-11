@@ -115,12 +115,12 @@ public:
 
     /// @brief 读取 command worker 专属的 RT feedback latest-value 快照；
     ///        无新快照时返回 false。仅限 policy_command_worker 线程消费（SPSC 单消费者）。
-    bool try_consume_latest_status_command(
+    bool try_consume_latest_feedback_for_command(
         std::array<MotorStatusSnapshot, kMotorNum>& feedback);
 
     /// @brief 读取 policy/inference 线程专属的 RT feedback latest-value 快照；
     ///        无新快照时返回 false。仅限 policy/inference 线程消费（SPSC 单消费者）。
-    bool try_consume_latest_status_policy(
+    bool try_consume_latest_feedback_for_policy(
         std::array<MotorStatusSnapshot, kMotorNum>& feedback);
 
     /// @brief 获取全部电机位置，单位 rad（按电机顺序）

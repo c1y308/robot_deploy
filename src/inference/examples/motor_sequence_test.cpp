@@ -119,7 +119,7 @@ bool stream_model_motion(inference::RobotMotorSession& motors,
         config.sensor_guard.max_motor_sample_age_s);
     while (!g_stop_signal) {
         std::string error;
-        if (!worker.healthy(error)) {
+        if (!worker.check_health(error)) {
             std::cerr << "[MOTOR_SEQUENCE] Policy command worker failed: " << error << '\n';
             return false;
         }
@@ -131,8 +131,7 @@ bool stream_model_motion(inference::RobotMotorSession& motors,
             std::chrono::duration<double>(Clock::now() - start).count() /
             std::chrono::duration<double>(duration).count(), 0.0, 1.0);
         const double blend = alpha * alpha * (3.0 - 2.0 * alpha);
-        auto& frame = worker.acquire_target_write_slot();
-        frame = {};
+        inference::PolicyTargetFrame frame;
         frame.policy_seq = ++sequence;
         for (std::size_t dof = 0; dof < to.size(); ++dof) {
             frame.target_model_rad[dof] =
@@ -141,7 +140,7 @@ bool stream_model_motion(inference::RobotMotorSession& motors,
         // Inject angles at the same boundary as policy_step's processed model
         // targets. The production worker applies mapping/ankle control and
         // preserves its normal feedback-age and command/target deadlines.
-        worker.publish_target();
+        worker.publish_target(frame);
         if (alpha >= 1.0) {
             return true;
         }
@@ -269,8 +268,8 @@ bool run_sequence(inference::RobotMotorSession& motors,
     }
 
     std::atomic<std::int64_t> first_policy_started_ns{0};
-    PolicyCommandWorker worker(config, motors, first_policy_started_ns);
-    if (!worker.start(action_processor, zero)) {
+    PolicyCommandWorker worker(config, motors, action_processor, first_policy_started_ns);
+    if (!worker.start(zero)) {
         return false;
     }
     first_policy_started_ns.store(robot_base::monotonic_now_ns(), std::memory_order_release);
@@ -332,7 +331,8 @@ int main(int argc, char** argv)
     feedback_config.default_joint_pos_rad.fill(0.0);
     feedback_config.observation_scales.dof_pos_scale.fill(1.0);
     inference::ObservationBuilder feedback_builder(feedback_config, *mapping);
-    inference::RobotMotorSession motors(config.motor, config.safety);
+    inference::RobotMotorSession motors(
+        config.motor, config.safety, config.runtime, config.sensor_guard);
     const bool completed = run_sequence(
         motors, action_processor, feedback_builder, *mapping, config);
 

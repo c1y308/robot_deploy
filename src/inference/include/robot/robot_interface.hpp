@@ -28,7 +28,7 @@ public:
     /* initialize 完成模型准备、锁页、日志/硬件启动及姿态复位，只调用一次 */
     bool initialize();
     bool is_initialized() const {
-        return initialized_ && policy_command_worker_.is_running();
+        return initialized_ && policy_command_worker_ && policy_command_worker_->is_running();
     }
 
     /* 启停、速度缓存及 policy_step 由同一所有者线程串行访问 */
@@ -91,8 +91,8 @@ private:
     std::int64_t last_policy_target_published_ns_{0};  // 仅 policy 线程访问
     std::atomic<std::int64_t> first_policy_inference_started_ns_{0};
 
-    // policy_command_worker_ 引用以上多个成员，声明顺序必须在其之后。
-    PolicyCommandWorker policy_command_worker_;
+    // 复位成功后构造；worker 引用以上多个成员，必须先于它们析构。
+    std::unique_ptr<PolicyCommandWorker> policy_command_worker_;
 
     bool initialize_processors();
 
@@ -113,7 +113,7 @@ private:
                                               std::int64_t decision_now_ns) const noexcept;
 
     void record_policy_frame(const InferenceRecord& record);
-    void record_completed_policy_frame();
+    void record_completed_policy_frame(PolicyCommandWorker& worker);
     
     bool handle_policy_step_failure(const std::string& message);
 

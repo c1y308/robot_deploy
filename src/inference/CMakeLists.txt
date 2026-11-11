@@ -147,6 +147,10 @@ add_executable(inference_recorder_test tests/inference_recorder_test.cpp)
 target_link_libraries(inference_recorder_test PRIVATE inference_recorder)
 add_test(NAME inference_recorder_test COMMAND inference_recorder_test)
 
+add_executable(policy_command_worker_test tests/policy_command_worker_test.cpp)
+target_link_libraries(policy_command_worker_test PRIVATE robot_interface)
+add_test(NAME policy_command_worker_test COMMAND policy_command_worker_test)
+
 add_test(NAME robot_rt_setup_fixture_test COMMAND bash
     ${CMAKE_CURRENT_SOURCE_DIR}/../../deploy/rk3588/test_robot_rt_setup.sh
 )

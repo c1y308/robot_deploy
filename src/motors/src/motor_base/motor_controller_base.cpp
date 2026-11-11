@@ -535,13 +535,13 @@ CommandId MotorControllerBase::latest_stop_id(std::size_t motor_index) const
 }
 
 
-bool MotorControllerBase::try_consume_latest_status_command(
+bool MotorControllerBase::try_consume_latest_feedback_for_command(
     std::array<MotorStatusSnapshot, kMotorNum>& feedback)
 {
     return command_feedback_channel_.try_consume_latest(feedback);
 }
 
-bool MotorControllerBase::try_consume_latest_status_policy(
+bool MotorControllerBase::try_consume_latest_feedback_for_policy(
     std::array<MotorStatusSnapshot, kMotorNum>& feedback)
 {
     return policy_feedback_channel_.try_consume_latest(feedback);

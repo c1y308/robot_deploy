@@ -118,10 +118,19 @@ initialize
  │   ├─ 100 步模型关节角插值到默认姿态
  │   ├─ ActionProcessor::build_motor_position_targets：直驱映射 + 脚踝 IK/限位
  │   └─ apply_targets_rad：逐步提交电机目标，默认步间 sleep 5 ms
- └─ PolicyCommandWorker::start
-     ├─ 再提交一次最终复位姿态
-     └─ start_configured_thread("policy_cmd", ...) → loop
+ ├─ make_unique<PolicyCommandWorker>：构造时绑定配置、电机会话、动作处理器和共享推理时间的引用
+ ├─ PolicyCommandWorker::start(startup_hold_target_motor_rad)
+ │   ├─ 再提交一次最终复位姿态
+ │   └─ start_configured_thread("policy_cmd", ...) → loop
+ └─ initialized_ = true
 ```
+
+`RobotInterface` 通过 `unique_ptr` 持有 Worker；复位完成前 Worker 尚不存在。
+`policy_step()` 在入口检查 Worker 是否存在，缺失时明确报告错误；通过检查后使用
+Worker 引用执行健康检查、目标发布和日志收取，内部日志收取函数也显式接收该引用。
+构造异常或启动失败走 `shutdown()` 清理；关闭时先请求电机停止，再等待 Worker 退出，
+然后关闭电机会话。若需要重试关闭则保留已停止的 Worker；完整关闭后先收取剩余记录，
+再销毁 Worker。初始化尚未创建 Worker 时，关闭和析构正常跳过 Worker 操作。
 
 预热和模型初始化早于电机启动。预热不会推进观测历史、策略帧号或首帧截止期。
 进入正式推理前，worker 每 1 ms 刷新最终复位姿态；第一次正式推理启动后，首帧
@@ -204,7 +213,7 @@ main 的 20 ms 循环
      ├─ 再次 worker.healthy
      ├─ policy_step 内部逐关节裁剪/缩放/偏移 → target_model_rad
      ├─ admit_policy_result：最老观测到此时年龄大于 40 ms 则丢弃
-     ├─ 准入：填 target 写槽 → publish_target → commit_policy_action
+     ├─ 准入：构建 target 与可选日志 → publish_target → commit_policy_action
      ├─ advance_frame：包括丢弃结果的帧
      ├─ record_completed_policy_frame：消费命令线程回传记录并入 recorder 队列
      └─ 丢弃：直接记录该次推理，但不发布目标、不提交 raw action
@@ -269,19 +278,21 @@ q_target_i = default_joint_pos_i + offset_i
 模型目标。raw action 的历史裁剪与这里的目标生成是两条用途不同的数据处理路径。
 
 `PolicyTargetFrame` 独立保存模型目标、policy_seq、发布时间、截止期和观测年龄。
-禁用日志时，`publish_target` 只向 `target_channel_` 发布该控制结构；启用日志时，
-通过 `logged_target_channel_` 同槽发布控制目标和独立的 `InferenceRecord`，保证配对。
-本次发布时设置 `policy_valid_until_ns = published_at_ns + 60 ms`。
+`publish_target` 统一通过 `target_channel_` 发布 `PolicyTargetWithRecordFrame`，
+其中包含控制目标和独立的 `InferenceRecord`；仅启用日志时填写和处理记录，保证配对。
+调用者传入目标和日志指针（启用日志时必须非空），worker 内部拷入写槽后采样发布时间，
+设置 `policy_valid_until_ns = published_at_ns + 60 ms`，再发布；不向调用者暴露写槽引用。
 
 **7. 策略目标到电机模块：模型顺序转为物理顺序**
 
-见 [PolicyCommandWorker::loop](../src/inference/src/robot/policy_command_worker.cpp:164)。
+见 [PolicyCommandWorker::run](../src/inference/src/robot/policy_command_worker.cpp)。
 
 ```text
-try_consume_target → 按日志配置消费对应通道，保留最新的 PolicyTargetFrame
+try_consume_target → 消费统一的 target_channel_，保留最新目标及关联记录
  → 检查策略目标是否到期
- → RobotMotorSession::try_consume_latest_status_command → 独立电机反馈缓存
- → 检查最老反馈时间
+ → RobotMotorSession::refresh_command_feedback → 更新 session 内命令线程独占的反馈缓存，无新帧时沿用缓存
+ → RobotMotorSession::validate_motor_feedback_timing → 校验最老反馈时间并返回反馈截止期
+ → RobotMotorSession::command_feedback → 取得本轮计算使用的只读反馈
  → ActionProcessor::build_policy_motor_command
     ├─ 检查 12 电机反馈有效性、control_ready 和脚踝实际位置限位
     ├─ 8 个直驱 DOF：模型目标 → 电机索引/方向 → ImpedanceSetpoint
@@ -291,8 +302,8 @@ try_consume_target → 按日志配置消费对应通道，保留最新的 Polic
        ├─ 虚拟关节 PD → 二阶低通
        ├─ tau_motor = J^T × tau_virtual
        └─ 电机方向 × 1000/额定力矩 → effort_ff 千分比，限幅
- → 再次检查目标/反馈时效
- → policy_command_timing
+ → 再次检查目标时效，并由 session 校验同一份反馈的时效（期间不刷新反馈）
+ → build_command_timing → 合成目标截止期、独立命令截止期和 session 返回的反馈截止期
  → RobotMotorSession::apply_impedance_setpoints_realtime
  → ControlCommand::set_impedance_targets_fixed
  → MotorControllerBase::send_policy_setpoint
@@ -315,6 +326,9 @@ IK 用于初始化复位；正式 worker 中使用上述反馈 FK/Jacobian 力�
 
 `PolicyMotorCommand` 为固定容量的 12 个 setpoint，顺序已变成物理电机顺序。
 一个策略目标可被 worker 使用多次；期间反馈更新，脚踝力矩和滤波状态也持续更新。
+命令反馈的年龄门限由 session 持有，来自 `SensorGuardConfig`；新控制器初始化和释放时重置
+命令缓存，重置须在命令线程停止时进行。策略线程仍使用独立的 `latest_feedback_` 缓存，
+两份普通数组分别由所属线程访问，底层两个 SPSC 通道保持不变。
 
 命令时序元数据为：
 
@@ -370,13 +384,13 @@ RESTART 走离散命令机制；STOP 使用专门请求机制绕过普通队列�
 ```text
 policy_main：准入判断后
   → fill_log_record：该次策略的传感器快照、观测、raw action、模型关节目标、时间/年龄
-  → 与 PolicyTargetFrame 同槽发布到 logged_target_channel_
+  → 与 PolicyTargetFrame 同槽发布到 target_channel_
 
 policy_cmd：某 policy_seq 首次成功提交连续命令后
   → 复制该记录，追加 command_timestamp_ns / command_valid_until_ns
   → command_applied=true
   → 填物理电机 target_pos_rad / target_effort_permille
-  → completed_record_channel_.publish_written
+  → record_channel_.publish_written
 
 policy_main：同轮末尾或后续轮次/停机收尾
   → record_completed_policy_frame → try_consume_completed_record

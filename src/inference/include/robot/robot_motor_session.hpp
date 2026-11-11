@@ -50,7 +50,8 @@ class RobotMotorSession {
 public:
     RobotMotorSession(MotorConfig config,
                       SafetyConfig safety,
-                      RuntimeThreadingConfig runtime = {});
+                      RuntimeThreadingConfig runtime = {},
+                      SensorGuardConfig sensor_guard = {});
     ~RobotMotorSession();
 
     RobotMotorSession(const RobotMotorSession&) = delete;
@@ -81,9 +82,16 @@ public:
         std::size_t count,
         const motor_base::CommandTiming& timing);
 
-    bool try_consume_latest_status_command(
-        std::array<motor_base::MotorStatusSnapshot,
-                   motor_base::kMotorNum>& feedback);
+    // 以下反馈接口仅由 policy_cmd 线程调用；无新帧时保留缓存。
+    bool refresh_command_feedback(std::string& error);
+    // 只读引用在下一次刷新或会话释放前使用完毕。
+    const std::array<motor_base::MotorStatusSnapshot,
+                     motor_base::kMotorNum>& command_feedback() const noexcept;
+    // 校验当前缓存，成功时输出最老反馈的截止期；不刷新反馈。
+    bool validate_motor_feedback_timing(
+        std::int64_t now_ns,
+        std::int64_t& feedback_valid_until_ns,
+        std::string& error) const;
 
     MotorStateSnapshot  get_motor_snapshot() const;
 
@@ -99,6 +107,7 @@ private:
     MotorConfig config_;
     SafetyConfig safety_;
     RuntimeThreadingConfig runtime_;
+    const std::int64_t max_feedback_age_ns_;
 
     std::shared_ptr<myactua::EthercatAdapterIGH>     adapter_;
     std::unique_ptr<myactua::MyActMotorController> controller_;
@@ -112,6 +121,11 @@ private:
     mutable std::array<motor_base::MotorStatusSnapshot,
                        motor_base::kMotorNum> latest_feedback_{};
     mutable bool has_policy_feedback_{false};
+
+    // policy_cmd 线程独占；生命周期重置须在命令线程停止时进行。
+    std::array<motor_base::MotorStatusSnapshot,
+               motor_base::kMotorNum> command_feedback_{};
+    bool has_command_feedback_{false};
 };
 
 }  // namespace inference

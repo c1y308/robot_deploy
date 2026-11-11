@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cmath>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -28,9 +29,8 @@ namespace inference {
 /* 保存外部传入的接口配置，后续由初始化函数按模块使用。 */
 RobotInterface::RobotInterface(RobotInterfaceConfig config)
     : config_(std::move(config)),
-      motor_session_(config_.motor, config_.safety, config_.runtime),
-      imu_session_(config_.imu, config_.runtime),
-      policy_command_worker_(config_, motor_session_, first_policy_inference_started_ns_)
+      motor_session_(config_.motor, config_.safety, config_.runtime, config_.sensor_guard),
+      imu_session_(config_.imu, config_.runtime)
 {
 }
 
@@ -142,16 +142,25 @@ bool RobotInterface::initialize() {
         return false;
     }
 
-    // 初始化完成
-    initialized_ = true;
-
-    // 开启策略命令线程
-    if (!policy_command_worker_.start(*action_processor_, std::move(startup_hold_target_motor_rad))) {
-        initialized_ = false;
+    // 处理器和复位姿态就绪后，绑定 worker 的固定依赖。
+    try {
+        policy_command_worker_ = std::make_unique<PolicyCommandWorker>(
+            config_, motor_session_, *action_processor_, first_policy_inference_started_ns_);
+    } catch (const std::exception& error) {
+        std::cerr << "[RobotInterface] failed to construct policy command worker: "
+                  << error.what() << "\n";
         shutdown();
         return false;
     }
 
+    // 开启策略命令线程
+    if (!policy_command_worker_->start(std::move(startup_hold_target_motor_rad))) {
+        std::cerr << "[RobotInterface] failed to start policy command worker\n";
+        shutdown();
+        return false;
+    }
+
+    initialized_ = true;
     return true;
 }
 
@@ -161,12 +170,17 @@ ShutdownResult RobotInterface::shutdown() {
     const auto request = motor_session_.request_stop();
     initialized_ = false;
     // 会话释放控制器前，先结束仍可能访问控制器的命令线程。
-    policy_command_worker_.stop();
+    if (policy_command_worker_) {
+        policy_command_worker_->stop();
+    }
     const auto result = motor_session_.shutdown(request);
     if (result == ShutdownResult::RetryRequired) {
         return result;
     }
-    record_completed_policy_frame();
+    if (policy_command_worker_) {
+        record_completed_policy_frame(*policy_command_worker_);
+        policy_command_worker_.reset();
+    }
     policy_runtime_.shutdown();
     inference_recorder_.stop();
     inference_recorder_failed_ = false;
@@ -174,7 +188,6 @@ ShutdownResult RobotInterface::shutdown() {
     policy_step_phase_started_ns_ = 0;
     last_policy_target_published_ns_ = 0;
     first_policy_inference_started_ns_.store(0, std::memory_order_release);
-    policy_command_worker_.reset_channels();
     imu_session_.deinitialize();
     return result;
 }
@@ -385,13 +398,13 @@ RobotInterface::PolicyResultAdmission RobotInterface::admit_policy_result(
 }
 
 
-void RobotInterface::record_completed_policy_frame()
+void RobotInterface::record_completed_policy_frame(PolicyCommandWorker& worker)
 {
     if (!config_.recorder.enabled) {
         return;
     }
     InferenceRecord record;
-    if (policy_command_worker_.try_consume_completed_record(record)) {
+    if (worker.try_consume_completed_record(record)) {
         record_policy_frame(record);
     }
 }
@@ -422,11 +435,16 @@ bool RobotInterface::policy_step() {
 
     set_policy_step_phase(PolicyStepPhase::Precheck);
 
+    if (!policy_command_worker_) {
+        return handle_policy_step_failure("policy command worker is not initialized");
+    }
+    auto& worker = *policy_command_worker_;
+
     const std::array<double, 3> target_velocity = target_velocity_;
 
     std::string worker_error;
 
-    if (!policy_command_worker_.healthy(worker_error)) {
+    if (!worker.check_health(worker_error)) {
         return handle_policy_step_failure(worker_error);
     }
     if (!policy_runtime_.is_loaded()) {
@@ -483,7 +501,7 @@ bool RobotInterface::policy_step() {
     }
 
     set_policy_step_phase(PolicyStepPhase::PostInference);
-    if (!policy_command_worker_.healthy(worker_error)) {
+    if (!worker.check_health(worker_error)) {
         return handle_policy_step_failure(worker_error);
     }
 
@@ -523,15 +541,18 @@ bool RobotInterface::policy_step() {
 
     // 丢弃的结果不发布，不刷新发布时间。
     if (!admission.dropped) {
-        auto& target = policy_command_worker_.acquire_target_write_slot();
+        PolicyTargetFrame target;
         target.policy_seq = policy_seq;
         target.target_model_rad = target_model_rad;
         // worker 的目标超时诊断也使用该年龄。
         target.obs_to_action_age_us = admission.obs_to_action_age_us;
         if (config_.recorder.enabled) {
-            fill_log_record(policy_command_worker_.acquire_target_record_write_slot());
+            InferenceRecord record;
+            fill_log_record(record);
+            last_policy_target_published_ns_ = worker.publish_target(target, &record);
+        } else {
+            last_policy_target_published_ns_ = worker.publish_target(target);
         }
-        last_policy_target_published_ns_ = policy_command_worker_.publish_target();
         observation_builder_->set_last_action(policy_result.raw_action);
     }
 
@@ -539,7 +560,7 @@ bool RobotInterface::policy_step() {
     observation_builder_->advance_frame();
 
     // 尝试收取 worker 完成的记录。
-    record_completed_policy_frame();
+    record_completed_policy_frame(worker);
 
     if (admission.dropped && config_.recorder.enabled) {
         InferenceRecord record;
@@ -557,7 +578,9 @@ bool RobotInterface::handle_policy_step_failure(const std::string& message) {
 
     initialized_ = false;
 
-    policy_command_worker_.request_stop();
+    if (policy_command_worker_) {
+        policy_command_worker_->request_stop();
+    }
 
     // 这里记录 Interface 处理故障时的阶段，worker 的停止请求已经发出。
     const std::int64_t diagnostic_now_ns = robot_base::monotonic_now_ns();
@@ -569,9 +592,10 @@ bool RobotInterface::handle_policy_step_failure(const std::string& message) {
               << ", phase_elapsed_us="
               << robot_base::ns_to_us(diagnostic_now_ns - policy_step_phase_started_ns_) << "\n";
     
-    policy_command_worker_.stop();
-
-    record_completed_policy_frame();
+    if (policy_command_worker_) {
+        policy_command_worker_->stop();
+        record_completed_policy_frame(*policy_command_worker_);
+    }
 
     set_policy_step_phase(PolicyStepPhase::Idle);
     return false;

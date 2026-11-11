@@ -33,10 +33,12 @@ const char* command_submit_status_name(motor_base::CommandSubmitStatus status)
 
 RobotMotorSession::RobotMotorSession(MotorConfig config,
                                      SafetyConfig safety,
-                                     RuntimeThreadingConfig runtime)
+                                     RuntimeThreadingConfig runtime,
+                                     SensorGuardConfig sensor_guard)
     : config_(std::move(config)),
       safety_(std::move(safety)),
-      runtime_(std::move(runtime)) {}
+      runtime_(std::move(runtime)),
+      max_feedback_age_ns_(robot_base::seconds_to_ns(sensor_guard.max_motor_sample_age_s)) {}
 
 RobotMotorSession::~RobotMotorSession()
 {
@@ -54,6 +56,8 @@ bool RobotMotorSession::initialize(bool defer_communication_protection)
     // A failed stop/initialization may still own an active RT controller.
     if (controller_) return false;
 
+    command_feedback_ = {};
+    has_command_feedback_ = false;
     adapter_ = std::make_shared<myactua::EthercatAdapterIGH>();
     myactua::MyActMotorController::Options controller_options;
     controller_options.rt_thread_options = runtime_.motor_rt;
@@ -148,6 +152,8 @@ void RobotMotorSession::release_controller()
     rt_started_ = false;
     initialized_.store(false);
     motion_enabled_.store(false);
+    command_feedback_ = {};
+    has_command_feedback_ = false;
 }
 
 bool RobotMotorSession::communication_fault_latched() const noexcept
@@ -368,14 +374,61 @@ bool RobotMotorSession::apply_impedance_setpoints_realtime(
     return false;
 }
 
-bool RobotMotorSession::try_consume_latest_status_command(
-    std::array<motor_base::MotorStatusSnapshot,
-               motor_base::kMotorNum>& feedback)
+bool RobotMotorSession::refresh_command_feedback(std::string& error)
 {
     if (!initialized_.load() || !controller_) {
+        error = "policy motor feedback is not initialized";
         return false;
     }
-    return controller_->try_consume_latest_status_command(feedback);
+    if (controller_->try_consume_latest_feedback_for_command(command_feedback_)) {
+        has_command_feedback_ = true;
+    }
+    if (!has_command_feedback_) {
+        error = "policy motor feedback is not initialized";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+const std::array<motor_base::MotorStatusSnapshot,
+                 motor_base::kMotorNum>& RobotMotorSession::command_feedback() const noexcept
+{
+    return command_feedback_;
+}
+
+bool RobotMotorSession::validate_motor_feedback_timing(
+    std::int64_t now_ns,
+    std::int64_t& feedback_valid_until_ns,
+    std::string& error) const
+{
+    if (!has_command_feedback_) {
+        error = "policy motor feedback is not initialized";
+        return false;
+    }
+
+    const auto oldest_feedback = std::min_element(
+        command_feedback_.begin(),
+        command_feedback_.begin() + config_.num_motors,
+        [](const auto& lhs, const auto& rhs) {
+            return lhs.host_timestamp_ns < rhs.host_timestamp_ns;
+        });
+    const std::int64_t deadline_ns =
+        oldest_feedback->host_timestamp_ns + max_feedback_age_ns_;
+    if (oldest_feedback->host_timestamp_ns > 0 && now_ns < deadline_ns) {
+        feedback_valid_until_ns = deadline_ns;
+        error.clear();
+        return true;
+    }
+
+    error = std::string(oldest_feedback->host_timestamp_ns <= 0
+                ? "motor feedback timestamp missing: motor_index="
+                : "motor feedback expired: motor_index=") +
+        std::to_string(oldest_feedback->motor_index) +
+        ", feedback_age_us=" + std::to_string(robot_base::ns_to_us(
+            now_ns - oldest_feedback->host_timestamp_ns)) +
+        ", max_motor_age_us=" + std::to_string(robot_base::ns_to_us(max_feedback_age_ns_));
+    return false;
 }
 
 
@@ -407,7 +460,7 @@ MotorStateSnapshot RobotMotorSession::get_motor_snapshot() const
     // 优先读 policy 线程专属的 RT feedback 通道；无新帧时沿用缓存帧。
     std::array<motor_base::MotorStatusSnapshot,
                motor_base::kMotorNum> latest_feedback;
-    if (controller_->try_consume_latest_status_policy(latest_feedback)) {
+    if (controller_->try_consume_latest_feedback_for_policy(latest_feedback)) {
         latest_feedback_ = latest_feedback;
         has_policy_feedback_ = true;
     }
