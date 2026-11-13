@@ -23,6 +23,7 @@
 #include "protocol/ethercat/ethercat_adapter_igh.hpp"
 #include "robot/action_processor.hpp"
 #include "robot/joint_mapping.hpp"
+#include "robot/robot_motor_session.hpp"
 #include "tool/tool.hpp"
 
 #include <algorithm>
@@ -286,10 +287,12 @@ struct ChirpContext {
         return eval;
     }
 
-    bool decode_model_state(std::array<motor_base::MotorStatusSnapshot, kDof>& feedback,
+    bool decode_model_state(inference::MotorStateSnapshot& feedback,
                             std::array<double, kDof>& q_model,
                             std::array<double, kDof>& dq_model) noexcept
     {
+        feedback = {};
+        feedback.timestamp_ns = robot_base::monotonic_now_ns();
         q_model.fill(0.0);
         dq_model.fill(0.0);
         for (std::size_t i = 0; i < kDof; ++i) {
@@ -306,36 +309,30 @@ struct ChirpContext {
                 q < kMotorSafeMinRad[i] || q > kMotorSafeMaxRad[i]) {
                 return false;
             }
-            feedback[i].motor_index = static_cast<int>(i);
-            feedback[i].position_rad = q;
-            feedback[i].velocity_rad_s = dq;
-            feedback[i].torque_percent = static_cast<double>(rx.torque) * myactua::kRawTorqueToPercent;
-            feedback[i].comm_ok = true;
-            feedback[i].enabled = true;
-            feedback[i].faulted = false;
-            feedback[i].control_ready = true;
-            feedback[i].mode = motor_base::MotorControlMode::IMPEDANCE;
-            feedback[i].target_mode = motor_base::MotorControlMode::IMPEDANCE;
-            feedback[i].host_timestamp_ns = robot_base::monotonic_now_ns();
+            feedback.position_rad[i] = q;
+            feedback.velocity_rad_s[i] = dq;
+            feedback.torque_percent[i] = static_cast<double>(rx.torque) * myactua::kRawTorqueToPercent;
+            feedback.comm_ok[i] = true;
+            feedback.enabled[i] = true;
         }
 
         for (int model_index = 0; model_index < static_cast<int>(kDof); ++model_index) {
             if (mapping->is_model_dof(model_index)) continue;
             const int motor = mapping->get_motor_id(model_index);
             q_model[static_cast<std::size_t>(model_index)] =
-                static_cast<double>(mapping->get_motor_direction(motor)) * feedback[static_cast<std::size_t>(motor)].position_rad;
+                static_cast<double>(mapping->get_motor_direction(motor)) * feedback.position_rad[static_cast<std::size_t>(motor)];
             dq_model[static_cast<std::size_t>(model_index)] =
-                static_cast<double>(mapping->get_motor_direction(motor)) * feedback[static_cast<std::size_t>(motor)].velocity_rad_s;
+                static_cast<double>(mapping->get_motor_direction(motor)) * feedback.velocity_rad_s[static_cast<std::size_t>(motor)];
         }
 
         const auto solve_ankle = [&](const inference::AnkleMap& ankle,
                                      ankle_motor_fk::Solver& solver) {
             const int upper = ankle.upper_motor_index;
             const int lower = ankle.lower_motor_index;
-            const double upper_q = mapping->get_motor_direction(upper) * feedback[static_cast<std::size_t>(upper)].position_rad;
-            const double lower_q = mapping->get_motor_direction(lower) * feedback[static_cast<std::size_t>(lower)].position_rad;
-            const double upper_dq = mapping->get_motor_direction(upper) * feedback[static_cast<std::size_t>(upper)].velocity_rad_s;
-            const double lower_dq = mapping->get_motor_direction(lower) * feedback[static_cast<std::size_t>(lower)].velocity_rad_s;
+            const double upper_q = mapping->get_motor_direction(upper) * feedback.position_rad[static_cast<std::size_t>(upper)];
+            const double lower_q = mapping->get_motor_direction(lower) * feedback.position_rad[static_cast<std::size_t>(lower)];
+            const double upper_dq = mapping->get_motor_direction(upper) * feedback.velocity_rad_s[static_cast<std::size_t>(upper)];
+            const double lower_dq = mapping->get_motor_direction(lower) * feedback.velocity_rad_s[static_cast<std::size_t>(lower)];
             const ankle_motor_fk::FootAngles foot = solver.solve(upper_q, lower_q);
             if (!foot.reachable || !std::isfinite(foot.pitch) || !std::isfinite(foot.roll)) return false;
             ankle_jacobian::Result jacobian;
@@ -374,7 +371,7 @@ struct ChirpContext {
             left_fk.reset();
             right_fk.reset();
         }
-        std::array<motor_base::MotorStatusSnapshot, kDof> feedback{};
+        inference::MotorStateSnapshot feedback{};
         std::array<double, kDof> q_actual{};
         std::array<double, kDof> dq_actual{};
         if (!decode_model_state(feedback, q_actual, dq_actual)) {
@@ -423,11 +420,11 @@ struct ChirpContext {
             }
         }
 
-        motor_base::ControlCommand command = motor_base::ControlCommand::set_impedance_targets_fixed(
+        motor_base::ControlCommand command = motor_base::ControlCommand::make_impedance_targets(
             motor_command.setpoints.data(), motor_command.setpoint_count);
         command.timing.produced_at_ns = now_ns;
         command.timing.valid_until_ns = now_ns + kCommandValidityNs;
-        const auto result = controller->send_policy_setpoint(command);
+        const auto result = controller->send_continuous_command(command);
         if (result.status != motor_base::CommandSubmitStatus::ACCEPTED) {
             abort_rt(7);
             return;
@@ -975,7 +972,7 @@ bool self_test_rt_compute_audit()
     context->action_processor = &processor;
     fill_enabled_neutral_rx(*context);
 
-    std::array<motor_base::MotorStatusSnapshot, kDof> feedback{};
+    inference::MotorStateSnapshot feedback{};
     std::array<double, kDof> q{};
     std::array<double, kDof> dq{};
     {

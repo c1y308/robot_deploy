@@ -45,7 +45,9 @@ if (policy_target_channel_.try_consume_latest(latest_target)) {
 
 **B2 — Blocker：STOP 走普通队列且未确认完成；停机还依赖日志／线程退出（已复现队列丢停）**
 
-2026-09-09：复核曾在默认容量 16 下确认普通 STOP 丢失；随后已实施独立 STOP 状态、有效回读确认及先停机后清理的修复，motors 2/2、inference 10/10 测试通过。确认超时保留 RT，析构持续等待。以下为修复前历史记录；修复行为、测试及实机验收边界见 [B2 复核记录](../b2_stop_recheck_2026-09-09.md)。
+2026-09-09：复核曾在默认容量 16 下确认普通 STOP 丢失；随后已实施独立 STOP 状态、有效回读确认及先停机后清理的修复，motors 2/2、inference 10/10 测试通过。当时确认超时保留 RT，析构持续等待。以下为修复前历史记录；修复行为、测试及实机验收边界见 [B2 复核记录](../b2_stop_recheck_2026-09-09.md)。
+
+2026-11-12 同步：上述持续等待是历史策略。当前显式关闭返回 `RetryRequired` 时保留 RT/控制器供调用者重试；两个上层析构各自只尝试一次关闭，STOP 为 `PENDING` 时默认最多等待 4000 ms，提交或结果错误可提前结束，仍返回 `RetryRequired` 时打印并刷新错误日志后调用 `std::terminate()`。通信故障已锁存且当前仍异常时，可返回 `ReleasedWithCommLoss` 并释放，但不宣称 STOP 已确认。详见 [当前关闭流程](../policy_test_call_and_data_flow.md)。
 
 证据：[提交成功仅表示入队](/home/cat/robot_deploy/src/motors/src/motor_base/motor_controller_base.cpp:340)、[单轴队列满后标记失败](/home/cat/robot_deploy/src/motors/src/motor_base/motor_controller_base.cpp:608)、[仅服务队头](/home/cat/robot_deploy/src/motors/src/motor_base/motor_controller_base.cpp:645)、[stop 返回逻辑](/home/cat/robot_deploy/src/inference/src/robot/robot_motor_session.cpp:165)、[整机 shutdown 顺序](/home/cat/robot_deploy/src/inference/src/robot/robot_interface.cpp:108)。
 

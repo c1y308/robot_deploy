@@ -1,6 +1,19 @@
 # B2 STOP 路径复核（2026-09-09）
 
-## 修复实施结果
+## 当前关闭行为同步（2026-11-12）
+
+下节记录 2026-09-09 修复实施时的行为，不能作为当前析构策略的说明。当前显式
+`shutdown()` 在 STOP 未确认且不满足“通信故障已锁存、当前通信仍异常”时返回
+`RetryRequired`，保留 RT/控制器，允许调用者重试；满足该通信故障条件时可返回
+`ReleasedWithCommLoss` 并释放，但不表示 STOP 已确认。
+
+`RobotInterface` 与 `RobotMotorSession` 析构各自只尝试一次关闭，STOP 为 `PENDING`
+时默认最多等待 4000 ms，提交或结果错误可提前结束；仍返回 `RetryRequired` 时打印
+并刷新错误日志，然后调用 `std::terminate()`，不持续重试。显式关闭失败后进入析构
+会再尝试一次；外层析构终止进程后不会继续执行成员析构。完整当前流程见
+[调用与数据流说明](policy_test_call_and_data_flow.md)。
+
+## 当时的修复实施结果（历史）
 
 已按确认的方案实施软件修复。`send_discrete_command(STOP)` 现在使用独立固定状态槽，普通队列容量不影响 STOP；同目标未完成请求复用 ID，未完成 STOP 不受普通命令的 64 项结果缓存淘汰影响。每个目标只保留最新 STOP，已完成请求被同目标的新请求替换后，旧 ID 可返回 UNKNOWN。
 
@@ -8,7 +21,7 @@
 - [驱动确认](/home/cat/robot_deploy/src/motors/src/drivers/myact/myact_motor_controller.cpp:847)：要求有效 link/WKC、目标轴配置及 operation-enabled 清除，保留间隔 20 tick 的两次成功验证。每周期发现无效回读会撤销该轴尚用于聚合的确认，避免旧轴确认与另一轴稍后的确认拼成整机成功。通信故障锁存本身不再表示 STOP 完成。
 - [会话接口](/home/cat/robot_deploy/src/inference/src/robot/robot_motor_session.cpp:141)：增加不等待完成的 request_stop，stop 改为确认等待；deinitialize 返回 bool，超时保留 RT/控制器/adapter。STOP 不因普通命令的 4000 tick 超时退出，确认恢复后仍可成功；等待使用现有 `discrete_command_completion_timeout_ms`，默认 4000 ms。
 - [整机停机](/home/cat/robot_deploy/src/inference/src/robot/robot_interface.cpp:110)：STOP → 关闭生产标志 → 确认 → worker join → 策略/记录器 → IMU → 电机线程释放。故障入口在诊断和 join 前发布 STOP；初始化先确认初始 STOP，再提交模式配置，不能覆盖上次停机失败后保留的控制器。
-- 两个上层析构函数持续重试确认；**持续断链时，析构/进程正常退出可能一直等待**，这是本次明确选择的行为。底层 MotorControllerBase::shutdown 仍是线程释放原语，上层只在确认后调用它。
+- 当时两个上层析构函数持续重试确认，持续断链时析构/进程正常退出可能一直等待；该历史策略已由上节所述的单次关闭尝试及终止策略替换。当时底层 MotorControllerBase::shutdown 是线程释放原语，上层只在确认后调用它。
 - 全轴普通 STOP 会作废已停用的运动目标并丢弃等待期间的 setpoint，避免正常停止等待超过默认 10 ms 后被旧目标的有效期额外锁死。已经发生的过期/通信故障锁存不清除，部分轴停止时仍保留其余运行轴的新鲜度保护。
 
 修复实施时的历史验证结果（下述新增测试已按要求删除，数量不代表当前测试集）：

@@ -368,12 +368,12 @@ struct TestRun {
             }
             hold_captured = true;
         }
-        auto command = mb::ControlCommand::set_impedance_targets_fixed(hold.data(), hold.size());
+        auto command = mb::ControlCommand::make_impedance_targets(hold.data(), hold.size());
         const auto now = robot_base::monotonic_now_ns();
         command.timing.produced_at_ns = now;
         command.timing.valid_until_ns = now + kCommandValidityNs;
         // This is the sole producer. The base controller consumes it NEXT cycle.
-        if (controller.send_policy_setpoint(command).status != mb::CommandSubmitStatus::ACCEPTED)
+        if (controller.send_continuous_command(command).status != mb::CommandSubmitStatus::ACCEPTED)
             current.anomalies |= CommandRejected;
     }
 

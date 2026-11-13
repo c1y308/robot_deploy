@@ -293,7 +293,7 @@ bool MyActMotorController::wait_all_motors_ready(int timeout_ms, int poll_ms) co
 
 bool MyActMotorController::realtime_start_callback()
 {
-    process_data_fail_count_ = 0;
+    comm_failure_cycles_ = 0;
 
     if (status_monitor_.has_print_motor_ids()) {
         if (!status_monitor_.start()) {
@@ -331,8 +331,6 @@ void MyActMotorController::realtime_stop_callback() noexcept
 /// @brief 更新 motor.observed，处理通信、故障、模式切换和目标值设置
 void MyActMotorController::update()
 {
-    const bool communication_protection_enabled =
-        communication_protection_enabled_.load(std::memory_order_acquire);
     const EthercatBusHealthSnapshot health = _adapter->get_bus_health();
     const bool process_data_ok =
         health.master_link_up && health.wc_state == EC_WC_COMPLETE;
@@ -377,12 +375,8 @@ void MyActMotorController::update()
 
         MyactMotorFaultReason reason = MyactMotorFaultReason::None;
         uint32_t raw_value = 0;
-        // 避免正式推理前的启动通信瞬态被提前锁存为 OFFLINE；
-        // 不修改实际通信状态，推理开始后恢复原有保护。
         if (!motor.comm_ok) {
-            if (communication_protection_enabled) {
-                reason = MyactMotorFaultReason::Offline;
-            }
+            reason = MyactMotorFaultReason::Offline;
         } else if (motor.observed.sw_faulted) {
             reason = MyactMotorFaultReason::StatusWordFault;
             raw_value = motor.rx.status_word;
@@ -405,8 +399,7 @@ void MyActMotorController::update()
         }
     }
 
-    update_communication_watchdog(process_data_ok, health,
-                                  communication_protection_enabled);
+    update_communication_watchdog(process_data_ok, health);
     if (terminal_fault_latched()) {
         apply_whole_body_stop();
         return;
@@ -432,8 +425,7 @@ void MyActMotorController::update()
 
 void MyActMotorController::update_communication_watchdog(
     bool process_data_ok,
-    const EthercatBusHealthSnapshot& health,
-    bool communication_protection_enabled)
+    const EthercatBusHealthSnapshot& health)
 {
     const MyactCommunicationFaultReason current_reason =
         !health.master_link_up
@@ -444,23 +436,27 @@ void MyActMotorController::update_communication_watchdog(
     current_communication_fault_.store(current_reason,
                                        std::memory_order_release);
 
-    // 正式推理前不累计通信故障周期，避免启动期异常带入运行期阈值。
-    // 计数仅由 RT 线程修改，重复开启开关不重置计数。
-    if (!communication_protection_enabled || process_data_ok) {
-        process_data_fail_count_ = 0;
+    // 启动、复位和运行阶段使用同一规则；计数仅由 RT 线程修改。
+    if (process_data_ok) {
+        comm_failure_cycles_ = 0;
         return;
     }
 
-    if (process_data_fail_count_ < options_.comm_watchdog_fault_cycles) {
-        ++process_data_fail_count_;
+    if (comm_failure_cycles_ < options_.comm_watchdog_fault_cycles) {
+        ++comm_failure_cycles_;
     }
-    if (process_data_fail_count_ >= options_.comm_watchdog_fault_cycles &&
+    if (comm_failure_cycles_ >= options_.comm_watchdog_fault_cycles &&
         !communication_fault_latched_.exchange(
             true, std::memory_order_acq_rel)) {
         latch_communication_fault(current_reason, health);
     }
 }
 
+
+bool MyActMotorController::communication_healthy() const noexcept
+{
+    return current_communication_fault() == MyactCommunicationFaultReason::None;
+}
 
 MyactCommunicationFaultReason
 MyActMotorController::current_communication_fault() const noexcept

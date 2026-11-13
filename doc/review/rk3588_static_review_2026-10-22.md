@@ -1,5 +1,14 @@
 # RK3588 当前代码务实审阅（2026-10-22）
 
+**关闭行为同步（2026-11-12）：** 本文其余结论保留原审阅基线；N3 关于启动期关闭
+通信保护和析构反复等待的描述属于历史行为。当前通信 watchdog 从 RT 启动起生效；
+显式 `shutdown()` 在 STOP 未确认且不满足通信故障释放条件时返回 `RetryRequired`
+并保留 RT/控制器，调用者可重试。两个上层析构各自只尝试一次关闭，STOP 为
+`PENDING` 时默认最多等待 4000 ms，提交或结果错误可提前结束；仍返回
+`RetryRequired` 时打印并刷新错误日志后调用 `std::terminate()`。本次仅同步文档，
+不将此说明作为重新执行原 N3 断链场景的实测验收。当前流程见
+[调用与数据流说明](../policy_test_call_and_data_flow.md)。
+
 ## 1. 结论与审阅基线
 
 本次以 [2026-09-14 报告](rk3588_static_review_2026-09-14.md) 为线索，重新检查当前源码及实际调用链，未直接继承旧报告的缺陷结论。
@@ -12,7 +21,7 @@
 |---|---|---|---|
 | N1 | P1 | 删除测试源码后，CMake 仍无条件引用，导致 inference 和 Xbox 独立工程无法生成构建系统 | 干净目录配置复现 |
 | N2 | P1 | EtherCAT 循环迟到后仍追赶历史期限，出现多个背靠背周期 | 实际基类线程循环注入 4 ms 停顿复现 |
-| N3 | P2 | 首次推理前持续断线，STOP 无法确认且通信故障不锁存，退出会反复等待 | FakeAdapter 复现底层状态，上层退出路径静态确认 |
+| N3 | P2（历史） | 原首次推理前断线及退出反复等待问题；当前行为已变更，见同步说明 | 原 FakeAdapter 复现及退出路径静态确认，仅适用于原审阅基线 |
 | N4 | P2 | `command_applied` 实际只表示提交到 latest 通道，不能证明 RT 已应用 | 完整调用链核对 |
 
 旧报告 P1-1、P1-2、P2-2、P2-3 已有对应修复。旧 P1-4、P1-5、P1-6 按本次用户确认的设计边界排除。旧 P1-3 和 P2-1 分别对应本文 N2 和 N4。
@@ -115,7 +124,10 @@ clock_nanosleep(kClockToUse, TIMER_ABSTIME, &next_period, nullptr);
 
 **验收：** 用相同的 4 ms 单次停顿验证恢复后不再出现连续追赶周期，再测正常负载下的实际周期分布。
 
-### N3 / P2：启动期断线导致退出路径反复等待
+### N3 / P2：启动期断线导致退出路径反复等待（历史，当前行为已变更）
+
+以下场景、代码路径和影响保留为原审阅证据，不描述当前实现。当前析构不会反复
+重试；通信 watchdog 也不再延迟到首次正式推理才开启，参见文首同步说明。
 
 **现实场景：** EtherCAT 已进入 RT 收发，第一次正式策略推理尚未开始，电机供电或总线连接持续中断；随后初始化失败或策略入口失败，程序进入 shutdown。不需要叠加另一种故障。
 
@@ -125,7 +137,7 @@ clock_nanosleep(kClockToUse, TIMER_ABSTIME, &next_period, nullptr);
 2. [通信看门狗](../../src/motors/src/drivers/myact/myact_motor_controller.cpp#L449)在保护关闭时不断清零坏周期计数。即使 `current_communication_fault` 已为 LinkDown/WkcIncomplete，`communication_fault_latched` 仍为 false。
 3. [STOP 确认](../../src/motors/src/drivers/myact/myact_motor_controller.cpp#L908)要求完整 PDO、通信正常且驱动已失能；持续断线无法满足。
 4. [shutdown](../../src/inference/src/robot/robot_interface.cpp#L103)只有“通信故障已锁存且当前仍故障”才允许走未确认释放路径。上述状态导致每次都返回 `RetryRequired`。
-5. [析构](../../src/inference/src/robot/robot_interface.cpp#L35)会一直重试 shutdown；每轮还要经过默认 4 s 的 STOP 等待。首次推理已不可能继续，保护开关也不会自行打开。
+5. 当时的[析构](../../src/inference/src/robot/robot_interface.cpp#L35)会一直重试 shutdown；每轮还要经过默认 4 s 的 STOP 等待。首次推理已不可能继续，保护开关也不会自行打开。该持续重试策略已被替换，当前行为见文首同步说明。
 
 **定向验证：** FakeAdapter 先产生完整反馈，然后保持 LinkDown/incomplete WKC，关闭启动通信保护，提交 STOP 并推进 100 个实际控制逻辑周期，得到：
 
@@ -135,7 +147,7 @@ STOP_pending=1 comm_latched=0 current_fault=1
 
 保持断线，开启保护后推进 10 个周期，通信故障能够锁存。动态测试覆盖了导致退出条件无法成立的底层状态；上层反复等待结论来自以上代码路径，没有通过启动真实机器人或让测试进程永久阻塞来验证。
 
-**影响：** 进程可能持续占用主站及资源，错误后不能按现有 `ReleasedAfterCommLoss` 设计正常结束。本项没有证据说明电机会继续运动，不能从退出挂起推断实际机械状态。
+**影响：** 进程可能持续占用主站及资源，错误后不能按现有 `ReleasedWithCommLoss` 设计正常结束。本项没有证据说明电机会继续运动，不能从退出挂起推断实际机械状态。
 
 **最小建议：** 在已经启动 RT 的退出路径恢复通信故障检测，使后续持续断线可以进入现有锁存和释放分支；保留初始化期间容忍瞬态的既定设计。另一个可选做法是在 shutdown 中按持续通信丢失时间判定，但无需同时引入两套机制。不能仅按任意一次 STOP 超时直接强制释放。
 
@@ -143,9 +155,9 @@ STOP_pending=1 comm_latched=0 current_fault=1
 
 ### N4 / P2：日志 `command_applied` 不代表 RT 已应用
 
-**位置：** [policy_command_worker.cpp](../../src/inference/src/robot/policy_command_worker.cpp#L276)、[send_policy_setpoint](../../src/motors/src/motor_base/motor_controller_base.cpp#L351)、[日志字段](../../src/inference/include/recorder/inference_record.hpp#L58)。
+**位置：** [policy_command_worker.cpp](../../src/inference/src/robot/policy_command_worker.cpp#L276)、[send_continuous_command](../../src/motors/src/motor_base/motor_controller_base.cpp#L351)、[日志字段](../../src/inference/include/recorder/inference_record.hpp#L58)。
 
-`apply_impedance_setpoints_realtime()` 成功只表示 `send_policy_setpoint()` 已把数据发布到 SPSC latest 通道。worker 随后立即设置 `command_applied=true`。此时 RT 可能尚未消费；如果下个 worker 周期先发布新值，旧值可以正常地被覆盖，或者被随后到来的 STOP 阻止应用。
+`apply_impedance_setpoints_realtime()` 成功只表示 `send_continuous_command()` 已把数据发布到 SPSC latest 通道。worker 随后立即设置 `command_applied=true`。此时 RT 可能尚未消费；如果下个 worker 周期先发布新值，旧值可以正常地被覆盖，或者被随后到来的 STOP 阻止应用。
 
 latest 覆盖机制符合当前设计，问题是日志名称和“电机接收的目标位置”注释容易被当作执行确认，导致分析动作延迟、丢命令或跟踪误差时得出错误结论。
 

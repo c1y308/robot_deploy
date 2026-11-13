@@ -350,7 +350,7 @@ CommandSubmitResult MotorControllerBase::submit_stop(int motor_index)
 }
 
 
-CommandSubmitResult MotorControllerBase::send_policy_setpoint(
+CommandSubmitResult MotorControllerBase::send_continuous_command(
     const ControlCommand& cmd)
 {
     if (!cmd.payload_valid) {

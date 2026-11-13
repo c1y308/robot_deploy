@@ -366,11 +366,11 @@ std::vector<motor_base::ImpedanceSetpoint> make_impedance_setpoints(
 void send_impedance_targets(myactua::MyActMotorController& controller,
                             const std::array<double, kNumMotors>& target_rad)
 {
-    auto command = motor_base::ControlCommand::set_impedance_targets(
+    auto command = motor_base::ControlCommand::make_impedance_targets(
         make_impedance_setpoints(target_rad));
     command.timing.produced_at_ns = robot_base::monotonic_now_ns();
     command.timing.valid_until_ns = command.timing.produced_at_ns + 10'000'000;
-    controller.send_policy_setpoint(command);
+    controller.send_continuous_command(command);
 }
 
 bool read_motor_positions(myactua::MyActMotorController& controller,

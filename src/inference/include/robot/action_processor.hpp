@@ -2,7 +2,7 @@
 
 #include "kinematics/ankle_motor_fk.hpp"
 #include "kinematics/ankle_motor_ik.hpp"
-#include "motor_base/status_channel.hpp"
+#include "motor_base/command_types.hpp"
 #include "policy/policy_observation_config.hpp"
 #include "robot/joint_mapping.hpp"
 #include "robot/robot_config.hpp"
@@ -13,6 +13,8 @@
 
 namespace inference {
 
+struct MotorStateSnapshot;
+
 struct PolicyMotorCommand {
     std::array<motor_base::ImpedanceSetpoint, motor_base::kMotorNum> setpoints{};
     std::size_t setpoint_count{0};
@@ -21,7 +23,6 @@ struct PolicyMotorCommand {
 class ActionProcessor {
 public:
     using ModelJointPositions = std::array<double, kDof>;
-    using MotorFeedback = std::array<motor_base::MotorStatusSnapshot, motor_base::kMotorNum>;
 
     // config 和已构造的 mapping 在运行期不可变，且必须比本对象存活更久。
     ActionProcessor(const RobotInterfaceConfig& config,
@@ -30,13 +31,19 @@ public:
     // 纯计算：原始动作裁剪、缩放、偏移限位，再叠加默认姿态。
     ModelJointPositions make_model_target(const std::array<float, kDof>& raw_action) const noexcept;
 
+    // 物理电机顺序的位置保持目标：使用配置增益，速度和前馈力矩为零。
+    static std::array<motor_base::ImpedanceSetpoint, motor_base::kMotorNum>
+    make_position_impedance_setpoints(
+        const std::array<double, motor_base::kMotorNum>& target_motor_rad,
+        const MotorConfig& motor_config) noexcept;
+
     bool build_motor_position_targets(const ModelJointPositions& target_model_rad,
                              std::array<double, motor_base::kMotorNum>& target_motor_rad,
                              std::string& error);
 
     bool build_policy_motor_command(
         const ModelJointPositions&  target_model_rad,
-        const MotorFeedback&        motor_feedback,
+        const MotorStateSnapshot&   motor_feedback,
         PolicyMotorCommand&         command,
         std::string& error);
 
@@ -81,7 +88,7 @@ private:
     bool build_ankle_torque_command(
         ankle_motor_ik::AnkleSide side,
         const ModelJointPositions& target_model_rad,
-        const MotorFeedback& motor_feedback,
+        const MotorStateSnapshot& motor_feedback,
         PolicyMotorCommand& command,
         std::string& error);
 

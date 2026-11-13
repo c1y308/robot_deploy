@@ -11,6 +11,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <cstdint>
 #include <cmath>
 #include <cstring>
@@ -29,15 +30,18 @@ namespace inference {
 /* 保存外部传入的接口配置，后续由初始化函数按模块使用。 */
 RobotInterface::RobotInterface(RobotInterfaceConfig config)
     : config_(std::move(config)),
-      motor_session_(config_.motor, config_.safety, config_.runtime, config_.sensor_guard),
+      motor_session_(config_),
       imu_session_(config_.imu, config_.runtime)
 {
 }
 
-/* 析构时释放策略、IMU 和电机资源，保证后台线程退出。 */
-RobotInterface::~RobotInterface() {
-    while (shutdown() == ShutdownResult::RetryRequired) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+/* 析构仅尝试关闭一次；未获准释放时立即终止进程。 */
+RobotInterface::~RobotInterface() noexcept {
+    if (shutdown() == ShutdownResult::RetryRequired) {
+        std::fputs("[RobotInterface] Fatal: destructor shutdown failed; "
+                   "STOP not confirmed. Terminating process.\n", stderr);
+        std::fflush(stderr);
+        std::terminate();
     }
 }
 
@@ -116,11 +120,11 @@ bool RobotInterface::initialize() {
     }
 
     // 初始化电机
-    if (!motor_session_.initialize(/*defer_communication_protection=*/true)) {
+    if (!motor_session_.initialize()) {
         shutdown();
         return false;
     }
-    if (!motor_session_.restart(-1)) {
+    if (!motor_session_.restart()) {
         shutdown();
         return false;
     }
@@ -298,19 +302,18 @@ bool RobotInterface::get_start_model_pose(
 /* 按平滑插值将关节恢复到 default_joint_pos_rad 初始姿态。 */
 bool RobotInterface::reset_joints(
     std::array<double, motor_base::kMotorNum>& final_target_motor_rad) {
-    if (!motor_session_.motion_enabled()) {
-        std::cerr << "[RobotInterface] reset_joints rejected: motors are stopped.\n";
+    const auto& target_model_q = config_.default_joint_pos_rad;
+    std::string error;
+    if (!motor_session_.refresh_feedback_for_policy(error)) {
+        std::cerr << "[RobotInterface] reset_joints rejected: " << error << "\n";
         return false;
     }
-    
-    const auto& target_model_q = config_.default_joint_pos_rad;
-    const MotorStateSnapshot motor_state = motor_session_.get_motor_snapshot();
+    const MotorStateSnapshot motor_state = motor_session_.get_feedback_for_policy();
     if (motor_state.timestamp_ns <= 0 || !robot_base::finite_array(motor_state.position_rad)) {
         std::cerr << "[RobotInterface] reset_joints rejected: motor feedback is invalid.\n";
         return false;
     }
     std::array<double, kDof> start_model_q{};
-    std::string error;
     if (!get_start_model_pose(motor_state.position_rad, start_model_q, error)) {
         std::cerr << "[RobotInterface] reset_joints rejected: "
                   << error << "\n";
@@ -336,7 +339,19 @@ bool RobotInterface::reset_joints(
                       << error << "\n";
             return false;
         }
-        if (!motor_session_.apply_targets_rad(target_rad)) {
+        motor_base::CommandTiming timing;
+        timing.produced_at_ns = robot_base::monotonic_now_ns();
+        timing.valid_until_ns = timing.produced_at_ns + robot_base::seconds_to_ns(
+            config_.safety.control_command_timeout_ms / 1000.0);
+        bool submitted = false;
+        if (config_.motor.control_mode == motor_base::MotorControlMode::POSITION) {
+            submitted = motor_session_.submit_position_targets_rad(target_rad, timing);
+        } else if (config_.motor.control_mode == motor_base::MotorControlMode::IMPEDANCE) {
+            const auto setpoints = ActionProcessor::make_position_impedance_setpoints(
+                target_rad, config_.motor);
+            submitted = motor_session_.submit_impedance_setpoints(setpoints, timing);
+        }
+        if (!submitted) {
             return false;
         }
         if (k < ramp_steps) {
@@ -455,7 +470,10 @@ bool RobotInterface::policy_step() {
     }
 
     set_policy_step_phase(PolicyStepPhase::SensorSnapshot);
-    const MotorStateSnapshot motor_state = motor_session_.get_motor_snapshot();
+    if (!motor_session_.refresh_feedback_for_policy(worker_error)) {
+        return handle_policy_step_failure(worker_error);
+    }
+    const MotorStateSnapshot motor_state = motor_session_.get_feedback_for_policy();
 
     AhrsStateSnapshot ahrs_state;
     if (!imu_session_.get_ahrs_snapshot(ahrs_state)) {
@@ -486,9 +504,6 @@ bool RobotInterface::policy_step() {
                                           observation_error);
     }
 
-    // 启动及关节复位期间暂缓 OFFLINE/WKC 终端锁存，
-    // 从正式策略推理开始恢复通信保护。
-    motor_session_.enable_communication_protection();
     set_policy_step_phase(PolicyStepPhase::Inference);
     const std::int64_t inference_started_ns = robot_base::monotonic_now_ns();
     if (first_policy_inference_started_ns_.load(std::memory_order_relaxed) == 0) {

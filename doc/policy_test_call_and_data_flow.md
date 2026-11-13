@@ -103,21 +103,21 @@ initialize
  ├─ mlockall(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT)
  ├─ prefault_current_thread_stack
  ├─ InferenceRecorder::start → 创建 CSV/写表头/启动 infer_log
- ├─ RobotMotorSession::initialize(defer_communication_protection=true)
+ ├─ RobotMotorSession::initialize()
  │   ├─ 创建 EthercatAdapterIGH / MyActMotorController
- │   ├─ connect → wait_all_motors_ready → start（启动 ecat_rt）
+ │   ├─ connect → wait_all_motors_ready → start（启动 ecat_rt，通信保护始终生效）
  │   ├─ stop：请求 STOP 并等待确认
- │   └─ submit_command(set_mode)：提交各轴模式配置
- ├─ RobotMotorSession::restart(-1)：等待各轴 control_ready
+ │   └─ submit_discrete_command(set_mode)：提交各轴模式配置
+ ├─ RobotMotorSession::restart()：等待各轴 control_ready
  ├─ 等待 500 ms
  ├─ RobotImuSession::initialize → XsensMtiCanReader::start → imu_can_rx
  ├─ 等待 1 s
  ├─ reset_joints
- │   ├─ get_motor_snapshot
+ │   ├─ refresh_feedback_for_policy(error) → get_feedback_for_policy：读取精简快照
  │   ├─ ActionProcessor::build_reset_start_model_pose：直驱映射 + 脚踝 FK
  │   ├─ 100 步模型关节角插值到默认姿态
  │   ├─ ActionProcessor::build_motor_position_targets：直驱映射 + 脚踝 IK/限位
- │   └─ apply_targets_rad：逐步提交电机目标，默认步间 sleep 5 ms
+ │   └─ 按配置选择 submit_position_targets_rad 或显式阻抗目标提交，默认步间 sleep 5 ms
  ├─ make_unique<PolicyCommandWorker>：构造时绑定配置、电机会话、动作处理器和共享推理时间的引用
  ├─ PolicyCommandWorker::start(startup_hold_target_motor_rad)
  │   ├─ 再提交一次最终复位姿态
@@ -132,10 +132,26 @@ Worker 引用执行健康检查、目标发布和日志收取，内部日志收�
 然后关闭电机会话。若需要重试关闭则保留已停止的 Worker；完整关闭后先收取剩余记录，
 再销毁 Worker。初始化尚未创建 Worker 时，关闭和析构正常跳过 Worker 操作。
 
+电机会话在连接、等待就绪或线程启动失败时，统一调用 `release_controller()` 清理
+资源；RT 启动后的初始 STOP 确认或模式提交失败则保留控制器，返回 false，由调用方
+显式进入 `shutdown()`。`initialize()` 内部不追加一轮关闭时的 STOP 等待；拒绝覆盖已有
+控制器的初始化调用也不释放原控制器。整机入口和独立电机示例均遵守此关闭约定。
+
 预热和模型初始化早于电机启动。预热不会推进观测历史、策略帧号或首帧截止期。
 进入正式推理前，worker 每 1 ms 刷新最终复位姿态；第一次正式推理启动后，首帧
-目标期限被封顶为“首次推理启动时间 + 60 ms”。启动/复位期间仅延后指定通信
-保护的终端锁存，实际通信状态和其他故障检查仍存在。
+目标期限被封顶为“首次推理启动时间 + 60 ms”。从电机 RT 启动开始，OFFLINE
+检测和通信 watchdog 始终生效，启动、复位及正式推理阶段使用相同的故障锁存规则。
+
+连续目标接口按模式拆分：`submit_position_targets_rad()` 仅提交 POSITION 命令；
+`submit_impedance_setpoints()` 仅提交 IMPEDANCE 命令。复位和首帧前保持在调用层
+根据配置选择接口；阻抗位置目标由 `ActionProcessor::make_position_impedance_setpoints()`
+按物理电机顺序构造，沿用配置增益，目标速度和前馈力矩均为零。两个提交接口均接收完整
+`CommandTiming`，由调用方生成时间信息：复位和示例使用独立命令有效期，首帧前保持
+额外以首次策略目标截止时间封顶，这些命令的 `source_policy_seq` 为零；正式策略
+携带策略序号及策略/反馈共同限定的截止期。会话原样提交时序，不替换动态脚踝力矩。
+
+阻抗提交数量由会话配置 `motor.num_motors` 确定，调用方填写数组前对应数量的目标，
+无需另传 `count`。`kMotorNum` 仅表示固定数组容量；底层指针构造接口仍接收显式长度。
 
 **3. 传感器与速度指令的数据采集**
 
@@ -172,7 +188,7 @@ ecat_rt
  → send_physical 后 update_realtime_feedback
      → array<MotorStatusSnapshot,12>
      → MotorControllerBase::publish_feedback
-        ├─ policy_feedback_channel_ → RobotMotorSession::get_motor_snapshot
+        ├─ policy_feedback_channel_ → RobotMotorSession::refresh_feedback_for_policy
         ├─ command_feedback_channel_ → policy_cmd 独立消费
         └─ 公共状态缓存
 ```
@@ -197,8 +213,8 @@ IMU 和电机是独立的最新值源，策略读取后各形成一份固定快�
 main 的 20 ms 循环
  ├─ latest_command → set_target_velocity
  └─ RobotInterface::policy_step
-     ├─ worker.healthy / policy_runtime.is_loaded / motor_session.is_initialized
-     ├─ motor_session.get_motor_snapshot
+     ├─ worker.check_health（含 motor_session.check_health）/ policy_runtime.is_loaded / motor_session.is_initialized
+     ├─ motor_session.refresh_feedback_for_policy(error) → get_feedback_for_policy
      ├─ imu_session.get_ahrs_snapshot
      ├─ validate_policy_sensor_timing
      │   └─ 时间戳有效；当前 IMU 年龄不大于 50 ms、电机年龄不大于 20 ms
@@ -207,7 +223,6 @@ main 的 20 ms 循环
      │   ├─ 源数值有限性与重力有效性检查
      │   ├─ fill_joint_terms → fill_ankle_fk_joint_terms → FK / Jacobian
      │   └─ update_term_history → PolicyObservation
-     ├─ enable_communication_protection
      ├─ 首次推理时间标记；policy_seq = frame_index + 1
      ├─ PolicyRuntime::infer → Session::Run
      ├─ 再次 worker.healthy
@@ -288,13 +303,14 @@ q_target_i = default_joint_pos_i + offset_i
 见 [PolicyCommandWorker::run](../src/inference/src/robot/policy_command_worker.cpp)。
 
 ```text
-try_consume_target → 消费统一的 target_channel_，保留最新目标及关联记录
+motor_session.check_health → 查询底层 terminal_fault_latched，失败则 worker.fail
+ → try_consume_target → 消费统一的 target_channel_，保留最新目标及关联记录
  → 检查策略目标是否到期
- → RobotMotorSession::refresh_command_feedback → 更新 session 内命令线程独占的反馈缓存，无新帧时沿用缓存
- → RobotMotorSession::validate_motor_feedback_timing → 校验最老反馈时间并返回反馈截止期
- → RobotMotorSession::command_feedback → 取得本轮计算使用的只读反馈
+ → RobotMotorSession::refresh_feedback_for_command → 更新 session 内命令线程独占的反馈缓存，无新帧时沿用缓存
+ → RobotMotorSession::validate_feedback_timing_for_command → 校验最老反馈时间并返回反馈截止期
+ → RobotMotorSession::get_feedback_for_command → 取得本轮计算使用的只读反馈
  → ActionProcessor::build_policy_motor_command
-    ├─ 检查 12 电机反馈有效性、control_ready 和脚踝实际位置限位
+    ├─ 检查脚踝实际位置限位；使用精简快照的位置、速度，不检查逐轴控制就绪状态
     ├─ 8 个直驱 DOF：模型目标 → 电机索引/方向 → ImpedanceSetpoint
     └─ 左右脚踝分别 build_ankle_torque_command
        ├─ FK：上下电机角 → 当前虚拟 pitch/roll
@@ -303,10 +319,11 @@ try_consume_target → 消费统一的 target_channel_，保留最新目标及�
        ├─ tau_motor = J^T × tau_virtual
        └─ 电机方向 × 1000/额定力矩 → effort_ff 千分比，限幅
  → 再次检查目标时效，并由 session 校验同一份反馈的时效（期间不刷新反馈）
- → build_command_timing → 合成目标截止期、独立命令截止期和 session 返回的反馈截止期
- → RobotMotorSession::apply_impedance_setpoints_realtime
- → ControlCommand::set_impedance_targets_fixed
- → MotorControllerBase::send_policy_setpoint
+ → motor_session.check_health → 提交前再次检查底层锁存故障
+ → build_policy_command_timing → 合成目标截止期、独立命令截止期和 session 返回的反馈截止期
+ → RobotMotorSession::submit_impedance_setpoints
+ → ControlCommand::make_impedance_targets
+ → MotorControllerBase::send_continuous_command
  → setpoint_channel_policy_.publish
 ```
 
@@ -326,9 +343,25 @@ IK 用于初始化复位；正式 worker 中使用上述反馈 FK/Jacobian 力�
 
 `PolicyMotorCommand` 为固定容量的 12 个 setpoint，顺序已变成物理电机顺序。
 一个策略目标可被 worker 使用多次；期间反馈更新，脚踝力矩和滤波状态也持续更新。
-命令反馈的年龄门限由 session 持有，来自 `SensorGuardConfig`；新控制器初始化和释放时重置
-命令缓存，重置须在命令线程停止时进行。策略线程仍使用独立的 `latest_feedback_` 缓存，
-两份普通数组分别由所属线程访问，底层两个 SPSC 通道保持不变。
+命令反馈的年龄门限由 session 持有，来自 `SensorGuardConfig`。两侧使用同一种私有
+`FeedbackCache`，分别命名为 `feedback_for_policy_` 和 `feedback_for_command_`，仅保存
+`MotorStateSnapshot`、首帧标志及用于超时诊断的最老电机编号。快照包含汇总时间戳、
+位置、速度、力矩、通信和使能状态，不保存底层完整逐轴反馈。转换仅处理配置的电机数，
+未使用槽位保持默认值；汇总时间戳取受控轴最小值，缺失时间戳的轴也参与计算。
+新控制器初始化和释放时同时重置两侧缓存，重置须在消费者停止时进行。
+
+`refresh_feedback_for_policy(error)` 和 `refresh_feedback_for_command(error)` 共用一个
+私有刷新实现；未初始化或尚无首帧返回 false，有缓存时返回 true，无新帧沿用旧缓存且
+不延长时间戳。刷新不判断时效或故障。两个 const/noexcept getter 均返回所属快照的
+只读引用，不消费通道、不重新组装快照；引用须在所属缓存下次刷新或生命周期重置前
+使用完毕。policy 按值保存本轮观测和日志使用的快照，command 使用引用，在计算前后
+校验同一份缓存的截止期。两侧缓存分别由所属线程独占，底层两个 SPSC 通道保持不变。
+
+`RobotMotorSession::check_health` 只检查初始化、控制器是否存在及底层锁存故障，
+不消费反馈、不重新推导逐轴状态。worker 启动提交保持目标前、每轮循环开始及正式
+命令提交前执行检查；运行中失败进入 `fail()`，请求 STOP 并记录失败。worker 的只读
+健康查询也检查会话健康，供 policy 在推理前后感知故障。电机状态、模式和故障的执行
+保护仍由底层驱动负责；`ActionProcessor` 保留运动学与位置限位检查。
 
 命令时序元数据为：
 
@@ -371,7 +404,7 @@ ecat_rt 每 1 ms
 kp/kd 乘 1000 转整型。接收方向相反：PDO 计数转物理单位，反馈扭矩 raw×0.1
 得到 torque_percent。最终 PDO 发送以 ecat_rt 调度为准。
 
-`send_policy_setpoint` 返回 ACCEPTED 只表示通过提交校验并发布到命令通道；RT
+`send_continuous_command` 返回 ACCEPTED 只表示通过提交校验并发布到命令通道；RT
 线程仍会进行到期/控制就绪校验。普通连续 setpoint 走最新值通道；模式切换、
 RESTART 走离散命令机制；STOP 使用专门请求机制绕过普通队列。
 
@@ -434,8 +467,18 @@ false。目标与完成记录通道都是 latest-value，未读取旧帧可被�
 最后停止 Xbox polling。
 
 策略错误走 `handle_policy_step_failure`，worker 错误走 `fail`，二者均先请求电机
-停止再处理诊断。STOP 未确认且不满足持续通信丢失释放条件时返回 RetryRequired，
-保留 RT；析构继续重试。ReleasedAfterCommLoss 表示已释放资源但未宣称 STOP 得到确认。
+停止再处理诊断。STOP 未确认，且不满足“通信故障已锁存、当前通信仍异常”的释放
+条件时，显式 `shutdown()` 返回 `RetryRequired` 并保留 RT/控制器，调用者可再次
+调用关闭；同目标未完成的 STOP 复用原请求 ID。`ReleasedWithCommLoss` 表示已释放
+资源，但未宣称 STOP 得到确认；通信已恢复时，即使故障仍锁存，也必须确认 STOP。
+
+`RobotInterface` 和 `RobotMotorSession` 的析构函数各自只调用一次关闭流程，内部
+等待函数对 `PENDING` 结果每隔 1 ms 查询一次，默认最多等待 4000 ms（由
+`MotorConfig::discrete_command_completion_timeout_ms` 控制）；提交失败、结果缺失、
+`FAILED` 或 `UNKNOWN` 可提前结束等待。若关闭仍返回 `RetryRequired`，析构打印并
+刷新错误日志后调用 `std::terminate()`，不会循环重试。显式关闭失败后进入析构，
+会再获得一次关闭尝试；`RobotInterface` 析构若终止进程，不会继续执行电机会话的
+成员析构。上述等待预算仅针对 STOP 结果查询，不是整个关闭流程的总超时。
 
 **11. 主要数据结构一览**
 

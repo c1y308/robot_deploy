@@ -164,11 +164,11 @@ struct ControlCommand {
     }
 
 
-    static ControlCommand set_position_targets_rad(std::vector<double> values) {
-        return set_position_targets_rad_fixed(values.data(), values.size());
+    static ControlCommand make_position_targets_rad(const std::vector<double>& values) {
+        return make_position_targets_rad(values.data(), values.size());
     }
 
-    static ControlCommand set_position_targets_rad_fixed(
+    static ControlCommand make_position_targets_rad(
         const double* values,
         std::size_t   count)
     {
@@ -189,11 +189,11 @@ struct ControlCommand {
     }
 
 
-    static ControlCommand set_velocity_targets_rad_s(std::vector<double> values) {
-        return set_velocity_targets_rad_s_fixed(values.data(), values.size());
+    static ControlCommand make_velocity_targets_rad_s(const std::vector<double>& values) {
+        return make_velocity_targets_rad_s(values.data(), values.size());
     }
 
-    static ControlCommand set_velocity_targets_rad_s_fixed(
+    static ControlCommand make_velocity_targets_rad_s(
         const double* values,
         std::size_t count)
     {
@@ -217,11 +217,11 @@ struct ControlCommand {
     }
 
 
-    static ControlCommand set_impedance_targets(std::vector<ImpedanceSetpoint> values) {
-        return set_impedance_targets_fixed(values.data(), values.size());
+    static ControlCommand make_impedance_targets(const std::vector<ImpedanceSetpoint>& values) {
+        return make_impedance_targets(values.data(), values.size());
     }
 
-    static ControlCommand set_impedance_targets_fixed(
+    static ControlCommand make_impedance_targets(
         const ImpedanceSetpoint* values,
         std::size_t count)
     {

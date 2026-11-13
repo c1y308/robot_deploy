@@ -73,12 +73,21 @@ bool stream_motion(inference::RobotMotorSession& motors,
                    const MotorPositions& from,
                    const MotorPositions& to,
                    std::chrono::milliseconds duration,
-                   std::int64_t max_age_ns)
+                   std::int64_t max_age_ns,
+                   const inference::RobotInterfaceConfig& config)
 {
+    const auto& motor_config = config.motor;
+    const auto command_timeout_ns = robot_base::seconds_to_ns(
+        config.safety.control_command_timeout_ms / 1000.0);
     const auto start = Clock::now();
     auto next_tick = start;
     while (!g_stop_signal) {
-        if (!valid_feedback(motors.get_motor_snapshot(), max_age_ns, true)) {
+        std::string error;
+        if (!motors.refresh_feedback_for_policy(error)) {
+            std::cerr << "[MOTOR_SEQUENCE] " << error << '\n';
+            return false;
+        }
+        if (!valid_feedback(motors.get_feedback_for_policy(), max_age_ns, true)) {
             return false;
         }
         const double elapsed_s =
@@ -90,7 +99,18 @@ bool stream_motion(inference::RobotMotorSession& motors,
         for (std::size_t id = 0; id < target.size(); ++id) {
             target[id] = from[id] + blend * (to[id] - from[id]);
         }
-        if (!motors.apply_targets_rad(target)) {
+        motor_base::CommandTiming timing;
+        timing.produced_at_ns = robot_base::monotonic_now_ns();
+        timing.valid_until_ns = timing.produced_at_ns + command_timeout_ns;
+        bool submitted = false;
+        if (motor_config.control_mode == motor_base::MotorControlMode::POSITION) {
+            submitted = motors.submit_position_targets_rad(target, timing);
+        } else if (motor_config.control_mode == motor_base::MotorControlMode::IMPEDANCE) {
+            const auto setpoints = inference::ActionProcessor::make_position_impedance_setpoints(
+                target, motor_config);
+            submitted = motors.submit_impedance_setpoints(setpoints, timing);
+        }
+        if (!submitted) {
             std::cerr << "[MOTOR_SEQUENCE] Failed to submit motor targets.\n";
             return false;
         }
@@ -123,7 +143,11 @@ bool stream_model_motion(inference::RobotMotorSession& motors,
             std::cerr << "[MOTOR_SEQUENCE] Policy command worker failed: " << error << '\n';
             return false;
         }
-        const auto state = motors.get_motor_snapshot();
+        if (!motors.refresh_feedback_for_policy(error)) {
+            std::cerr << "[MOTOR_SEQUENCE] " << error << '\n';
+            return false;
+        }
+        const auto& state = motors.get_feedback_for_policy();
         if (!valid_feedback(state, max_age_ns, true)) {
             return false;
         }
@@ -157,7 +181,12 @@ bool report_model_position(inference::RobotMotorSession& motors,
                            std::size_t dof,
                            double target)
 {
-    const auto state = motors.get_motor_snapshot();
+    std::string error;
+    if (!motors.refresh_feedback_for_policy(error)) {
+        std::cerr << "[MOTOR_SEQUENCE] " << error << '\n';
+        return false;
+    }
+    const auto& state = motors.get_feedback_for_policy();
     if (!valid_feedback(state, robot_base::seconds_to_ns(
             config.sensor_guard.max_motor_sample_age_s), true)) {
         return false;
@@ -168,7 +197,6 @@ bool report_model_position(inference::RobotMotorSession& motors,
     inference::AhrsStateSnapshot placeholder_ahrs;
     placeholder_ahrs.projected_gravity_valid = true;
     inference::PolicyObservation observation{};
-    std::string error;
     if (!feedback_builder.build(state, placeholder_ahrs, {}, observation, error)) {
         std::cerr << "[MOTOR_SEQUENCE] Model feedback conversion failed: " << error << '\n';
         return false;
@@ -235,7 +263,12 @@ bool run_sequence(inference::RobotMotorSession& motors,
     }
 
     // Capture the physical motor positions while stopped, before enabling.
-    const auto initial_state = motors.get_motor_snapshot();
+    std::string error;
+    if (!motors.refresh_feedback_for_policy(error)) {
+        std::cerr << "[MOTOR_SEQUENCE] " << error << '\n';
+        return false;
+    }
+    const auto& initial_state = motors.get_feedback_for_policy();
     if (!valid_feedback(initial_state, max_age_ns, false)) {
         return false;
     }
@@ -248,13 +281,17 @@ bool run_sequence(inference::RobotMotorSession& motors,
     }
     std::cout << "[MOTOR_SEQUENCE] Move all motors to physical zero (3 s), hold (1 s).\n"
               << std::flush;
-    if (g_stop_signal || !motors.restart(-1) ||
-        !stream_motion(motors, initial, zero, kZeroDuration, max_age_ns) ||
-        !stream_motion(motors, zero, zero, kHoldDuration, max_age_ns)) {
+    if (g_stop_signal || !motors.restart() ||
+        !stream_motion(motors, initial, zero, kZeroDuration, max_age_ns, config) ||
+        !stream_motion(motors, zero, zero, kHoldDuration, max_age_ns, config)) {
         return false;
     }
 
-    const auto zero_state = motors.get_motor_snapshot();
+    if (!motors.refresh_feedback_for_policy(error)) {
+        std::cerr << "[MOTOR_SEQUENCE] " << error << '\n';
+        return false;
+    }
+    const auto& zero_state = motors.get_feedback_for_policy();
     if (!valid_feedback(zero_state, max_age_ns, true)) {
         return false;
     }
@@ -331,15 +368,16 @@ int main(int argc, char** argv)
     feedback_config.default_joint_pos_rad.fill(0.0);
     feedback_config.observation_scales.dof_pos_scale.fill(1.0);
     inference::ObservationBuilder feedback_builder(feedback_config, *mapping);
-    inference::RobotMotorSession motors(
-        config.motor, config.safety, config.runtime, config.sensor_guard);
+    inference::RobotMotorSession motors(config);
     const bool completed = run_sequence(
         motors, action_processor, feedback_builder, *mapping, config);
 
     std::cout << "[MOTOR_SEQUENCE] Stopping all motors.\n" << std::flush;
-    if (!motors.deinitialize()) {
-        std::cerr << "[MOTOR_SEQUENCE] Stop not confirmed; RT retained. "
-                     "Destruction will keep waiting.\n";
+    const auto shutdown_result = motors.shutdown(motors.request_stop());
+    if (shutdown_result != inference::ShutdownResult::Confirmed) {
+        std::cerr << (shutdown_result == inference::ShutdownResult::ReleasedWithCommLoss
+            ? "[MOTOR_SEQUENCE] EtherCAT communication lost; STOP not confirmed; controller released.\n"
+            : "[MOTOR_SEQUENCE] Stop not confirmed; RT retained. Destruction will attempt shutdown once and terminate if it fails.\n");
         return 1;
     }
     if (g_stop_signal) {

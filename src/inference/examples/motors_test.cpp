@@ -1,5 +1,7 @@
 #include "config/deploy_config.hpp"
+#include "robot/action_processor.hpp"
 #include "robot/robot_motor_session.hpp"
+#include "tool/tool.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -46,21 +48,28 @@ int main(int argc, char** argv) {
                   << config_error << std::endl;
         return -1;
     }
-    inference::MotorConfig cfg = robot_cfg.motor;
-
-    inference::RobotMotorSession motors(
-        cfg, robot_cfg.safety, robot_cfg.runtime, robot_cfg.sensor_guard);
+    inference::RobotMotorSession motors(robot_cfg);
 
     std::cout << "[MOTORS_TEST] 1/4 initialize()" << std::endl;
     if (!motors.initialize()) {
         std::cerr << "[MOTORS_TEST] initialize failed." << std::endl;
+        const auto shutdown_result = motors.shutdown(motors.request_stop());
+        if (shutdown_result != inference::ShutdownResult::Confirmed) {
+            std::cerr << (shutdown_result == inference::ShutdownResult::ReleasedWithCommLoss
+                ? "EtherCAT communication lost; STOP not confirmed; controller released.\n"
+                : "Stop not confirmed; RT retained. Destruction will attempt shutdown once and terminate if it fails.\n");
+            return 1;
+        }
         return -1;
     }
 
     std::cout << "[MOTORS_TEST] 2/4 restart motors" << std::endl;
-    if (!motors.restart(-1)) {
-        if (!motors.deinitialize()) {
-            std::cerr << "Stop not confirmed; RT retained. Destruction will keep waiting.\n";
+    if (!motors.restart()) {
+        const auto shutdown_result = motors.shutdown(motors.request_stop());
+        if (shutdown_result != inference::ShutdownResult::Confirmed) {
+            std::cerr << (shutdown_result == inference::ShutdownResult::ReleasedWithCommLoss
+                ? "EtherCAT communication lost; STOP not confirmed; controller released.\n"
+                : "Stop not confirmed; RT retained. Destruction will attempt shutdown once and terminate if it fails.\n");
             return 1;
         }
         std::cerr << "[MOTORS_TEST] restart failed." << std::endl;
@@ -69,15 +78,43 @@ int main(int argc, char** argv) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     std::cout << "[MOTORS_TEST] 3/4 send zero-position command in rad" << std::endl;
-    if (!motors.apply_targets_rad(std::array<double, motor_base::kMotorNum>{})) {
-        if (!motors.deinitialize()) {
-            std::cerr << "Stop not confirmed; RT retained. Destruction will keep waiting.\n";
+    const std::array<double, motor_base::kMotorNum> zero_target{};
+    motor_base::CommandTiming timing;
+    timing.produced_at_ns = robot_base::monotonic_now_ns();
+    timing.valid_until_ns = timing.produced_at_ns + robot_base::seconds_to_ns(
+        robot_cfg.safety.control_command_timeout_ms / 1000.0);
+    bool submitted = false;
+    if (robot_cfg.motor.control_mode == motor_base::MotorControlMode::POSITION) {
+        submitted = motors.submit_position_targets_rad(zero_target, timing);
+    } else if (robot_cfg.motor.control_mode == motor_base::MotorControlMode::IMPEDANCE) {
+        const auto setpoints = inference::ActionProcessor::make_position_impedance_setpoints(
+            zero_target, robot_cfg.motor);
+        submitted = motors.submit_impedance_setpoints(setpoints, timing);
+    }
+    if (!submitted) {
+        const auto shutdown_result = motors.shutdown(motors.request_stop());
+        if (shutdown_result != inference::ShutdownResult::Confirmed) {
+            std::cerr << (shutdown_result == inference::ShutdownResult::ReleasedWithCommLoss
+                ? "EtherCAT communication lost; STOP not confirmed; controller released.\n"
+                : "Stop not confirmed; RT retained. Destruction will attempt shutdown once and terminate if it fails.\n");
             return 1;
         }
-        std::cerr << "[MOTORS_TEST] apply_targets_rad failed." << std::endl;
+        std::cerr << "[MOTORS_TEST] zero-position command submission failed." << std::endl;
         return -1;
     }
-    const auto state = motors.get_motor_snapshot();
+    std::string feedback_error;
+    if (!motors.refresh_feedback_for_policy(feedback_error)) {
+        std::cerr << "[MOTORS_TEST] " << feedback_error << '\n';
+        const auto shutdown_result = motors.shutdown(motors.request_stop());
+        if (shutdown_result != inference::ShutdownResult::Confirmed) {
+            std::cerr << (shutdown_result == inference::ShutdownResult::ReleasedWithCommLoss
+                ? "EtherCAT communication lost; STOP not confirmed; controller released.\n"
+                : "Stop not confirmed; RT retained. Destruction will attempt shutdown once and terminate if it fails.\n");
+            return 1;
+        }
+        return -1;
+    }
+    const auto& state = motors.get_feedback_for_policy();
     std::cout << "[MOTORS_TEST] observed motors=" << state.position_rad.size() << std::endl;
 
     std::cout << "[MOTORS_TEST] 4/4 monitoring, press Ctrl+C to stop" << std::endl;
@@ -85,8 +122,11 @@ int main(int argc, char** argv) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
-    if (!motors.deinitialize()) {
-        std::cerr << "Stop not confirmed; RT retained. Destruction will keep waiting.\n";
+    const auto shutdown_result = motors.shutdown(motors.request_stop());
+    if (shutdown_result != inference::ShutdownResult::Confirmed) {
+        std::cerr << (shutdown_result == inference::ShutdownResult::ReleasedWithCommLoss
+            ? "EtherCAT communication lost; STOP not confirmed; controller released.\n"
+            : "Stop not confirmed; RT retained. Destruction will attempt shutdown once and terminate if it fails.\n");
         return 1;
     }
     std::cout << "[MOTORS_TEST] shutdown complete." << std::endl;

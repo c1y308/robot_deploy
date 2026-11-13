@@ -70,13 +70,13 @@ bool safe_shutdown(inference::RobotInterface& robot)
         case inference::ShutdownResult::Confirmed:
             std::cout << "[INFO] Shutdown complete.\n";
             return true;
-        case inference::ShutdownResult::ReleasedAfterCommLoss:
+        case inference::ShutdownResult::ReleasedWithCommLoss:
             std::cerr << "[ERROR] EtherCAT communication lost; STOP was not confirmed. "
                          "Controller resources were released after the slave watchdog timeout.\n";
             return false;
         case inference::ShutdownResult::RetryRequired:
             std::cerr << "[ERROR] Stop not confirmed; RT retained. "
-                         "Destruction will keep waiting.\n";
+                         "Destruction will attempt shutdown once and terminate if it fails.\n";
             return false;
     }
     return false;

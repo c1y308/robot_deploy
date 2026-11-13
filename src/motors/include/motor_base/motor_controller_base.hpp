@@ -90,11 +90,17 @@ public:
         return rt_scheduling_ready_.load(std::memory_order_acquire);
     }
 
+    // 通信故障是否已锁存；通信恢复不代表锁存已清除。
+    virtual bool communication_fault_latched() const noexcept = 0;
+    // 最近一次通信检查是否正常，与历史锁存状态独立。
+    virtual bool communication_healthy() const noexcept = 0;
+
 
     // ──────────────────── 指令下发 ────────────────────
 
     /// @brief 异步发送离散控制命令。
     /// @return 离散命令提交成功时携带可查询的 command_id。
+    /// 成功仅表示提交，不表示硬件已收到或执行。
     /// STOP 绕过普通队列；同目标未完成的 STOP 复用 ID，确认前禁止重启。
     CommandSubmitResult send_discrete_command(const ControlCommand& cmd);
 
@@ -102,9 +108,10 @@ public:
     /// STOP 每个目标保留最新一次请求；未完成请求不会被普通命令覆盖。
     DiscreteCommandResult get_discrete_command_result(CommandId id) const;
 
-    /// @brief policy_command_worker 专用的 latest-value setpoint 提交入口。
+    /// @brief 异步发送连续控制命令；仅保留最新目标，未消费的旧目标可被覆盖。
     ///        仅允许单 producer 调用，底层为 SPSC 通道。
-    CommandSubmitResult send_policy_setpoint(const ControlCommand& cmd);
+    ///        成功仅表示提交，不表示硬件已收到或执行。
+    CommandSubmitResult send_continuous_command(const ControlCommand& cmd);
 
 
 

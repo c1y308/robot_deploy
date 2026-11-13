@@ -35,16 +35,12 @@ public:
     // 仅在 start() 前配置；运行期不切换打印。
     void set_print_info(const std::vector<int>& motor_index) override;
 
-    bool communication_fault_latched() const noexcept
+    bool communication_fault_latched() const noexcept override
     {
         return communication_fault_latched_.load(std::memory_order_acquire);
     }
+    bool communication_healthy() const noexcept override;
     MyactCommunicationFaultReason current_communication_fault() const noexcept;
-
-    void set_communication_protection_enabled(bool enabled) noexcept
-    {
-        communication_protection_enabled_.store(enabled, std::memory_order_release);
-    }
 
 private:
     Options options_;
@@ -53,8 +49,7 @@ private:
 
     motor_base::MotorStatusMonitor<MotorState>  status_monitor_;
 
-    uint32_t process_data_fail_count_{0};
-    std::atomic<bool> communication_protection_enabled_{true};
+    uint32_t comm_failure_cycles_{0};
     std::atomic<bool> communication_fault_latched_{false};
     std::atomic<MyactCommunicationFaultReason> current_communication_fault_{
         MyactCommunicationFaultReason::None};
@@ -93,8 +88,7 @@ private:
     void update_diagnostics_snapshot();
     void update_communication_watchdog(
         bool process_data_ok,
-        const EthercatBusHealthSnapshot& health,
-        bool communication_protection_enabled);
+        const EthercatBusHealthSnapshot& health);
     void latch_communication_fault(
         MyactCommunicationFaultReason reason,
         const EthercatBusHealthSnapshot& health);

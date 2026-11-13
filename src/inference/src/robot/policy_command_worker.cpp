@@ -53,8 +53,13 @@ bool PolicyCommandWorker::start(
         failed_.store(false);
     }
 
+    std::string error;
+    if (!motor_session_.check_health(error)) {
+        std::cerr << "[PolicyCommandWorker] start rejected: " << error << "\n";
+        return false;
+    }
     // 在线程接管前刷新一次复位命令，为首次 worker 调度保留完整有效期。
-    if (!motor_session_.apply_targets_rad(startup_hold_target_motor_rad_)) {
+    if (!submit_startup_hold()) {
         std::cerr << "[PolicyCommandWorker] start rejected: "
                      "failed to refresh startup reset pose\n";
         return false;
@@ -102,8 +107,7 @@ bool PolicyCommandWorker::check_health(std::string& error) const
         return false;
     }
 
-    error.clear();
-    return true;
+    return motor_session_.check_health(error);
 }
 
 // 接收策略目标及关联日志，设置有效期，再交给 policy_cmd 线程消费。
@@ -141,7 +145,7 @@ bool PolicyCommandWorker::try_consume_completed_record(InferenceRecord& record) 
     return record_channel_.try_consume_latest(record);
 }
 
-motor_base::CommandTiming PolicyCommandWorker::build_command_timing(
+motor_base::CommandTiming PolicyCommandWorker::build_policy_command_timing(
     const PolicyTargetFrame& target,
     std::int64_t             produced_at_ns,
     std::int64_t feedback_valid_until_ns) const noexcept
@@ -157,6 +161,27 @@ motor_base::CommandTiming PolicyCommandWorker::build_command_timing(
 }
 
 
+bool PolicyCommandWorker::submit_startup_hold(std::int64_t absolute_deadline_ns)
+{
+    motor_base::CommandTiming timing;
+    timing.produced_at_ns = robot_base::monotonic_now_ns();
+    timing.valid_until_ns = timing.produced_at_ns + command_timeout_ns_;
+    if (absolute_deadline_ns > 0) {
+        timing.valid_until_ns = std::min(timing.valid_until_ns, absolute_deadline_ns);
+    }
+    if (config_.motor.control_mode == motor_base::MotorControlMode::POSITION) {
+        return motor_session_.submit_position_targets_rad(
+            startup_hold_target_motor_rad_, timing);
+    }
+    if (config_.motor.control_mode == motor_base::MotorControlMode::IMPEDANCE) {
+        const auto setpoints = ActionProcessor::make_position_impedance_setpoints(
+            startup_hold_target_motor_rad_, config_.motor);
+        return motor_session_.submit_impedance_setpoints(
+            setpoints, timing);
+    }
+    return false;
+}
+
 bool PolicyCommandWorker::refresh_startup_hold()
 {
     // 获取首次正式推理的开始时间
@@ -165,8 +190,7 @@ bool PolicyCommandWorker::refresh_startup_hold()
     const std::int64_t now_ns      = robot_base::monotonic_now_ns();
     // 首帧前复位命令也封顶首次正式推理的截止期。
     const bool refreshed = (deadline_ns == 0 || now_ns < deadline_ns) &&
-        motor_session_.apply_targets_rad(
-            startup_hold_target_motor_rad_, deadline_ns);
+        submit_startup_hold(deadline_ns);
     if (!refreshed) {
         const std::int64_t failed_now_ns = robot_base::monotonic_now_ns();
         if (deadline_ns != 0 && failed_now_ns >= deadline_ns) {
@@ -224,6 +248,11 @@ void PolicyCommandWorker::run()
         while (running_.load()) {
             next_wake += period;
 
+            if (!motor_session_.check_health(error)) {
+                fail(error);
+                break;
+            }
+
             if (try_consume_target(current_frame)) {
                 has_current_target = true;
             }
@@ -240,18 +269,18 @@ void PolicyCommandWorker::run()
                     break;
                 }
 
-                if (!motor_session_.refresh_command_feedback(error)) {
+                if (!motor_session_.refresh_feedback_for_command(error)) {
                     fail(error);
                     break;
                 }
 
                 std::int64_t feedback_valid_until_ns = 0;
-                if (!motor_session_.validate_motor_feedback_timing(
+                if (!motor_session_.validate_feedback_timing_for_command(
                         robot_base::monotonic_now_ns(), feedback_valid_until_ns, error)) {
                     fail(error);
                     break;
                 }
-                const auto& motor_feedback = motor_session_.command_feedback();
+                const auto& motor_feedback = motor_session_.get_feedback_for_command();
 
                 error.clear();
                 if (!action_processor_.build_policy_motor_command(
@@ -269,24 +298,27 @@ void PolicyCommandWorker::run()
                     fail(format_target_timeout_error(current_target, produced_at_ns));
                     break;
                 }
-                if (!motor_session_.validate_motor_feedback_timing(
+                if (!motor_session_.validate_feedback_timing_for_command(
                         produced_at_ns, feedback_valid_until_ns, error)) {
+                    fail(error);
+                    break;
+                }
+                if (!motor_session_.check_health(error)) {
                     fail(error);
                     break;
                 }
                 // 构造命令时间信息
                 const motor_base::CommandTiming timing =
-                    build_command_timing(current_target, produced_at_ns,
-                                         feedback_valid_until_ns);
+                    build_policy_command_timing(current_target, produced_at_ns,
+                                                feedback_valid_until_ns);
 
-                const bool applied =
-                    motor_session_.apply_impedance_setpoints_realtime(
+                const bool submitted =
+                    motor_session_.submit_impedance_setpoints(
                         command.setpoints,
-                        command.setpoint_count,
                         timing);
 
-                if (!applied) {
-                    fail("failed to apply policy impedance command");
+                if (!submitted) {
+                    fail("failed to submit policy impedance command");
                     break;
                 }
                 // 继续构建日志记录

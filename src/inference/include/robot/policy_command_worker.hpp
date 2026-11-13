@@ -71,6 +71,7 @@ private:
     };
 
     void run();
+    bool submit_startup_hold(std::int64_t absolute_deadline_ns = 0);
     bool refresh_startup_hold();
     bool try_consume_target(PolicyTargetWithRecordFrame& frame) noexcept;
     void complete_and_publish_record(
@@ -78,7 +79,7 @@ private:
         const PolicyMotorCommand& command,
         const motor_base::CommandTiming& timing);
 
-    motor_base::CommandTiming build_command_timing(
+    motor_base::CommandTiming build_policy_command_timing(
         const PolicyTargetFrame& target,
         std::int64_t produced_at_ns,
         std::int64_t feedback_valid_until_ns) const noexcept;

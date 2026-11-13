@@ -1,131 +1,125 @@
 #pragma once
 
-#include "motor_base/status_channel.hpp"
+#include "motor_base/command_types.hpp"
 #include "robot/robot_config.hpp"
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
 
-namespace myactua {
-class EthercatAdapterIGH;
-class MyActMotorController;
-}
-
 namespace motor_base {
-struct ControlCommand;
-struct RtEvent;
 class MotorControllerBase;
 }
 
 namespace inference {
 
 enum class ShutdownResult {
-    Confirmed,
-    ReleasedAfterCommLoss,
-    RetryRequired,
-};
-
-enum class MotorCommunicationState {
-    Healthy,
-    LinkDown,
-    WkcIncomplete,
+    Confirmed,              // stop 命令执行成功
+    ReleasedWithCommLoss,   // stop 命令执行失败且通信故障 下 控制器释放
+    RetryRequired,          // stop 命令执行失败但通信正常，需重试
 };
 
 // inference层需要的电机数据，从底层的 MotorStatusSnapshot 获取
 struct MotorStateSnapshot {
-    std::int64_t timestamp_ns{0};
+    std::int64_t timestamp_ns{0};   // 时间戳
 
-    std::array<double, motor_base::kMotorNum> position_rad{};
-    std::array<double, motor_base::kMotorNum> velocity_rad_s{};
-    std::array<double, motor_base::kMotorNum> torque_percent{};
+    std::array<double, motor_base::kMotorNum> position_rad{};   // 位置
+    std::array<double, motor_base::kMotorNum> velocity_rad_s{}; // 速度
+    std::array<double, motor_base::kMotorNum> torque_percent{}; // 力矩
 
-    std::array<std::uint8_t, motor_base::kMotorNum> comm_ok{};
-    std::array<std::uint8_t, motor_base::kMotorNum> enabled{};
+    std::array<std::uint8_t, motor_base::kMotorNum> comm_ok{};  // 通信状态
+    std::array<std::uint8_t, motor_base::kMotorNum> enabled{};  // 使能状态
 };
 
 class RobotMotorSession {
 public:
-    RobotMotorSession(MotorConfig config,
-                      SafetyConfig safety,
-                      RuntimeThreadingConfig runtime = {},
-                      SensorGuardConfig sensor_guard = {});
-    ~RobotMotorSession();
+    explicit RobotMotorSession(const RobotInterfaceConfig& config);
+    ~RobotMotorSession() noexcept;
 
+    // 禁止拷贝构造和拷贝赋值
     RobotMotorSession(const RobotMotorSession&) = delete;
     RobotMotorSession& operator=(const RobotMotorSession&) = delete;
 
-    bool initialize(bool defer_communication_protection = false);
-    motor_base::CommandSubmitResult request_stop(int motor_index = -1);
-    bool stop(int motor_index = -1);
-    bool restart(int motor_index = -1);
-    // False retains the running controller for another confirmation attempt.
-    bool deinitialize();
+    // 初始化；RT 启动后失败会保留控制器，调用方须进入 shutdown()。
+    bool initialize();
     // 调用前结束命令生产线程；确认先前的 STOP，按通信状态决定是否释放控制器。
     ShutdownResult shutdown(const motor_base::CommandSubmitResult& request);
-    void enable_communication_protection() noexcept;
-
     bool is_initialized() const noexcept { return initialized_.load(); }
-    bool motion_enabled() const noexcept { return motion_enabled_.load(); }
-    bool communication_fault_latched() const noexcept;
-    MotorCommunicationState communication_state() const noexcept;
+    // 查询底层锁存故障，不消费反馈或重新判断逐轴状态。
+    bool check_health(std::string& error) const;
 
-    // 依据当前电机模式下发位置指令
-    // absolute_deadline_ns=0 保持原有独立命令有效期；正值额外封顶截止期。
-    bool apply_targets_rad(const std::array<double, motor_base::kMotorNum>& target_motor_rad,
-                           std::int64_t absolute_deadline_ns = 0);
-    bool apply_impedance_setpoints_realtime(
+
+    // 会话层仅提供全轴 STOP/RESTART；单轴操作由底层控制器提供。
+    bool restart();
+    // 提交全轴 STOP 并同步等待确认；不释放控制器。
+    bool stop();
+    motor_base::CommandSubmitResult request_stop();
+
+    // 以下连续目标接口的 true 仅表示提交成功，不表示 RT 已应用或电机已执行。
+    // 两个接口均原样保留调用方提供的完整时序
+    bool submit_position_targets_rad(
+        const std::array<double, motor_base::kMotorNum>& target_motor_rad,
+        const motor_base::CommandTiming& timing);
+    // 提交数组前 config_.num_motors 项；保留调用方提供的完整时序。
+    bool submit_impedance_setpoints(
         const std::array<motor_base::ImpedanceSetpoint,
                          motor_base::kMotorNum>& setpoints,
-        std::size_t count,
         const motor_base::CommandTiming& timing);
 
-    // 以下反馈接口仅由 policy_cmd 线程调用；无新帧时保留缓存。
-    bool refresh_command_feedback(std::string& error);
-    // 只读引用在下一次刷新或会话释放前使用完毕。
-    const std::array<motor_base::MotorStatusSnapshot,
-                     motor_base::kMotorNum>& command_feedback() const noexcept;
+
+    // policy_cmd 线程独占；true 表示已有缓存，不表示本次有新帧或反馈未过期。
+    bool refresh_feedback_for_command(std::string& error);
+    // 仅读取缓存；引用在所属缓存下次刷新或生命周期重置前使用完毕。
+    const MotorStateSnapshot& get_feedback_for_command() const noexcept;
+
+    // policy/inference 线程独占；刷新与读取语义同 command 接口。
+    bool refresh_feedback_for_policy(std::string& error);
+    const MotorStateSnapshot& get_feedback_for_policy() const noexcept;
+
     // 校验当前缓存，成功时输出最老反馈的截止期；不刷新反馈。
-    bool validate_motor_feedback_timing(
+    bool validate_feedback_timing_for_command(
         std::int64_t now_ns,
         std::int64_t& feedback_valid_until_ns,
         std::string& error) const;
 
-    MotorStateSnapshot  get_motor_snapshot() const;
 
 private:
     friend struct RobotInterfacePolicyTimingTestAccess;
-    motor_base::CommandTiming target_command_timing(
-        std::int64_t produced_at_ns, std::int64_t absolute_deadline_ns) const noexcept;
-    bool wait_for_stop(const motor_base::CommandSubmitResult& request);
+    // 集中装配具体驱动和通信适配器，不连接硬件或启动线程。
+    std::unique_ptr<motor_base::MotorControllerBase> create_controller() const;
     void release_controller();
-    bool submit_command(const motor_base::ControlCommand& command,
-                        const char* context);
+
+    bool wait_for_discrete_command(const motor_base::CommandSubmitResult& request,
+                                   const char* context);
+    bool submit_discrete_command(const motor_base::ControlCommand& command,
+                                 const char* context);
 
     MotorConfig config_;
-    SafetyConfig safety_;
-    RuntimeThreadingConfig runtime_;
+    const robot_base::ThreadRuntimeOptions motor_rt_options_;
+    const robot_base::ThreadRuntimeOptions background_thread_options_;
     const std::int64_t max_feedback_age_ns_;
 
-    std::shared_ptr<myactua::EthercatAdapterIGH>     adapter_;
-    std::unique_ptr<myactua::MyActMotorController> controller_;
+    std::unique_ptr<motor_base::MotorControllerBase> controller_;
 
     std::atomic<bool> initialized_{false};
-    std::atomic<bool> motion_enabled_{false};
     bool rt_started_{false}; // Owner thread; also covers incomplete initialization.
 
-    // policy/inference 线程专属 RT feedback 通道的缓存帧：
-    // 仅 get_motor_snapshot()（policy 线程）读写，无新帧时保留上一帧有效反馈
-    mutable std::array<motor_base::MotorStatusSnapshot,
-                       motor_base::kMotorNum> latest_feedback_{};
-    mutable bool has_policy_feedback_{false};
 
-    // policy_cmd 线程独占；生命周期重置须在命令线程停止时进行。
-    std::array<motor_base::MotorStatusSnapshot,
-               motor_base::kMotorNum> command_feedback_{};
-    bool has_command_feedback_{false};
+    enum class FeedbackChannel { Policy, Command };
+    struct FeedbackCache {
+        MotorStateSnapshot snapshot{};
+        bool has_feedback{false};
+        int oldest_motor_index{-1};
+    };
+    bool refresh_feedback(FeedbackCache& cache, FeedbackChannel channel,
+                          std::string& error);
+    // 两侧线程独占精简缓存；无新帧时沿用旧帧，不延长时间戳。
+    // 生命周期重置须在两个消费者停止时进行。
+    FeedbackCache feedback_for_policy_{};
+    FeedbackCache feedback_for_command_{};
 };
 
 }  // namespace inference

@@ -108,11 +108,11 @@ int main() {
     };
 
     std::cout << "[阶段3] 所有电机回到零位..." << std::endl;
-    auto zero_command = motor_base::ControlCommand::set_position_targets_rad_fixed(
+    auto zero_command = motor_base::ControlCommand::make_position_targets_rad(
         zero_positions_rad.data(), zero_positions_rad.size());
     zero_command.timing.produced_at_ns = robot_base::monotonic_now_ns();
     zero_command.timing.valid_until_ns = zero_command.timing.produced_at_ns + 10'000'000;
-    if (controller.send_policy_setpoint(zero_command).status !=
+    if (controller.send_continuous_command(zero_command).status !=
         motor_base::CommandSubmitStatus::ACCEPTED) {
         std::cerr << "[错误] 零位目标提交失败。" << std::endl;
         return -1;
@@ -120,11 +120,11 @@ int main() {
     std::this_thread::sleep_for(std::chrono::seconds(5));
 
     std::cout << "[阶段4] 下发一次目标位置数组..." << std::endl;
-    auto target_command = motor_base::ControlCommand::set_position_targets_rad_fixed(
+    auto target_command = motor_base::ControlCommand::make_position_targets_rad(
         target_positions_rad.data(), target_positions_rad.size());
     target_command.timing.produced_at_ns = robot_base::monotonic_now_ns();
     target_command.timing.valid_until_ns = target_command.timing.produced_at_ns + 10'000'000;
-    if (controller.send_policy_setpoint(target_command).status !=
+    if (controller.send_continuous_command(target_command).status !=
         motor_base::CommandSubmitStatus::ACCEPTED) {
         std::cerr << "[错误] 目标位置数组提交失败。" << std::endl;
         return -1;

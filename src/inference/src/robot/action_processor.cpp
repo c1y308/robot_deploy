@@ -29,6 +29,19 @@ ActionProcessor::ActionProcessor(const RobotInterfaceConfig& config,
 {
 }
 
+std::array<motor_base::ImpedanceSetpoint, motor_base::kMotorNum>
+ActionProcessor::make_position_impedance_setpoints(
+    const std::array<double, motor_base::kMotorNum>& target_motor_rad,
+    const MotorConfig& motor_config) noexcept
+{
+    std::array<motor_base::ImpedanceSetpoint, motor_base::kMotorNum> setpoints{};
+    for (std::size_t i = 0; i < setpoints.size(); ++i) {
+        setpoints[i] = motor_base::ImpedanceSetpoint(
+            target_motor_rad[i], 0.0, 0.0, motor_config.mit_kp[i], motor_config.mit_kd[i]);
+    }
+    return setpoints;
+}
+
 // filter_cutoff/filter_dt 已由配置加载器校验为有限正值，这里只做纯计算。
 ActionProcessor::LowPass2Coefficients ActionProcessor::compute_lowpass2_coefficients() const
 {
@@ -210,29 +223,14 @@ bool ActionProcessor::ankle_ik(
 
 bool ActionProcessor::build_policy_motor_command(
     const ModelJointPositions&  target_model_rad,
-    const MotorFeedback&        motor_feedback,
+    const MotorStateSnapshot&   motor_feedback,
     PolicyMotorCommand&         command,
     std::string& error)
 {
     const int count = mapping_.dof_count();
 
-    // 检查所有受控电机是否可以接受控制命令。
-    for (int motor_index = 0; motor_index < count; ++motor_index) {
-        const auto& motor =
-            motor_feedback[static_cast<std::size_t>(motor_index)];
-        if (!motor.control_ready) {
-            error = "motor feedback is not control-ready at index " +
-                    std::to_string(motor_index) +
-                    ": comm_ok=" + (motor.comm_ok ? "true" : "false") +
-                    ", enabled=" + (motor.enabled ? "true" : "false") +
-                    ", faulted=" + (motor.faulted ? "true" : "false") +
-                    ", control_ready=" +
-                    (motor.control_ready ? "true" : "false");
-            return false;
-        }
-    }
     if (!validate_ankle_motor_limits(
-            [&](std::size_t motor_index) { return motor_feedback[motor_index].position_rad; },
+            [&](std::size_t motor_index) { return motor_feedback.position_rad[motor_index]; },
             "feedback", error)) {
         return false;
     }
@@ -276,7 +274,7 @@ bool ActionProcessor::build_policy_motor_command(
 bool ActionProcessor::build_ankle_torque_command(
     ankle_motor_ik::AnkleSide  side,
     const ModelJointPositions& target_model_rad,
-    const MotorFeedback&       motor_feedback,
+    const MotorStateSnapshot&  motor_feedback,
     PolicyMotorCommand&        command,
     std::string& error)
 {
@@ -294,14 +292,17 @@ bool ActionProcessor::build_ankle_torque_command(
 
     const int upper_direction = mapping_.get_motor_direction(ankle_map.upper_motor_index);
     const int lower_direction = mapping_.get_motor_direction(ankle_map.lower_motor_index);
-    const double upper_position_rad = motor_feedback[upper_index].position_rad;
-    const double lower_position_rad = motor_feedback[lower_index].position_rad;
+
+    const double upper_position_rad = motor_feedback.position_rad[upper_index];
+    const double lower_position_rad = motor_feedback.position_rad[lower_index];
+
     const double upper_motor = upper_direction * upper_position_rad;
     const double lower_motor = lower_direction * lower_position_rad;
+    
     const double upper_motor_velocity =
-        upper_direction * motor_feedback[upper_index].velocity_rad_s;
+        upper_direction * motor_feedback.velocity_rad_s[upper_index];
     const double lower_motor_velocity =
-        lower_direction * motor_feedback[lower_index].velocity_rad_s;
+        lower_direction * motor_feedback.velocity_rad_s[lower_index];
 
     const ankle_motor_fk::FootAngles foot =
         state.fk_solver.solve(upper_motor, lower_motor);

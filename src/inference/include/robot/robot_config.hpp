@@ -61,8 +61,7 @@ struct MotorConfig {
     std::vector<int> print_motor_ids = {0, 1, 2, 3, 4, 5,
                                         6, 7, 8, 9, 10, 11};
 
-    motor_base::MotorControlMode control_mode =
-        motor_base::MotorControlMode::IMPEDANCE;
+    motor_base::MotorControlMode control_mode = motor_base::MotorControlMode::IMPEDANCE;
 
     std::array<double, motor_base::kMotorNum> mit_kp{};   // 物理电机顺序
     std::array<double, motor_base::kMotorNum> mit_kd{};   // 物理电机顺序

@@ -23,7 +23,7 @@ class RobotInterface {
 public:
     /* 构造函数只保存配置；配置由 load_deploy_config() 加载并完整校验 */
     explicit RobotInterface(RobotInterfaceConfig config);
-    ~RobotInterface();
+    ~RobotInterface() noexcept;
 	
     /* initialize 完成模型准备、锁页、日志/硬件启动及姿态复位，只调用一次 */
     bool initialize();
@@ -37,7 +37,7 @@ public:
     /* 设置速度 */
     void set_target_velocity(double vx, double vy, double yaw_rate);
     
-    /* 初始化失败后仍可重复 shutdown，析构也会执行清理 */
+    /* 显式关闭失败可返回重试；析构仅尝试一次，失败则终止进程。 */
     ShutdownResult shutdown();
 
 
